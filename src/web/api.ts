@@ -147,6 +147,13 @@ export const purgeFile = (id: number) =>
 export const purgeFolder = (id: number) =>
   jsonReq("DELETE", `/folders/${id}/purge`)
 
+export const search = (q: string, limit?: number) => {
+  const qs = limit !== undefined
+    ? `q=${encodeURIComponent(q)}&limit=${limit}`
+    : `q=${encodeURIComponent(q)}`
+  return jsonReq("GET", `/search?${qs}`)
+}
+
 export const listVersions = (fileId: number) =>
   jsonReq("GET", `/files/${fileId}/versions`)
 

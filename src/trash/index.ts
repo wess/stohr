@@ -40,8 +40,8 @@ export const trashRoutes = (db: Connection, secret: string, store: StorageHandle
         from("files")
           .where(q => q("user_id").equals(userId))
           .where(q => q("deleted_at").isNotNull())
-          .select("id", "storage_key")
-      ) as Array<{ id: number; storage_key: string }>
+          .select("id", "storage_key", "thumb_key")
+      ) as Array<{ id: number; storage_key: string; thumb_key: string | null }>
 
       const folders = await db.all(
         from("folders")
@@ -70,7 +70,11 @@ export const trashRoutes = (db: Connection, secret: string, store: StorageHandle
           .del()
       )
 
-      const keys = [...files.map(f => f.storage_key), ...versions.map(v => v.storage_key)]
+      const keys = [
+        ...files.map(f => f.storage_key),
+        ...files.filter(f => f.thumb_key).map(f => f.thumb_key as string),
+        ...versions.map(v => v.storage_key),
+      ]
       await Promise.allSettled(keys.map(k => drop(store, k)))
 
       return json(c, 200, { purged_files: files.length, purged_folders: folders.length })

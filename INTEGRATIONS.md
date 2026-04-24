@@ -53,14 +53,14 @@ Implementation notes: current auth is JWT-only (7-day sessions). Long-lived API 
 
 | Capability | Box | Dropbox | Stohr | Priority |
 | --- | --- | --- | --- | --- |
-| Image thumbnails | ✓ | ✓ | **partial** (client fetches and caches the full file) | P0 |
+| Image thumbnails | ✓ | ✓ | **have** (JPEG/PNG/WebP/GIF; server-generated WebP via `sharp`, served from `GET /files/:id/thumb`) | — |
 | PDF preview | ✓ | ✓ | **missing** | P0 |
 | Office document preview (docx/xlsx/pptx) | ✓ | ✓ | **missing** | P1 |
 | Collaborative editing (Office/Google Docs) | ✓ (via Office Online) | ✓ (Dropbox Paper, Office) | **missing** | P2 |
 | Video/audio streaming | ✓ | ✓ | **partial** (server streams, no transcoding) | P1 |
 | Text/code viewer | ✓ | ✓ | **missing** | P1 |
 
-Implementation notes: swap the current "download the whole file, make a blob URL" thumbnail path for a server-generated thumbnail (sharp/libvips) written to a sibling storage key. Office editing integrates cleanly via OnlyOffice Document Server or Collabora Online — both speak WOPI.
+Implementation notes: image thumbnails are now server-generated (sharp/libvips) and cached alongside the original in object storage. PDF preview still outstanding — pdf.js in the browser is the cheapest path; PDF-to-image on the server (via `pdftoppm` / `pdfium`) gives a richer grid thumbnail. Office editing integrates cleanly via OnlyOffice Document Server or Collabora Online — both speak WOPI.
 
 ## Sharing & collaboration
 
@@ -96,7 +96,7 @@ Implementation notes: current upload path buffers the whole file in memory via `
 
 | Capability | Box | Dropbox | Stohr | Priority |
 | --- | --- | --- | --- | --- |
-| Filename search | ✓ | ✓ | **have** (Postgres `ILIKE`) | — |
+| Filename search | ✓ | ✓ | **have** (Postgres `pg_trgm` trigram indexes + `type:`/`ext:` filter tokens; cmd+k palette UI) | — |
 | Full-text search (file contents) | ✓ | ✓ | **missing** | P1 |
 | OCR for images / PDFs | ✓ | ✓ | **missing** | P2 |
 | Metadata / tag search | ✓ | ✓ | **missing** | P2 |
@@ -151,6 +151,6 @@ If you want an opinionated order that unblocks the most downstream work per unit
 4. **Chunked/resumable uploads + quotas** — stops big uploads from failing and prevents runaway storage
 5. **Shared folders with permissions** — the single biggest schema change; everything collaborative depends on it
 6. **AV scanning + audit logs** — required before anyone puts real data in this
-7. **Thumbnails + PDF preview (server-side)** — biggest UX jump; current client-side thumbnail path is a stopgap
+7. **PDF preview** — image thumbnails already shipped; extending to PDFs is the next big preview win
 8. **WebDAV endpoint** — cheap way to get Finder/Explorer mounts before writing a real sync client
 9. **Desktop sync daemon + mobile app** — largest surface area; tackle last

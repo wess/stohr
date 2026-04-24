@@ -14,7 +14,8 @@ Upload files, organize them in folders, share them with public links. All functi
 - Soft-deleted trash with restore and purge
 - Download, rename, move, delete files
 - Public share links with optional expiry
-- Fuzzy name search across all your files
+- Cmd+K search palette across files and folders, with `type:` and `ext:` filter tokens, backed by Postgres `pg_trgm` trigram indexes
+- Image thumbnails (JPEG, PNG, WebP, GIF) generated on upload via `sharp` and served as WebP
 - S3-compatible object storage (works with [rustfs](https://rustfs.com), MinIO, AWS S3, etc.)
 
 ## Atlas packages used
@@ -23,7 +24,7 @@ Upload files, organize them in folders, share them with public links. All functi
 
 ## Run
 
-Requires Bun, a reachable Postgres instance, and an S3-compatible object store.
+Requires Bun, a reachable Postgres instance (the `pg_trgm` extension is enabled automatically by migration `00000007`), and an S3-compatible object store.
 
 ```bash
 cp .env.example .env
@@ -82,7 +83,8 @@ All request/response bodies are JSON unless noted. Parameter names accept both `
 - `GET /files?folder_id=<id|null>` or `GET /files?q=<search>`
 - `GET /files/:id`
 - `GET /files/:id/download` — add `?inline=1` for inline `Content-Disposition`
-- `POST /files` — `multipart/form-data`, optional `folder_id` field. Re-uploading a file with the same name in the same folder archives the previous version.
+- `GET /files/:id/thumb` — streams the 256×256 WebP thumbnail (images only); `404` when no thumbnail exists. Cached `private, max-age=300`; UI should append `?v=<version>` to cache-bust across version changes.
+- `POST /files` — `multipart/form-data`, optional `folder_id` field. Re-uploading a file with the same name in the same folder archives the previous version. For supported images (`image/jpeg|png|webp|gif`, under 25 MB) a thumbnail is generated synchronously; failures leave `thumb_key` null and do not block the upload.
 - `PATCH /files/:id` — `{ name?, folder_id? }`
 - `DELETE /files/:id` — soft delete
 - `POST /files/:id/restore`
@@ -99,6 +101,12 @@ All request/response bodies are JSON unless noted. Parameter names accept both `
 
 - `GET /trash` — soft-deleted folders and files for the current user
 - `DELETE /trash` — empty trash (purges everything currently soft-deleted)
+
+### Search (bearer required)
+
+- `GET /search?q=<string>&limit=<n>` — returns `{ files, folders }` scoped to the current user, both arrays capped at `limit` (default 20, max 50).
+- The `q` string is tokenized. Tokens of the form `type:<class>` filter files by mime class (`image | video | audio | document | text`); `ext:<name>` filters by trailing extension. All other tokens are joined into a name fragment matched against `files.name` and `folders.name` via `ILIKE`, with `%` and `_` escaped. Name matches are ranked by trigram similarity (`pg_trgm`).
+- Filter-only queries (`type:image`, no name fragment) return matching files and an empty `folders` array. Fully empty queries return empty arrays.
 
 ### Shares (bearer required, except `/s/:token`)
 

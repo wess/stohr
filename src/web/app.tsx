@@ -57,48 +57,19 @@ const MimeIcon: React.FC<{ mime: string; size?: number }> = ({ mime, size = 28 }
   return <FileIconBase size={size} strokeWidth={1.5} />
 }
 
-const thumbCache = new Map<number, string>()
-
-const ImageThumb: React.FC<{ fileId: number; alt: string }> = ({ fileId, alt }) => {
-  const [url, setUrl] = useState<string | null>(thumbCache.get(fileId) ?? null)
+const FileThumb: React.FC<{ file: FileItem }> = ({ file }) => {
   const [failed, setFailed] = useState(false)
-  const ref = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    if (url || failed) return
-    const node = ref.current
-    if (!node) return
-
-    const io = new IntersectionObserver(async entries => {
-      if (!entries[0]?.isIntersecting) return
-      io.disconnect()
-      const cached = thumbCache.get(fileId)
-      if (cached) { setUrl(cached); return }
-      try {
-        const res = await fetch(api.downloadUrl(fileId), {
-          headers: { authorization: `Bearer ${api.getToken()}` },
-        })
-        if (!res.ok) throw new Error()
-        const blob = await res.blob()
-        const obj = URL.createObjectURL(blob)
-        thumbCache.set(fileId, obj)
-        setUrl(obj)
-      } catch {
-        setFailed(true)
-      }
-    }, { rootMargin: "200px" })
-    io.observe(node)
-    return () => io.disconnect()
-  }, [fileId, url, failed])
-
+  if (failed) {
+    return <div className="icon"><MimeIcon mime={file.mime} size={32} /></div>
+  }
   return (
-    <div className="thumb" ref={ref}>
-      {url
-        ? <img src={url} alt={alt} loading="lazy" />
-        : failed
-          ? <div className="thumb-fallback"><FileImage size={32} strokeWidth={1.5} /></div>
-          : <div className="thumb-skeleton" />
-      }
+    <div className="thumb">
+      <img
+        src={`/api/files/${file.id}/thumb?v=${file.version}`}
+        alt=""
+        loading="lazy"
+        onError={() => setFailed(true)}
+      />
     </div>
   )
 }
@@ -150,6 +121,9 @@ const Modal: React.FC<{ title: string; onClose: () => void; children: React.Reac
   </div>
 )
 
+type PaletteFolder = { id: number; name: string; parent_id: number | null }
+type PaletteResults = { files: FileItem[]; folders: PaletteFolder[] }
+
 const Files: React.FC = () => {
   const [folders, setFolders] = useState<Folder[]>([])
   const [files, setFiles] = useState<FileItem[]>([])
@@ -170,6 +144,12 @@ const Files: React.FC = () => {
   const [movingOpen, setMovingOpen] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [paletteQuery, setPaletteQuery] = useState("")
+  const [paletteResults, setPaletteResults] = useState<PaletteResults>({ files: [], folders: [] })
+  const [paletteActive, setPaletteActive] = useState(0)
+  const [paletteLoading, setPaletteLoading] = useState(false)
+
   const load = async () => {
     const [fo, fi] = await Promise.all([
       api.listFolders(currentId),
@@ -186,6 +166,51 @@ const Files: React.FC = () => {
 
   useEffect(() => { load() }, [currentId, search])
   useEffect(() => { setSelected(new Set()); setLastClicked(null) }, [currentId, search])
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault()
+        setPaletteOpen(true)
+        setPaletteQuery("")
+        setPaletteResults({ files: [], folders: [] })
+        setPaletteActive(0)
+        setPaletteLoading(false)
+      }
+    }
+    window.addEventListener("keydown", h)
+    return () => window.removeEventListener("keydown", h)
+  }, [])
+
+  useEffect(() => {
+    if (!paletteOpen) return
+    if (!paletteQuery) {
+      setPaletteResults({ files: [], folders: [] })
+      setPaletteActive(0)
+      return
+    }
+    setPaletteLoading(true)
+    const t = setTimeout(async () => {
+      try {
+        const res = await api.search(paletteQuery) as PaletteResults
+        const results: PaletteResults = {
+          folders: Array.isArray(res?.folders) ? res.folders : [],
+          files: Array.isArray(res?.files) ? res.files : [],
+        }
+        setPaletteResults(results)
+        setPaletteActive(prev => {
+          const total = results.folders.length + results.files.length
+          return total === 0 ? 0 : Math.min(prev, total - 1)
+        })
+      } catch {
+        setPaletteResults({ files: [], folders: [] })
+        setPaletteActive(0)
+      } finally {
+        setPaletteLoading(false)
+      }
+    }, 150)
+    return () => clearTimeout(t)
+  }, [paletteOpen, paletteQuery])
 
   const orderedKeys = useMemo(
     () => [...folders.map(f => `fo-${f.id}`), ...files.map(f => `fi-${f.id}`)],
@@ -382,20 +407,16 @@ const Files: React.FC = () => {
           {files.map(f => {
             const key = `fi-${f.id}`
             const sel = selected.has(key)
-            const isImage = f.mime.startsWith("image/")
             return (
               <div
                 key={key}
-                className={`card${sel ? " selected" : ""}${isImage ? " image-card" : ""}`}
+                className={`card${sel ? " selected" : ""}`}
                 onClick={(e) => selected.size > 0 ? toggleSelect(key, e) : setPreviewing(f)}
               >
                 <div className={`check${sel ? " on" : ""}`} onClick={e => toggleSelect(key, e)}>
                   <div className="check-box" />
                 </div>
-                {isImage
-                  ? <ImageThumb fileId={f.id} alt={f.name} />
-                  : <div className="icon"><MimeIcon mime={f.mime} size={32} /></div>
-                }
+                <FileThumb file={f} />
                 <div className="name">{f.name}</div>
                 <div className="meta">
                   {formatBytes(f.size)}
@@ -483,6 +504,89 @@ const Files: React.FC = () => {
           onPick={bulkMove}
         />
       )}
+
+      {paletteOpen && (() => {
+        const combined = [...paletteResults.folders, ...paletteResults.files]
+        const closePalette = () => { setPaletteOpen(false); setPaletteQuery(""); setPaletteResults({ files: [], folders: [] }); setPaletteActive(0) }
+        const activate = (idx: number) => {
+          const item = combined[idx]
+          if (!item) return
+          closePalette()
+          if ("mime" in item) {
+            setPreviewing(item as FileItem)
+          } else {
+            setCurrentId(item.id)
+          }
+        }
+        const onKeyDown = (e: React.KeyboardEvent) => {
+          if (e.key === "ArrowDown") {
+            e.preventDefault()
+            setPaletteActive(prev => Math.min(prev + 1, combined.length - 1))
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault()
+            setPaletteActive(prev => Math.max(prev - 1, 0))
+          } else if (e.key === "Enter") {
+            e.preventDefault()
+            activate(paletteActive)
+          } else if (e.key === "Escape") {
+            closePalette()
+          }
+        }
+        return (
+          <div className="modal-backdrop" onClick={closePalette}>
+            <div className="modal" style={{ maxWidth: 520, width: "100%" }} onClick={e => e.stopPropagation()} onKeyDown={onKeyDown}>
+              <input
+                autoFocus
+                className="search"
+                style={{ width: "100%", marginBottom: 8, boxSizing: "border-box" }}
+                placeholder="Search files and folders..."
+                value={paletteQuery}
+                onChange={e => { setPaletteQuery(e.target.value); setPaletteActive(0) }}
+              />
+              {paletteQuery.length > 0 && !paletteLoading && paletteResults.folders.length === 0 && paletteResults.files.length === 0 && (
+                <div style={{ padding: "12px 0", color: "var(--muted)", textAlign: "center", fontSize: 14 }}>No matches.</div>
+              )}
+              {paletteResults.folders.length > 0 && (
+                <>
+                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", padding: "6px 0 2px" }}>Folders</div>
+                  {paletteResults.folders.map((f, i) => (
+                    <div
+                      key={`pf-${f.id}`}
+                      className={`picker-row${paletteActive === i ? " active" : ""}`}
+                      style={{ cursor: "pointer", borderRadius: 6, padding: "6px 8px", background: paletteActive === i ? "var(--hover)" : undefined }}
+                      onClick={() => activate(i)}
+                      onMouseEnter={() => setPaletteActive(i)}
+                    >
+                      <FolderIcon size={16} strokeWidth={1.5} />
+                      <span style={{ marginLeft: 8 }}>{f.name}</span>
+                    </div>
+                  ))}
+                </>
+              )}
+              {paletteResults.files.length > 0 && (
+                <>
+                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", padding: "6px 0 2px" }}>Files</div>
+                  {paletteResults.files.map((f, i) => {
+                    const globalIdx = paletteResults.folders.length + i
+                    return (
+                      <div
+                        key={`pfi-${f.id}`}
+                        className={`picker-row${paletteActive === globalIdx ? " active" : ""}`}
+                        style={{ cursor: "pointer", borderRadius: 6, padding: "6px 8px", background: paletteActive === globalIdx ? "var(--hover)" : undefined }}
+                        onClick={() => activate(globalIdx)}
+                        onMouseEnter={() => setPaletteActive(globalIdx)}
+                      >
+                        <MimeIcon mime={f.mime} size={16} />
+                        <span style={{ marginLeft: 8 }}>{f.name}</span>
+                      </div>
+                    )
+                  })}
+                </>
+              )}
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

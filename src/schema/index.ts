@@ -25,6 +25,7 @@ export const files = defineSchema("files", {
   mime: column.text(),
   size: column.bigint(),
   storage_key: column.text(),
+  thumb_key: column.text().nullable(),
   version: column.integer().default(1),
   deleted_at: column.timestamp().nullable(),
   created_at: column.timestamp().default("now()"),

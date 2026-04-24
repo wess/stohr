@@ -213,8 +213,8 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       const ids = await collectSubtree(db, userId, id)
 
       const allFiles = await db.all(
-        from("files").where(q => q("folder_id").inList(ids)).select("id", "storage_key")
-      ) as Array<{ id: number; storage_key: string }>
+        from("files").where(q => q("folder_id").inList(ids)).select("id", "storage_key", "thumb_key")
+      ) as Array<{ id: number; storage_key: string; thumb_key: string | null }>
 
       const allVersions = await db.all(
         from("file_versions")
@@ -227,7 +227,11 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       await db.execute(from("files").where(q => q("folder_id").inList(ids)).del())
       await db.execute(from("folders").where(q => q("id").inList(ids)).del())
 
-      const keys = [...allFiles.map(f => f.storage_key), ...allVersions.map(v => v.storage_key)]
+      const keys = [
+        ...allFiles.map(f => f.storage_key),
+        ...allFiles.filter(f => f.thumb_key).map(f => f.thumb_key as string),
+        ...allVersions.map(v => v.storage_key),
+      ]
       await Promise.allSettled(keys.map(k => drop(store, k)))
 
       return json(c, 200, { purged: id })

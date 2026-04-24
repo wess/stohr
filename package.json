@@ -15,16 +15,17 @@
     "@types/bun": "latest"
   },
   "dependencies": {
-    "react": "^19",
-    "react-dom": "^19",
-    "lucide-react": "^0.468.0",
+    "@atlas/auth": "workspace:*",
     "@atlas/cli": "workspace:*",
     "@atlas/config": "workspace:*",
     "@atlas/db": "workspace:*",
     "@atlas/migrate": "workspace:*",
     "@atlas/server": "workspace:*",
-    "@atlas/auth": "workspace:*",
-    "@atlas/storage": "workspace:*"
+    "@atlas/storage": "workspace:*",
+    "lucide-react": "^0.468.0",
+    "react": "^19",
+    "react-dom": "^19",
+    "sharp": "^0.34.5"
   },
   "peerDependencies": {
     "typescript": "^5"

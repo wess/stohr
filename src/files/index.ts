@@ -4,6 +4,7 @@ import { del, get, json, parseMultipart, patch, pipeline, post, putHeader, strea
 import { requireAuth } from "@atlas/auth"
 import { drop, fetchObject, makeKey, put } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
+import { generateImageThumb, isThumbable, thumbKeyFor } from "../storage/thumb.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -15,6 +16,7 @@ type FileRow = {
   mime: string
   size: number
   storage_key: string
+  thumb_key: string | null
   version: number
   deleted_at: string | null
   created_at: string
@@ -110,6 +112,30 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       return stream(withHeaders, 200, res.body)
     })),
 
+    get("/files/:id/thumb", guard(async (c) => {
+      const userId = authId(c)
+      const id = Number(c.params.id)
+      const row = await db.one(
+        from("files")
+          .where(p => p("id").equals(id))
+          .where(p => p("user_id").equals(userId))
+          .where(p => p("deleted_at").isNull())
+          .select("thumb_key"),
+      ) as { thumb_key: string | null } | null
+
+      if (!row || !row.thumb_key) return json(c, 404, { error: "No thumbnail" })
+
+      const res = await fetchObject(store, row.thumb_key)
+      if (!res.body) return json(c, 404, { error: "No thumbnail" })
+
+      const withHeaders = putHeader(
+        putHeader(c, "content-type", "image/webp"),
+        "cache-control",
+        "private, max-age=300",
+      )
+      return stream(withHeaders, 200, res.body)
+    })),
+
     post("/files", upload(async (c) => {
       const userId = authId(c)
       const body = c.body as { fields: Record<string, string>; files: Record<string, Blob & { name?: string }> }
@@ -140,6 +166,20 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         const key = makeKey(userId, name)
         await put(store, key, file, mime)
 
+        let thumbKey: string | null = null
+        if (isThumbable(mime)) {
+          const bytes = new Uint8Array(await file.arrayBuffer())
+          const thumb = await generateImageThumb(bytes, mime)
+          if (thumb) {
+            thumbKey = thumbKeyFor(key)
+            try {
+              await put(store, thumbKey, thumb, "image/webp")
+            } catch {
+              thumbKey = null
+            }
+          }
+        }
+
         const existing = folderId === null
           ? await db.one(
               from("files")
@@ -157,19 +197,21 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
             ) as FileRow | null
 
         if (existing) {
+          const oldThumb = existing.thumb_key
           await archiveCurrent(db, existing, userId)
           const newVersion = existing.version + 1
           const rows = await db.execute(
             from("files")
               .where(q => q("id").equals(existing.id))
-              .update({ mime, size, storage_key: key, version: newVersion })
+              .update({ mime, size, storage_key: key, thumb_key: thumbKey, version: newVersion })
               .returning("id", "name", "mime", "size", "folder_id", "version", "created_at")
           )
+          if (oldThumb) await Promise.allSettled([drop(store, oldThumb)])
           result.push({ ...rows[0], new_version: true } as any)
         } else {
           const rows = await db.execute(
             from("files")
-              .insert({ user_id: userId, folder_id: folderId, name, mime, size, storage_key: key, version: 1 })
+              .insert({ user_id: userId, folder_id: folderId, name, mime, size, storage_key: key, thumb_key: thumbKey, version: 1 })
               .returning("id", "name", "mime", "size", "folder_id", "version", "created_at")
           )
           result.push({ ...rows[0], new_version: false } as any)
@@ -283,6 +325,7 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
 
       await Promise.allSettled([
         drop(store, row.storage_key),
+        ...(row.thumb_key ? [drop(store, row.thumb_key)] : []),
         ...versions.map(v => drop(store, v.storage_key)),
       ])
 
@@ -374,6 +417,24 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       ) as { id: number; version: number; mime: string; size: number; storage_key: string } | null
       if (!target) return json(c, 404, { error: "Version not found" })
 
+      const oldThumb = file.thumb_key
+
+      const restoredRes = await fetchObject(store, target.storage_key)
+      const bytes = new Uint8Array(await restoredRes.arrayBuffer())
+
+      let newThumbKey: string | null = null
+      if (isThumbable(target.mime)) {
+        const thumb = await generateImageThumb(bytes, target.mime)
+        if (thumb) {
+          newThumbKey = thumbKeyFor(target.storage_key)
+          try {
+            await put(store, newThumbKey, thumb, "image/webp")
+          } catch {
+            newThumbKey = null
+          }
+        }
+      }
+
       await archiveCurrent(db, file, userId)
 
       const newVersion = file.version + 1
@@ -382,6 +443,7 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
           mime: target.mime,
           size: target.size,
           storage_key: target.storage_key,
+          thumb_key: newThumbKey,
           version: newVersion,
         })
       )
@@ -389,6 +451,8 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       await db.execute(
         from("file_versions").where(q => q("id").equals(target.id)).del()
       )
+
+      if (oldThumb) await Promise.allSettled([drop(store, oldThumb)])
 
       return json(c, 200, { id, version: newVersion })
     })),
