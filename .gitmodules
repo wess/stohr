@@ -1,0 +1,3 @@
+[submodule "libs/atlas"]
+	path = libs/atlas
+	url = https://github.com/wess/atlas.git

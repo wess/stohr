@@ -25,7 +25,7 @@
         "typescript": "^5",
       },
     },
-    "atlas/packages/admin": {
+    "libs/atlas/packages/admin": {
       "name": "@atlas/admin",
       "version": "0.0.1",
       "dependencies": {
@@ -44,14 +44,14 @@
         "typescript": "^5",
       },
     },
-    "atlas/packages/ai": {
+    "libs/atlas/packages/ai": {
       "name": "@atlas/ai",
       "version": "0.0.1",
       "peerDependencies": {
         "typescript": "^5",
       },
     },
-    "atlas/packages/auth": {
+    "libs/atlas/packages/auth": {
       "name": "@atlas/auth",
       "version": "0.0.1",
       "dependencies": {
@@ -62,14 +62,14 @@
         "typescript": "^5",
       },
     },
-    "atlas/packages/cache": {
+    "libs/atlas/packages/cache": {
       "name": "@atlas/cache",
       "version": "0.0.1",
       "peerDependencies": {
         "typescript": "^5",
       },
     },
-    "atlas/packages/cli": {
+    "libs/atlas/packages/cli": {
       "name": "@atlas/cli",
       "version": "0.0.1",
       "bin": {
@@ -79,14 +79,14 @@
         "typescript": "^5",
       },
     },
-    "atlas/packages/config": {
+    "libs/atlas/packages/config": {
       "name": "@atlas/config",
       "version": "0.0.1",
       "peerDependencies": {
         "typescript": "^5",
       },
     },
-    "atlas/packages/db": {
+    "libs/atlas/packages/db": {
       "name": "@atlas/db",
       "version": "0.0.1",
       "dependencies": {
@@ -96,7 +96,7 @@
         "typescript": "^5",
       },
     },
-    "atlas/packages/mcp": {
+    "libs/atlas/packages/mcp": {
       "name": "@atlas/mcp",
       "version": "0.0.1",
       "bin": {
@@ -106,7 +106,7 @@
         "typescript": "^5",
       },
     },
-    "atlas/packages/migrate": {
+    "libs/atlas/packages/migrate": {
       "name": "@atlas/migrate",
       "version": "0.0.1",
       "dependencies": {
@@ -116,28 +116,28 @@
         "typescript": "^5",
       },
     },
-    "atlas/packages/request": {
+    "libs/atlas/packages/request": {
       "name": "@atlas/request",
       "version": "0.0.1",
       "peerDependencies": {
         "typescript": "^5",
       },
     },
-    "atlas/packages/server": {
+    "libs/atlas/packages/server": {
       "name": "@atlas/server",
       "version": "0.0.1",
       "peerDependencies": {
         "typescript": "^5",
       },
     },
-    "atlas/packages/storage": {
+    "libs/atlas/packages/storage": {
       "name": "@atlas/storage",
       "version": "0.0.1",
       "peerDependencies": {
         "typescript": "^5",
       },
     },
-    "atlas/packages/ui": {
+    "libs/atlas/packages/ui": {
       "name": "@atlas/ui",
       "version": "0.0.1",
       "dependencies": {
@@ -155,31 +155,31 @@
     },
   },
   "packages": {
-    "@atlas/admin": ["@atlas/admin@workspace:atlas/packages/admin"],
+    "@atlas/admin": ["@atlas/admin@workspace:libs/atlas/packages/admin"],
 
-    "@atlas/ai": ["@atlas/ai@workspace:atlas/packages/ai"],
+    "@atlas/ai": ["@atlas/ai@workspace:libs/atlas/packages/ai"],
 
-    "@atlas/auth": ["@atlas/auth@workspace:atlas/packages/auth"],
+    "@atlas/auth": ["@atlas/auth@workspace:libs/atlas/packages/auth"],
 
-    "@atlas/cache": ["@atlas/cache@workspace:atlas/packages/cache"],
+    "@atlas/cache": ["@atlas/cache@workspace:libs/atlas/packages/cache"],
 
-    "@atlas/cli": ["@atlas/cli@workspace:atlas/packages/cli"],
+    "@atlas/cli": ["@atlas/cli@workspace:libs/atlas/packages/cli"],
 
-    "@atlas/config": ["@atlas/config@workspace:atlas/packages/config"],
+    "@atlas/config": ["@atlas/config@workspace:libs/atlas/packages/config"],
 
-    "@atlas/db": ["@atlas/db@workspace:atlas/packages/db"],
+    "@atlas/db": ["@atlas/db@workspace:libs/atlas/packages/db"],
 
-    "@atlas/mcp": ["@atlas/mcp@workspace:atlas/packages/mcp"],
+    "@atlas/mcp": ["@atlas/mcp@workspace:libs/atlas/packages/mcp"],
 
-    "@atlas/migrate": ["@atlas/migrate@workspace:atlas/packages/migrate"],
+    "@atlas/migrate": ["@atlas/migrate@workspace:libs/atlas/packages/migrate"],
 
-    "@atlas/request": ["@atlas/request@workspace:atlas/packages/request"],
+    "@atlas/request": ["@atlas/request@workspace:libs/atlas/packages/request"],
 
-    "@atlas/server": ["@atlas/server@workspace:atlas/packages/server"],
+    "@atlas/server": ["@atlas/server@workspace:libs/atlas/packages/server"],
 
-    "@atlas/storage": ["@atlas/storage@workspace:atlas/packages/storage"],
+    "@atlas/storage": ["@atlas/storage@workspace:libs/atlas/packages/storage"],
 
-    "@atlas/ui": ["@atlas/ui@workspace:atlas/packages/ui"],
+    "@atlas/ui": ["@atlas/ui@workspace:libs/atlas/packages/ui"],
 
     "@babel/runtime": ["@babel/runtime@7.29.2", "", {}, "sha512-JiDShH45zKHWyGe4ZNVRrCjBz8Nh9TMmZG1kh4QTK8hCBTWBi8Da+i7s1fJw7/lYpM4ccepSNfqzZ/QvABBi5g=="],
 
@@ -265,8 +265,8 @@
 
     "zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 
-    "@atlas/admin/lucide-react": ["lucide-react@1.8.0", "", { "peerDependencies": { "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-WuvlsjngSk7TnTBJ1hsCy3ql9V9VOdcPkd3PKcSmM34vJD8KG6molxz7m7zbYFgICwsanQWmJ13JlYs4Zp7Arw=="],
+    "@atlas/admin/lucide-react": ["lucide-react@1.11.0", "", { "peerDependencies": { "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-UOhjdztXCgdBReRcIhsvz2siIBogfv/lhJEIViCpLt924dO+GDms9T7DNoucI23s6kEPpe988m5N0D2ajnzb2g=="],
 
-    "@atlas/ui/lucide-react": ["lucide-react@1.8.0", "", { "peerDependencies": { "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-WuvlsjngSk7TnTBJ1hsCy3ql9V9VOdcPkd3PKcSmM34vJD8KG6molxz7m7zbYFgICwsanQWmJ13JlYs4Zp7Arw=="],
+    "@atlas/ui/lucide-react": ["lucide-react@1.11.0", "", { "peerDependencies": { "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-UOhjdztXCgdBReRcIhsvz2siIBogfv/lhJEIViCpLt924dO+GDms9T7DNoucI23s6kEPpe988m5N0D2ajnzb2g=="],
   }
 }
