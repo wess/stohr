@@ -1,0 +1,32 @@
+{
+  "name": "stohr",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "workspaces": ["atlas/packages/*"],
+  "scripts": {
+    "dev": "bun src/dev.ts",
+    "api": "bun --hot src/server.ts",
+    "web": "bun --hot src/web/serve.ts"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/bun": "latest"
+  },
+  "dependencies": {
+    "react": "^19",
+    "react-dom": "^19",
+    "lucide-react": "^0.468.0",
+    "@atlas/cli": "workspace:*",
+    "@atlas/config": "workspace:*",
+    "@atlas/db": "workspace:*",
+    "@atlas/migrate": "workspace:*",
+    "@atlas/server": "workspace:*",
+    "@atlas/auth": "workspace:*",
+    "@atlas/storage": "workspace:*"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
