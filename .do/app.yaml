@@ -1,0 +1,46 @@
+name: stohr
+region: nyc
+
+services:
+  - name: api
+    dockerfile_path: dockerfile
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    http_port: 3000
+    run_command: bun src/server.ts
+    routes:
+      - path: /api
+    envs:
+      - key: PORT
+        value: "3000"
+      - key: SECRET
+        type: SECRET
+      - key: DATABASE_URL
+        value: ${db.DATABASE_URL}
+      - key: S3_ENDPOINT
+      - key: S3_BUCKET
+      - key: S3_REGION
+      - key: S3_ACCESS_KEY
+        type: SECRET
+      - key: S3_SECRET_KEY
+        type: SECRET
+
+  - name: web
+    dockerfile_path: dockerfile
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    http_port: 3001
+    run_command: bun src/web/serve.ts
+    routes:
+      - path: /
+    envs:
+      - key: WEB_PORT
+        value: "3001"
+      - key: API_URL
+        value: ${api.PRIVATE_URL}
+
+databases:
+  - name: db
+    engine: PG
+    version: "16"
+    production: false
