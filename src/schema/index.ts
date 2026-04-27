@@ -42,6 +42,16 @@ export const paymentConfig = defineSchema("payment_config", {
   updated_at: column.timestamp().default("now()"),
 })
 
+export const s3AccessKeys = defineSchema("s3_access_keys", {
+  id: column.serial().primaryKey(),
+  user_id: column.integer().ref("users", "id"),
+  access_key: column.text().unique(),
+  secret_key: column.text(),
+  name: column.text().nullable(),
+  last_used_at: column.timestamp().nullable(),
+  created_at: column.timestamp().default("now()"),
+})
+
 export const lemonsqueezyEvents = defineSchema("lemonsqueezy_events", {
   id: column.serial().primaryKey(),
   event_name: column.text(),

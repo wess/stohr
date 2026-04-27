@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build/master.swiftdeps"
+  },
+  "/Users/wess/Desktop/stohr/sdk/swift/Tests/StohrTests/StohrTests.swift": {
+    "dependencies": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build/StohrTests.d",
+    "object": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build/StohrTests.swift.o",
+    "swiftmodule": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build/StohrTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build/StohrTests.swiftdeps",
+    "diagnostics": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build/StohrTests.dia"
+  }
+}

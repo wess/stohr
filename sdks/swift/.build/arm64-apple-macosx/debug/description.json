@@ -1,0 +1,657 @@
+{
+  "builtTestProducts" : [
+    {
+      "binaryPath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.xctest/Contents/MacOS/StohrPackageTests",
+      "packagePath" : "/Users/wess/Desktop/stohr/sdk/swift",
+      "productName" : "StohrPackageTests"
+    }
+  ],
+  "copyCommands" : {
+
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.Stohr-arm64-apple-macosx26.0-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/sources",
+      "importPath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/Sources/Stohr/Client.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/Sources/Stohr/Models.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "Stohr",
+      "moduleOutputPath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Modules/Stohr.swiftmodule",
+      "objects" : [
+        "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Client.swift.o",
+        "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Models.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx12.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-emit-objc-header",
+        "-emit-objc-header-path",
+        "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/include/Stohr-Swift.h",
+        "-swift-version",
+        "5",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "swift"
+      ],
+      "outputFileMapPath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Client.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Models.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Modules/Stohr.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/wess/Desktop/stohr/sdk/swift/Sources/Stohr/Client.swift",
+        "/Users/wess/Desktop/stohr/sdk/swift/Sources/Stohr/Models.swift"
+      ],
+      "tempsPath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build",
+      "wholeModuleOptimization" : false
+    },
+    "C.StohrPackageTests-arm64-apple-macosx26.0-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.build/sources",
+      "importPath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.derived/runner.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Modules/StohrTests.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "StohrPackageTests",
+      "moduleOutputPath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Modules/StohrPackageTests.swiftmodule",
+      "objects" : [
+        "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.build/runner.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx12.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-Xfrontend",
+        "-enable-cross-import-overlays",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-emit-objc-header",
+        "-emit-objc-header-path",
+        "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.build/include/StohrPackageTests-Swift.h",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "swift"
+      ],
+      "outputFileMapPath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.build/runner.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Modules/StohrPackageTests.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.derived/runner.swift"
+      ],
+      "tempsPath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.build",
+      "wholeModuleOptimization" : false
+    },
+    "C.StohrTests-arm64-apple-macosx26.0-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build/sources",
+      "importPath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/Tests/StohrTests/StohrTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Modules/Stohr.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "StohrTests",
+      "moduleOutputPath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Modules/StohrTests.swiftmodule",
+      "objects" : [
+        "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build/StohrTests.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx14.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-Xfrontend",
+        "-enable-cross-import-overlays",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-swift-version",
+        "5",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "swift"
+      ],
+      "outputFileMapPath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build/StohrTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Modules/StohrTests.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/wess/Desktop/stohr/sdk/swift/Tests/StohrTests/StohrTests.swift"
+      ],
+      "tempsPath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build",
+      "wholeModuleOptimization" : false
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "Stohr" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "Stohr",
+      "-package-name",
+      "swift",
+      "-c",
+      "/Users/wess/Desktop/stohr/sdk/swift/Sources/Stohr/Client.swift",
+      "/Users/wess/Desktop/stohr/sdk/swift/Sources/Stohr/Models.swift",
+      "-I",
+      "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx12.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-emit-objc-header",
+      "-emit-objc-header-path",
+      "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/include/Stohr-Swift.h",
+      "-swift-version",
+      "5",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "swift",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ],
+    "StohrPackageTests" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "StohrPackageTests",
+      "-package-name",
+      "swift",
+      "-c",
+      "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.derived/runner.swift",
+      "-I",
+      "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx12.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-Xfrontend",
+      "-enable-cross-import-overlays",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-emit-objc-header",
+      "-emit-objc-header-path",
+      "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.build/include/StohrPackageTests-Swift.h",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "swift",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ],
+    "StohrTests" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "StohrTests",
+      "-package-name",
+      "swift",
+      "-c",
+      "/Users/wess/Desktop/stohr/sdk/swift/Tests/StohrTests/StohrTests.swift",
+      "-I",
+      "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx14.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-Xfrontend",
+      "-enable-cross-import-overlays",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-swift-version",
+      "5",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "swift",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "Stohr" : [
+
+    ],
+    "StohrPackageTests" : [
+      "StohrTests",
+      "Stohr"
+    ],
+    "StohrTests" : [
+      "Stohr"
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+    "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.derived/runner.swift" : {
+      "inputs" : [
+
+      ],
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.derived/runner.swift"
+        }
+      ]
+    }
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/Sources/Stohr/Client.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/Sources/Stohr/Models.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/sources"
+    },
+    "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.derived/runner.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.build/sources"
+    },
+    "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Client.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Models.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.build/runner.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build/StohrTests.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrPackageTests.product/Objects.LinkFileList"
+    },
+    "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/wess/Desktop/stohr/sdk/swift/Tests/StohrTests/StohrTests.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/StohrTests.build/sources"
+    },
+    "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+    }
+  }
+}

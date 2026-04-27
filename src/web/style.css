@@ -809,6 +809,122 @@ input:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px 
 .autosetup-tier-periods .yes { color: var(--ok-fg); font-weight: 600; }
 .autosetup-tier-periods .no { color: var(--muted); }
 
+/* Developer panel */
+.dev-config {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+.dev-config-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+}
+.dev-config-row > span:first-child {
+  width: 80px;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-weight: 500;
+}
+.dev-config-row code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  background: var(--panel);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.dev-config-note {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+.dev-create {
+  margin-top: 12px;
+  padding: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.dev-secret {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.dev-secret label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.dev-secret-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dev-secret-row code {
+  flex: 1;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  background: var(--panel);
+  padding: 8px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  word-break: break-all;
+}
+.dev-list {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dev-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.dev-row-main {
+  flex: 1;
+  min-width: 0;
+}
+.dev-row-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.dev-row-line code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  background: var(--bg);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.dev-row-name {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+}
+.dev-row-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
 /* Test/Live mode toggle */
 .mode-toggle {
   display: inline-flex;

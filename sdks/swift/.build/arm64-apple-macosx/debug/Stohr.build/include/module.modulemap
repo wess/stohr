@@ -1,0 +1,3 @@
+module Stohr {
+    header "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/include/Stohr-Swift.h"
+}

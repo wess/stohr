@@ -1,0 +1,19 @@
+{
+  "": {
+    "swift-dependencies": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/master.swiftdeps"
+  },
+  "/Users/wess/Desktop/stohr/sdk/swift/Sources/Stohr/Client.swift": {
+    "dependencies": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Client.d",
+    "object": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Client.swift.o",
+    "swiftmodule": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Client~partial.swiftmodule",
+    "swift-dependencies": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Client.swiftdeps",
+    "diagnostics": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Client.dia"
+  },
+  "/Users/wess/Desktop/stohr/sdk/swift/Sources/Stohr/Models.swift": {
+    "dependencies": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Models.d",
+    "object": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Models.swift.o",
+    "swiftmodule": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Models~partial.swiftmodule",
+    "swift-dependencies": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Models.swiftdeps",
+    "diagnostics": "/Users/wess/Desktop/stohr/sdk/swift/.build/arm64-apple-macosx/debug/Stohr.build/Models.dia"
+  }
+}

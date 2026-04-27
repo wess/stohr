@@ -330,6 +330,15 @@ export const adminListPaymentEvents = () =>
 export const adminAutoSetupPayments = (input: { api_key: string; webhook_url: string; mode: "test" | "live" }) =>
   jsonReq("POST", "/admin/payments/autosetup", input)
 
+export const listS3Keys = () =>
+  jsonReq("GET", "/me/s3-keys")
+
+export const createS3Key = (name?: string) =>
+  jsonReq("POST", "/me/s3-keys", { name })
+
+export const revokeS3Key = (id: number) =>
+  jsonReq("DELETE", `/me/s3-keys/${id}`)
+
 export const getPublicFolder = async (username: string, folderId: number) => {
   const res = await fetch(`${BASE}/p/${encodeURIComponent(username)}/${folderId}`)
   return res.json()

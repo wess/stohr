@@ -2057,6 +2057,142 @@ const SubscriptionPanel: React.FC = () => {
   )
 }
 
+type S3Key = {
+  id: number
+  access_key: string
+  secret_key?: string
+  name: string | null
+  created_at: string
+  last_used_at: string | null
+}
+
+const DeveloperPanel: React.FC = () => {
+  const [keys, setKeys] = useState<S3Key[]>([])
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [justCreated, setJustCreated] = useState<S3Key | null>(null)
+  const [error, setError] = useState("")
+
+  const load = async () => {
+    const data = await api.listS3Keys()
+    setKeys(Array.isArray(data) ? data : [])
+  }
+  useEffect(() => { load() }, [])
+
+  const create = async () => {
+    setBusy(true); setError("")
+    const res = await api.createS3Key(newName.trim() || undefined)
+    setBusy(false)
+    if (res.error) return setError(res.error)
+    setJustCreated(res as S3Key)
+    setNewName("")
+    setCreating(false)
+    await load()
+  }
+
+  const revoke = async (id: number) => {
+    if (!confirm("Revoke this access key? Anything using it will stop working immediately.")) return
+    const res = await api.revokeS3Key(id)
+    if (res.error) return alert(res.error)
+    await load()
+  }
+
+  const me = api.getUser()
+  const endpoint = window.location.origin + "/s3"
+
+  return (
+    <section className="settings-card">
+      <h3>Developer</h3>
+      <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 12 }}>
+        S3-compatible access keys for using your stohr storage with <code>aws-cli</code>, <code>boto3</code>, or any AWS SDK.
+      </div>
+
+      <div className="dev-config">
+        <div className="dev-config-row">
+          <span>Endpoint</span>
+          <code>{endpoint}</code>
+        </div>
+        <div className="dev-config-row">
+          <span>Bucket</span>
+          <code>{me?.username ?? "—"}</code>
+          <span className="dev-config-note">your username</span>
+        </div>
+        <div className="dev-config-row">
+          <span>Region</span>
+          <code>us-east-1</code>
+          <span className="dev-config-note">any value works</span>
+        </div>
+      </div>
+
+      {justCreated && (
+        <div className="msg ok" style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>
+            New access key — save the secret now, it won't be shown again
+          </div>
+          <div className="dev-secret">
+            <label>Access key</label>
+            <div className="dev-secret-row">
+              <code>{justCreated.access_key}</code>
+              <button onClick={() => navigator.clipboard.writeText(justCreated.access_key)}>Copy</button>
+            </div>
+            <label>Secret key</label>
+            <div className="dev-secret-row">
+              <code>{justCreated.secret_key}</code>
+              <button onClick={() => navigator.clipboard.writeText(justCreated.secret_key ?? "")}>Copy</button>
+            </div>
+          </div>
+          <button onClick={() => setJustCreated(null)} style={{ marginTop: 8 }}>I've saved it</button>
+        </div>
+      )}
+
+      {creating && !justCreated && (
+        <div className="dev-create">
+          <label>Name <span className="lp-field-opt">(optional, e.g. "laptop")</span></label>
+          <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="What's this key for?" autoFocus />
+          {error && <div className="msg err" style={{ marginTop: 8 }}>{error}</div>}
+          <div className="settings-actions">
+            <button onClick={() => { setCreating(false); setNewName("") }}>Cancel</button>
+            <button className="primary" disabled={busy} onClick={create}>{busy ? "Creating…" : "Create key"}</button>
+          </div>
+        </div>
+      )}
+
+      {!creating && !justCreated && (
+        <div className="settings-actions" style={{ justifyContent: "flex-start", marginTop: 12 }}>
+          <button className="primary" onClick={() => setCreating(true)}>
+            <UserPlus size={14} /> <span>New access key</span>
+          </button>
+        </div>
+      )}
+
+      {keys.length === 0 ? (
+        <div style={{ marginTop: 16, color: "var(--muted)", fontSize: 13 }}>No access keys yet.</div>
+      ) : (
+        <div className="dev-list">
+          {keys.map(k => (
+            <div key={k.id} className="dev-row">
+              <div className="dev-row-main">
+                <div className="dev-row-line">
+                  <code>{k.access_key}</code>
+                  {k.name && <span className="dev-row-name">{k.name}</span>}
+                </div>
+                <div className="dev-row-meta">
+                  Created {new Date(k.created_at).toLocaleDateString()}
+                  {k.last_used_at
+                    ? ` · last used ${new Date(k.last_used_at).toLocaleDateString()}`
+                    : " · never used"}
+                </div>
+              </div>
+              <button className="danger" onClick={() => revoke(k.id)}>Revoke</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
 type Invite = { id: number; token: string; email: string | null; used_at: string | null; used_by: number | null; created_at: string }
 
 const InvitesPanel: React.FC = () => {
@@ -2233,6 +2369,8 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
           </section>
 
           <SubscriptionPanel />
+
+          <DeveloperPanel />
 
           <InvitesPanel />
 

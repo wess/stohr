@@ -15,6 +15,8 @@ import { publicRoutes } from "./public/index.ts"
 import { waitlistRoutes } from "./waitlist/index.ts"
 import { adminRoutes } from "./admin/index.ts"
 import { paymentsRoutes } from "./payments/index.ts"
+import { s3KeyRoutes } from "./s3keys/index.ts"
+import { s3Routes } from "./s3/index.ts"
 import { createStorage } from "./storage/index.ts"
 
 const config = defineConfig({
@@ -53,6 +55,8 @@ const fetch = router(
   ...waitlistRoutes(db),
   ...adminRoutes(db, config.secret),
   ...paymentsRoutes(db, config.secret),
+  ...s3KeyRoutes(db, config.secret),
+  ...s3Routes(db, store),
 )
 
 Bun.serve({
