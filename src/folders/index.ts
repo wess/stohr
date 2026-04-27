@@ -110,9 +110,11 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
 
     post("/folders", authed(async (c) => {
       const userId = authId(c)
-      const body = c.body as { name: string; parent_id?: number | null; parentId?: number | null }
+      const body = c.body as { name: string; parent_id?: number | null; parentId?: number | null; kind?: string; is_public?: boolean; isPublic?: boolean }
       const name = body.name
       const parentId = body.parent_id ?? body.parentId ?? null
+      const kind = body.kind === "photos" ? "photos" : "standard"
+      const isPublic = body.is_public ?? body.isPublic ?? false
       if (!name || !name.trim()) return json(c, 422, { error: "Name required" })
 
       let ownerId = userId
@@ -125,8 +127,8 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
 
       const rows = await db.execute(
         from("folders")
-          .insert({ user_id: ownerId, parent_id: parentId, name: name.trim() })
-          .returning("id", "name", "parent_id", "created_at"),
+          .insert({ user_id: ownerId, parent_id: parentId, name: name.trim(), kind, is_public: isPublic })
+          .returning("id", "name", "parent_id", "kind", "is_public", "created_at"),
       )
 
       return json(c, 201, rows[0])
@@ -135,20 +137,33 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
     patch("/folders/:id", authed(async (c) => {
       const userId = authId(c)
       const id = Number(c.params.id)
-      const body = c.body as { name?: string; parent_id?: number | null; parentId?: number | null }
+      const body = c.body as { name?: string; parent_id?: number | null; parentId?: number | null; kind?: string; is_public?: boolean; isPublic?: boolean }
       const hasName = typeof body.name === "string"
       const hasParent = body.parent_id !== undefined || body.parentId !== undefined
-      if (!hasName && !hasParent) return json(c, 422, { error: "Nothing to update" })
+      const hasKind = typeof body.kind === "string"
+      const hasPublic = body.is_public !== undefined || body.isPublic !== undefined
+      if (!hasName && !hasParent && !hasKind && !hasPublic) return json(c, 422, { error: "Nothing to update" })
 
       const access = await folderAccess(db, userId, id)
       if (!access) return json(c, 404, { error: "Folder not found" })
       if (!canWrite(access.role)) return json(c, 403, { error: "Read-only access" })
+      if ((hasKind || hasPublic) && !isOwner(access.role)) {
+        return json(c, 403, { error: "Only the owner can change folder type or public access" })
+      }
 
       const patchData: Record<string, unknown> = {}
       if (hasName) {
         const name = body.name!.trim()
         if (!name) return json(c, 422, { error: "Name required" })
         patchData.name = name
+      }
+      if (hasKind) {
+        const k = body.kind!
+        if (k !== "standard" && k !== "photos") return json(c, 422, { error: "Invalid kind" })
+        patchData.kind = k
+      }
+      if (hasPublic) {
+        patchData.is_public = !!(body.is_public ?? body.isPublic)
       }
       if (hasParent) {
         const rawParent = body.parent_id !== undefined ? body.parent_id : body.parentId

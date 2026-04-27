@@ -43,11 +43,14 @@ type Route =
   | { kind: "trash" }
   | { kind: "settings" }
   | { kind: "share"; token: string }
+  | { kind: "publicFolder"; username: string; folderId: number }
 
 const parseRoute = (loc: { pathname: string; search: string }): Route => {
   const path = loc.pathname
   const share = path.match(/^\/s\/(.+)$/)
   if (share) return { kind: "share", token: share[1]! }
+  const pub = path.match(/^\/p\/([^/]+)\/(\d+)/)
+  if (pub) return { kind: "publicFolder", username: pub[1]!, folderId: Number(pub[2]) }
   const f1 = path.match(/^\/app\/u\/([^/]+)\/f\/(\d+)/)
   if (f1) return { kind: "folder", ownerUsername: f1[1], id: Number(f1[2]) }
   const f2 = path.match(/^\/app\/u\/([^/]+)\/file\/(\d+)/)
@@ -73,7 +76,7 @@ const folderHref = (id: number, ownerUsername?: string) =>
 const fileHref = (id: number, ownerUsername: string) =>
   `/app/u/${ownerUsername}/file/${id}`
 
-type Folder = { id: number; name: string; parent_id: number | null; created_at: string }
+type Folder = { id: number; name: string; parent_id: number | null; kind?: string; is_public?: boolean; created_at: string }
 type FileItem = { id: number; name: string; mime: string; size: number; folder_id: number | null; version: number; created_at: string }
 type Crumb = { id: number; name: string }
 type Share = { id: number; token: string; expires_at: string | null; created_at: string; name: string; size: number; mime: string; file_id: number }
@@ -247,6 +250,9 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
   const [crumbs, setCrumbs] = useState<Crumb[]>([])
   const [currentRole, setCurrentRole] = useState<"owner" | "editor" | "viewer">("owner")
   const [currentOwner, setCurrentOwner] = useState<{ id: number; username: string; name: string } | null>(null)
+  const [currentKind, setCurrentKind] = useState<string>("standard")
+  const [currentIsPublic, setCurrentIsPublic] = useState<boolean>(false)
+  const [showFolderSettings, setShowFolderSettings] = useState(false)
   const [search, setSearch] = useState("")
   const [dragOver, setDragOver] = useState(false)
   const [creatingFolder, setCreatingFolder] = useState(false)
@@ -295,12 +301,16 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
       setCrumbs([])
       setCurrentRole("owner")
       setCurrentOwner(null)
+      setCurrentKind("standard")
+      setCurrentIsPublic(false)
     } else {
-      const data = await api.getFolder(currentId) as FolderDetail & { error?: string }
+      const data = await api.getFolder(currentId) as (FolderDetail & { kind?: string; is_public?: boolean }) & { error?: string }
       if (data && !data.error) {
         setCrumbs(data.trail ?? [])
         setCurrentRole(data.role ?? "owner")
         setCurrentOwner(data.owner ?? null)
+        setCurrentKind(data.kind ?? "standard")
+        setCurrentIsPublic(!!data.is_public)
       }
     }
   }
@@ -487,6 +497,11 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
           })}
         </div>
         <input className="search" placeholder="Search files..." value={search} onChange={e => setSearch(e.target.value)} />
+        {currentId != null && currentRole === "owner" && (
+          <button onClick={() => setShowFolderSettings(true)} aria-label="Folder settings" title="Folder settings">
+            <SettingsIcon size={14} />
+          </button>
+        )}
         <button onClick={() => setCreatingFolder(true)}>
           <FolderPlus size={14} /> <span>Folder</span>
         </button>
@@ -566,7 +581,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
               </div>
             )
           })}
-          {files.map(f => {
+          {currentKind !== "photos" && files.map(f => {
             const key = `fi-${f.id}`
             const sel = selected.has(key)
             return (
@@ -597,6 +612,15 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
             )
           })}
         </div>
+
+        {currentKind === "photos" && (
+          <PhotosGallery
+            files={files}
+            thumbUrl={(id, version) => `/api/files/${id}/thumb?v=${version}`}
+            fullUrl={(id) => `${api.downloadUrl(id)}?inline=1`}
+            authHeader
+          />
+        )}
       </div>
 
       {creatingFolder && (
@@ -635,6 +659,18 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
 
       {previewing && (
         <PreviewModal file={previewing} onClose={() => setPreviewing(null)} />
+      )}
+
+      {showFolderSettings && currentId != null && (
+        <FolderSettingsModal
+          folderId={currentId}
+          folderName={crumbs[crumbs.length - 1]?.name ?? ""}
+          ownerUsername={currentOwner?.username ?? me?.username ?? ""}
+          initialKind={currentKind}
+          initialIsPublic={currentIsPublic}
+          onClose={() => setShowFolderSettings(false)}
+          onSaved={async () => { setShowFolderSettings(false); await load() }}
+        />
       )}
 
       {viewingVersions && (
@@ -1375,6 +1411,276 @@ const SharesView: React.FC = () => {
   )
 }
 
+type GalleryFile = { id: number; name: string; mime: string; size: number; version: number; created_at: string }
+
+const AuthedImage: React.FC<{ src: string; alt: string; useAuth: boolean; className?: string }> = ({ src, alt, useAuth, className }) => {
+  const [resolved, setResolved] = useState<string | null>(useAuth ? null : src)
+  useEffect(() => {
+    if (!useAuth) { setResolved(src); return }
+    let url: string | null = null
+    let aborted = false
+    ;(async () => {
+      try {
+        const res = await fetch(src, { headers: { authorization: `Bearer ${api.getToken()}` } })
+        if (!res.ok) return
+        const blob = await res.blob()
+        if (aborted) return
+        url = URL.createObjectURL(blob)
+        setResolved(url)
+      } catch {}
+    })()
+    return () => {
+      aborted = true
+      if (url) URL.revokeObjectURL(url)
+    }
+  }, [src, useAuth])
+  if (!resolved) return <div className={`thumb-skeleton ${className ?? ""}`} />
+  return <img src={resolved} alt={alt} loading="lazy" className={className} />
+}
+
+const PhotosGallery: React.FC<{
+  files: GalleryFile[]
+  thumbUrl: (id: number, version: number) => string
+  fullUrl: (id: number) => string
+  authHeader?: boolean
+}> = ({ files, thumbUrl, fullUrl, authHeader }) => {
+  const [active, setActive] = useState<number | null>(null)
+  const photos = files.filter(f => f.mime.startsWith("image/") || f.mime.startsWith("video/"))
+
+  useEffect(() => {
+    if (active === null) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setActive(null)
+      else if (e.key === "ArrowRight") setActive(i => (i === null ? 0 : Math.min(i + 1, photos.length - 1)))
+      else if (e.key === "ArrowLeft") setActive(i => (i === null ? 0 : Math.max(i - 1, 0)))
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [active, photos.length])
+
+  if (photos.length === 0) {
+    return (
+      <div className="empty">
+        <div className="big"><FileImage size={64} strokeWidth={1.25} /></div>
+        <div>No photos yet</div>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <div className="gallery">
+        {photos.map(p => (
+          <div key={p.id} className="tile" onClick={() => setActive(photos.indexOf(p))}>
+            <AuthedImage
+              src={thumbUrl(p.id, p.version)}
+              alt={p.name}
+              useAuth={!!authHeader}
+            />
+          </div>
+        ))}
+      </div>
+      {active !== null && photos[active] && (
+        <LightboxView
+          file={photos[active]!}
+          fullUrl={fullUrl}
+          authHeader={!!authHeader}
+          hasPrev={active > 0}
+          hasNext={active < photos.length - 1}
+          onPrev={() => setActive(i => (i === null ? null : Math.max(0, i - 1)))}
+          onNext={() => setActive(i => (i === null ? null : Math.min(photos.length - 1, i + 1)))}
+          onClose={() => setActive(null)}
+        />
+      )}
+    </>
+  )
+}
+
+const LightboxView: React.FC<{
+  file: GalleryFile
+  fullUrl: (id: number) => string
+  authHeader: boolean
+  hasPrev: boolean
+  hasNext: boolean
+  onPrev: () => void
+  onNext: () => void
+  onClose: () => void
+}> = ({ file, fullUrl, authHeader, hasPrev, hasNext, onPrev, onNext, onClose }) => {
+  const [src, setSrc] = useState<string | null>(null)
+
+  useEffect(() => {
+    let aborted = false
+    let objectUrl: string | null = null
+    ;(async () => {
+      if (!authHeader) {
+        setSrc(fullUrl(file.id))
+        return
+      }
+      const res = await fetch(fullUrl(file.id), {
+        headers: { authorization: `Bearer ${api.getToken()}` },
+      })
+      if (!res.ok) { setSrc(null); return }
+      const blob = await res.blob()
+      if (aborted) return
+      objectUrl = URL.createObjectURL(blob)
+      setSrc(objectUrl)
+    })()
+    return () => {
+      aborted = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [file.id])
+
+  return (
+    <div className="lightbox" onClick={onClose}>
+      <div className="lightbox-bar" onClick={e => e.stopPropagation()}>
+        <div className="lightbox-title">{file.name}</div>
+        <button onClick={onClose} aria-label="Close"><X size={18} /></button>
+      </div>
+      <div className="lightbox-stage" onClick={e => e.stopPropagation()}>
+        {hasPrev && (
+          <button className="lightbox-nav prev" onClick={onPrev} aria-label="Previous">‹</button>
+        )}
+        {file.mime.startsWith("video/") ? (
+          src && <video src={src} controls autoPlay />
+        ) : (
+          src && <img src={src} alt={file.name} />
+        )}
+        {hasNext && (
+          <button className="lightbox-nav next" onClick={onNext} aria-label="Next">›</button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+const FolderSettingsModal: React.FC<{
+  folderId: number
+  folderName: string
+  ownerUsername: string
+  initialKind: string
+  initialIsPublic: boolean
+  onClose: () => void
+  onSaved: () => void
+}> = ({ folderId, folderName, ownerUsername, initialKind, initialIsPublic, onClose, onSaved }) => {
+  const [kind, setKind] = useState(initialKind === "photos" ? "photos" : "standard")
+  const [isPublic, setIsPublic] = useState(initialIsPublic)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+
+  const publicUrl = `${window.location.origin}/p/${ownerUsername}/${folderId}`
+  const dirty = kind !== initialKind || isPublic !== initialIsPublic
+
+  const save = async () => {
+    setBusy(true)
+    setError("")
+    const res = await api.updateFolder(folderId, {
+      kind: kind as "standard" | "photos",
+      is_public: isPublic,
+    })
+    setBusy(false)
+    if (res.error) return setError(res.error)
+    onSaved()
+  }
+
+  return (
+    <Modal title={`Folder settings — ${folderName}`} onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={kind === "photos"}
+            onChange={e => setKind(e.target.checked ? "photos" : "standard")}
+            style={{ width: 18, height: 18 }}
+          />
+          <div>
+            <div style={{ fontWeight: 500 }}>Photos folder</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              Render this folder as an image gallery with a lightbox.
+            </div>
+          </div>
+        </label>
+
+        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={isPublic}
+            onChange={e => setIsPublic(e.target.checked)}
+            style={{ width: 18, height: 18 }}
+          />
+          <div>
+            <div style={{ fontWeight: 500 }}>Public access</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              Anyone with the link can view (no sign-in required).
+            </div>
+          </div>
+        </label>
+
+        {isPublic && (
+          <div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Public link:</div>
+            <div className="share-link">{publicUrl}</div>
+            <button onClick={() => navigator.clipboard.writeText(publicUrl)} style={{ marginTop: 6 }}>
+              Copy link
+            </button>
+          </div>
+        )}
+
+        {error && <div className="msg err">{error}</div>}
+      </div>
+      <div className="actions">
+        <button onClick={onClose}>Cancel</button>
+        <button className="primary" onClick={save} disabled={!dirty || busy}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+const PublicFolderPage: React.FC<{ username: string; folderId: number }> = ({ username, folderId }) => {
+  const [data, setData] = useState<
+    | { folder: { id: number; name: string; kind: string }; owner: { username: string; name: string }; files: GalleryFile[] }
+    | { error: string }
+    | null
+  >(null)
+
+  useEffect(() => {
+    api.getPublicFolder(username, folderId).then(setData)
+  }, [username, folderId])
+
+  if (!data) return <div className="share-page">Loading…</div>
+  if ("error" in data) {
+    return (
+      <div className="share-page">
+        <div className="file-icon"><AlertTriangle size={64} strokeWidth={1.5} /></div>
+        <div className="filename">Not found</div>
+        <div className="filemeta">This folder isn't public, or doesn't exist.</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="public-folder">
+      <header className="public-header">
+        <div className="public-brand" onClick={() => window.location.assign("/")}>Stohr</div>
+        <div className="public-meta">
+          <div className="public-title">{data.folder.name}</div>
+          <div className="public-owner">@{data.owner.username}</div>
+        </div>
+      </header>
+      <div className="public-content">
+        <PhotosGallery
+          files={data.files}
+          thumbUrl={id => api.publicThumbUrl(id)}
+          fullUrl={id => api.publicFileInlineUrl(id)}
+          authHeader={false}
+        />
+      </div>
+    </div>
+  )
+}
+
 const SharePage: React.FC<{ token: string }> = ({ token }) => {
   const [meta, setMeta] = useState<{ name: string; size: number; mime: string; error?: string } | null>(null)
 
@@ -1382,20 +1688,72 @@ const SharePage: React.FC<{ token: string }> = ({ token }) => {
     api.shareMeta(token).then(setMeta)
   }, [token])
 
-  if (!meta) return <div className="share-page">Loading...</div>
-  if (meta.error) return <div className="share-page"><div className="file-icon"><AlertTriangle size={64} strokeWidth={1.5} /></div><div className="filename">{meta.error}</div></div>
+  if (!meta) return <div className="share-page">Loading…</div>
+  if (meta.error) {
+    return (
+      <div className="share-page">
+        <div className="file-icon"><AlertTriangle size={64} strokeWidth={1.5} /></div>
+        <div className="filename">{meta.error}</div>
+      </div>
+    )
+  }
+
+  const kind = kindFor(meta.mime)
+  const inlineUrl = api.shareInlineUrl(token)
+  const downloadUrl = api.shareDownloadUrl(token)
 
   return (
-    <div className="share-page">
-      <div style={{ color: "var(--brand)", fontSize: 22, fontWeight: 700 }}>Stohr</div>
-      <div className="file-icon"><MimeIcon mime={meta.mime} size={64} /></div>
-      <div className="filename">{meta.name}</div>
-      <div className="filemeta">{formatBytes(meta.size)} • {meta.mime}</div>
-      <a className="dl-btn" href={api.shareDownloadUrl(token)}>
-        <button className="primary">Download</button>
-      </a>
+    <div className="public-folder">
+      <header className="public-header">
+        <div className="public-brand" onClick={() => window.location.assign("/")}>Stohr</div>
+        <div className="public-meta">
+          <div className="public-title">{meta.name}</div>
+          <div className="public-owner">{formatBytes(meta.size)} • {meta.mime}</div>
+        </div>
+        <a href={downloadUrl} download={meta.name}>
+          <button className="primary"><Download size={14} /> <span>Download</span></button>
+        </a>
+      </header>
+      <div className="public-content share-viewer">
+        {kind === "image" && <img className="share-media" src={inlineUrl} alt={meta.name} />}
+        {kind === "video" && <video className="share-media" src={inlineUrl} controls />}
+        {kind === "audio" && (
+          <div className="share-audio">
+            <div className="preview-audio-icon"><Music size={72} strokeWidth={1.25} /></div>
+            <audio src={inlineUrl} controls />
+          </div>
+        )}
+        {kind === "pdf" && <iframe className="share-pdf" src={inlineUrl} title={meta.name} />}
+        {kind === "text" && <ShareText url={inlineUrl} />}
+        {kind === "other" && (
+          <div className="empty">
+            <div className="big"><MimeIcon mime={meta.mime} size={64} /></div>
+            <div>No inline preview for this file type</div>
+            <a href={downloadUrl} download={meta.name} style={{ marginTop: 16, display: "inline-block" }}>
+              <button className="primary">Download {meta.name}</button>
+            </a>
+          </div>
+        )}
+      </div>
     </div>
   )
+}
+
+const ShareText: React.FC<{ url: string }> = ({ url }) => {
+  const [text, setText] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    let aborted = false
+    fetch(url).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      return r.text()
+    }).then(t => { if (!aborted) setText(t) })
+      .catch(e => { if (!aborted) setError(e.message) })
+    return () => { aborted = true }
+  }, [url])
+  if (error) return <div className="empty">Could not load: {error}</div>
+  if (text === null) return <div className="empty">Loading…</div>
+  return <pre className="preview-text">{text}</pre>
 }
 
 const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, route }) => {
@@ -1692,6 +2050,7 @@ const App: React.FC = () => {
   }, [])
 
   if (route.kind === "share") return <SharePage token={route.token} />
+  if (route.kind === "publicFolder") return <PublicFolderPage username={route.username} folderId={route.folderId} />
 
   const logout = () => {
     api.setToken(null)

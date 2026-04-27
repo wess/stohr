@@ -8,6 +8,8 @@ export type FolderRow = {
   user_id: number
   parent_id: number | null
   name: string
+  kind: string
+  is_public: boolean
   deleted_at: string | null
   created_at: string
 }

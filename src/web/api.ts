@@ -84,6 +84,12 @@ export const renameFolder = (id: number, name: string) =>
 export const moveFolder = (id: number, parentId: number | null) =>
   jsonReq("PATCH", `/folders/${id}`, { parent_id: parentId })
 
+export const updateFolder = (id: number, patch: { kind?: "standard" | "photos"; is_public?: boolean }) =>
+  jsonReq("PATCH", `/folders/${id}`, patch)
+
+export const createFolderTyped = (name: string, parentId: number | null, opts?: { kind?: "standard" | "photos"; is_public?: boolean }) =>
+  jsonReq("POST", "/folders", { name, parent_id: parentId, ...opts })
+
 export const deleteFolder = (id: number) =>
   jsonReq("DELETE", `/folders/${id}`)
 
@@ -134,6 +140,7 @@ export const shareMeta = async (token: string) => {
 }
 
 export const shareDownloadUrl = (token: string) => `${BASE}/s/${token}`
+export const shareInlineUrl = (token: string) => `${BASE}/s/${token}?inline=1`
 
 export const getMe = () =>
   jsonReq("GET", "/me")
@@ -225,3 +232,12 @@ export const removeFileCollab = (id: number, collabId: number) =>
 
 export const userSearch = (q: string) =>
   jsonReq("GET", `/users/search?q=${encodeURIComponent(q)}`)
+
+export const getPublicFolder = async (username: string, folderId: number) => {
+  const res = await fetch(`${BASE}/p/${encodeURIComponent(username)}/${folderId}`)
+  return res.json()
+}
+
+export const publicFileUrl = (id: number) => `${BASE}/p/files/${id}`
+export const publicFileInlineUrl = (id: number) => `${BASE}/p/files/${id}?inline=1`
+export const publicThumbUrl = (id: number) => `${BASE}/p/files/${id}/thumb`

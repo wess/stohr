@@ -103,11 +103,17 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
 
       const res = await fetchObject(store, file.storage_key)
       if (!res.body) return json(c, 500, { error: "Storage returned empty body" })
+
+      const inline = url.searchParams.get("inline") === "1"
+      const disposition = inline
+        ? `inline; filename="${encodeURIComponent(file.name)}"`
+        : `attachment; filename="${encodeURIComponent(file.name)}"`
+
       const withHeaders = putHeader(
         putHeader(
           putHeader(c, "content-type", file.mime),
           "content-disposition",
-          `attachment; filename="${encodeURIComponent(file.name)}"`
+          disposition,
         ),
         "content-length",
         String(file.size)

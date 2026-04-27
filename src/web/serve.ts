@@ -10,6 +10,7 @@ Bun.serve({
     "/s/:token": index,
     "/signup": index,
     "/app/*": index,
+    "/p/:username/:folderId": index,
   },
   async fetch(req) {
     const url = new URL(req.url)

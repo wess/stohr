@@ -37,6 +37,8 @@ export const folders = defineSchema("folders", {
   user_id: column.integer().ref("users", "id"),
   parent_id: column.integer().nullable().ref("folders", "id"),
   name: column.text(),
+  kind: column.text().default("standard"),
+  is_public: column.boolean().default(false),
   deleted_at: column.timestamp().nullable(),
   created_at: column.timestamp().default("now()"),
 })
