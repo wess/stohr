@@ -17,7 +17,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: dockerfile
+      dockerfile: Dockerfile
     command: bun src/server.ts
     environment:
       PORT: "3000"
@@ -36,7 +36,7 @@ services:
   web:
     build:
       context: .
-      dockerfile: dockerfile
+      dockerfile: Dockerfile
     command: bun src/web/serve.ts
     environment:
       WEB_PORT: "3001"

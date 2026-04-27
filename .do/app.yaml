@@ -3,7 +3,7 @@ region: nyc
 
 services:
   - name: api
-    dockerfile_path: dockerfile
+    dockerfile_path: Dockerfile
     instance_count: 1
     instance_size_slug: apps-s-1vcpu-0.5gb
     http_port: 3000
@@ -26,7 +26,7 @@ services:
         type: SECRET
 
   - name: web
-    dockerfile_path: dockerfile
+    dockerfile_path: Dockerfile
     instance_count: 1
     instance_size_slug: apps-s-1vcpu-0.5gb
     http_port: 3001
