@@ -64,6 +64,15 @@ export const checkInvite = async (token: string) => {
   return res.json()
 }
 
+export const requestInvite = async (input: { email: string; name?: string; reason?: string }) => {
+  const res = await fetch(`${BASE}/invite-requests`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  return res.json() as Promise<{ ok?: boolean; error?: string }>
+}
+
 export const getSetupStatus = async () => {
   const res = await fetch(`${BASE}/setup`)
   return res.json() as Promise<{ needsSetup: boolean }>
@@ -98,16 +107,50 @@ export const listFiles = (folderId: number | null, q?: string) => {
   return jsonReq("GET", `/files?${qs}`)
 }
 
-export const uploadFiles = async (files: FileList | File[], folderId: number | null) => {
-  const form = new FormData()
-  for (const f of Array.from(files)) form.append(f.name, f)
-  if (folderId != null) form.append("folder_id", String(folderId))
-  const res = await fetch(`${BASE}/files`, {
-    method: "POST",
-    headers: headers(),
-    body: form,
+export type UploadHandle = {
+  promise: Promise<any>
+  abort: () => void
+}
+
+export const uploadFile = (
+  file: File,
+  folderId: number | null,
+  onProgress?: (loaded: number, total: number) => void,
+): UploadHandle => {
+  const xhr = new XMLHttpRequest()
+  const promise = new Promise<any>((resolve, reject) => {
+    const form = new FormData()
+    form.append(file.name, file)
+    if (folderId != null) form.append("folder_id", String(folderId))
+
+    xhr.open("POST", `${BASE}/files`)
+    if (token) xhr.setRequestHeader("authorization", `Bearer ${token}`)
+
+    xhr.upload.addEventListener("progress", e => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total)
+    })
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText))
+        } catch {
+          reject(new Error("Invalid server response"))
+        }
+      } else {
+        let msg = `HTTP ${xhr.status}`
+        try {
+          const body = JSON.parse(xhr.responseText)
+          if (body?.error) msg = body.error
+        } catch {}
+        reject(new Error(msg))
+      }
+    })
+    xhr.addEventListener("error", () => reject(new Error("Network error")))
+    xhr.addEventListener("abort", () => reject(new Error("Aborted")))
+
+    xhr.send(form)
   })
-  return res.json()
+  return { promise, abort: () => xhr.abort() }
 }
 
 export const getFile = (id: number) =>
@@ -232,6 +275,60 @@ export const removeFileCollab = (id: number, collabId: number) =>
 
 export const userSearch = (q: string) =>
   jsonReq("GET", `/users/search?q=${encodeURIComponent(q)}`)
+
+export const adminListInviteRequests = (status: "pending" | "invited" | "dismissed" | "all" = "pending") =>
+  jsonReq("GET", `/admin/invite-requests?status=${status}`)
+
+export const adminInviteFromRequest = (id: number) =>
+  jsonReq("POST", `/admin/invite-requests/${id}/invite`, {})
+
+export const adminDismissRequest = (id: number) =>
+  jsonReq("POST", `/admin/invite-requests/${id}/dismiss`)
+
+export const adminDeleteRequest = (id: number) =>
+  jsonReq("DELETE", `/admin/invite-requests/${id}`)
+
+export const adminListUsers = () =>
+  jsonReq("GET", "/admin/users")
+
+export const adminSetOwner = (id: number, isOwner: boolean) =>
+  jsonReq("POST", `/admin/users/${id}/owner`, { is_owner: isOwner })
+
+export const adminDeleteUser = (id: number) =>
+  jsonReq("DELETE", `/admin/users/${id}`)
+
+export const adminListAllInvites = (filter: "all" | "used" | "unused" = "all") =>
+  jsonReq("GET", `/admin/invites?filter=${filter}`)
+
+export const adminDeleteInvite = (id: number) =>
+  jsonReq("DELETE", `/admin/invites/${id}`)
+
+export const adminGetStats = () =>
+  jsonReq("GET", "/admin/stats")
+
+export const getMySubscription = () =>
+  jsonReq("GET", "/me/subscription")
+
+export const startCheckout = (tier: "personal" | "pro" | "studio", period: "monthly" | "yearly" = "monthly") =>
+  jsonReq("POST", `/me/checkout?tier=${tier}&period=${period}`)
+
+export const adminGetPaymentConfig = () =>
+  jsonReq("GET", "/admin/payments/config")
+
+export const adminSavePaymentConfig = (cfg: Record<string, unknown>) =>
+  jsonReq("PUT", "/admin/payments/config", cfg)
+
+export const adminListSubscriptions = () =>
+  jsonReq("GET", "/admin/payments/subscriptions")
+
+export const adminSetUserTier = (id: number, tier: "free" | "personal" | "pro" | "studio") =>
+  jsonReq("POST", `/admin/payments/users/${id}/tier`, { tier })
+
+export const adminListPaymentEvents = () =>
+  jsonReq("GET", "/admin/payments/events")
+
+export const adminAutoSetupPayments = (input: { api_key: string; webhook_url: string; mode: "test" | "live" }) =>
+  jsonReq("POST", "/admin/payments/autosetup", input)
 
 export const getPublicFolder = async (username: string, folderId: number) => {
   const res = await fetch(`${BASE}/p/${encodeURIComponent(username)}/${folderId}`)

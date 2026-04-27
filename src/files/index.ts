@@ -154,6 +154,29 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         ownerId = access.folder.user_id
       }
 
+      const owner = await db.one(
+        from("users").where(q => q("id").equals(ownerId)).select("storage_quota_bytes"),
+      ) as { storage_quota_bytes: number | string } | null
+      const quota = Number(owner?.storage_quota_bytes ?? 0)
+      if (quota > 0) {
+        const existingFiles = await db.all(
+          from("files")
+            .where(q => q("user_id").equals(ownerId))
+            .where(q => q("deleted_at").isNull())
+            .select("size"),
+        ) as Array<{ size: number | string }>
+        const used = existingFiles.reduce((acc, f) => acc + Number(f.size), 0)
+        const incoming = entries.reduce((acc, f) => acc + (f.size ?? 0), 0)
+        if (used + incoming > quota) {
+          return json(c, 402, {
+            error: "Storage quota exceeded",
+            quota_bytes: quota,
+            used_bytes: used,
+            attempted_bytes: incoming,
+          })
+        }
+      }
+
       const result: Array<{ id: number; name: string; mime: string; size: number; folder_id: number | null; version: number; created_at: string; new_version?: boolean }> = []
 
       for (const file of entries) {

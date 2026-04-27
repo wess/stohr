@@ -33,6 +33,7 @@ import {
 } from "lucide-react"
 import * as api from "./api.ts"
 import { applyTheme, getTheme, setTheme as setThemePref, type Theme } from "./theme.ts"
+import logoUrl from "./logo.png"
 
 type Route =
   | { kind: "root" }
@@ -42,6 +43,7 @@ type Route =
   | { kind: "links" }
   | { kind: "trash" }
   | { kind: "settings" }
+  | { kind: "admin" }
   | { kind: "share"; token: string }
   | { kind: "publicFolder"; username: string; folderId: number }
 
@@ -61,6 +63,7 @@ const parseRoute = (loc: { pathname: string; search: string }): Route => {
   if (path === "/app/links") return { kind: "links" }
   if (path === "/app/trash") return { kind: "trash" }
   if (path === "/app/settings") return { kind: "settings" }
+  if (path === "/app/admin") return { kind: "admin" }
   return { kind: "root" }
 }
 
@@ -119,8 +122,8 @@ const FileThumb: React.FC<{ file: FileItem }> = ({ file }) => {
   )
 }
 
-const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needsSetup: boolean }> = ({ onLogin, initialInvite, needsSetup }) => {
-  const [mode, setMode] = useState<"login" | "signup">(needsSetup || initialInvite ? "signup" : "login")
+const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needsSetup: boolean; initialMode?: "login" | "signup" }> = ({ onLogin, initialInvite, needsSetup, initialMode }) => {
+  const [mode, setMode] = useState<"login" | "signup">(initialMode ?? (needsSetup || initialInvite ? "signup" : "login"))
   const [name, setName] = useState("")
   const [username, setUsername] = useState("")
   const [identity, setIdentity] = useState("")
@@ -170,7 +173,7 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
 
   return (
     <div className="auth">
-      <h1>Stohr</h1>
+      <img src={logoUrl} alt="Stohr" className="auth-logo" />
       <h2>{heading}</h2>
       {needsSetup && (
         <div style={{ background: "var(--accent-bg)", color: "var(--brand)", border: "1px solid var(--brand)", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 }}>
@@ -229,6 +232,59 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
   )
 }
 
+const UploadPanel: React.FC<{
+  uploads: Uploading[]
+  onCancel: (id: string) => void
+  onDismiss: (id: string) => void
+  onClear: () => void
+}> = ({ uploads, onCancel, onDismiss, onClear }) => {
+  if (uploads.length === 0) return null
+  const active = uploads.filter(u => u.status === "uploading").length
+  const totalLoaded = uploads.reduce((a, u) => a + u.loaded, 0)
+  const totalSize = uploads.reduce((a, u) => a + u.size, 0)
+
+  return (
+    <div className="upload-panel">
+      <div className="upload-panel-header">
+        <div>
+          {active > 0 ? (
+            <>Uploading <span style={{ color: "var(--muted)" }}>{active} of {uploads.length}</span> · {formatBytes(totalLoaded)} / {formatBytes(totalSize)}</>
+          ) : (
+            <>{uploads.length} upload{uploads.length === 1 ? "" : "s"}</>
+          )}
+        </div>
+        <button onClick={onClear}>Clear</button>
+      </div>
+      <div className="upload-list">
+        {uploads.map(u => {
+          const pct = u.size === 0 ? 100 : Math.min(100, Math.round((u.loaded / u.size) * 100))
+          return (
+            <div key={u.id} className={`upload-item ${u.status}`}>
+              <div className="upload-line">
+                <div className="upload-name" title={u.name}>{u.name}</div>
+                <div className="upload-meta">
+                  {u.status === "uploading" && `${pct}% · ${formatBytes(u.loaded)} / ${formatBytes(u.size)}`}
+                  {u.status === "done" && `${formatBytes(u.size)}`}
+                  {u.status === "error" && (u.error ?? "Failed")}
+                </div>
+              </div>
+              <div className="upload-bar">
+                <div className="upload-fill" style={{ width: `${pct}%` }} />
+              </div>
+              {u.status === "uploading" && (
+                <button className="upload-cancel" onClick={() => onCancel(u.id)} aria-label="Cancel"><X size={12} /></button>
+              )}
+              {u.status !== "uploading" && (
+                <button className="upload-cancel" onClick={() => onDismiss(u.id)} aria-label="Dismiss"><X size={12} /></button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 const Modal: React.FC<{ title: string; onClose: () => void; children: React.ReactNode }> = ({ title, onClose, children }) => (
   <div className="modal-backdrop" onClick={onClose}>
     <div className="modal" onClick={e => e.stopPropagation()}>
@@ -242,6 +298,16 @@ type PaletteFolder = { id: number; name: string; parent_id: number | null }
 type PaletteResults = { files: FileItem[]; folders: PaletteFolder[] }
 
 type FolderDetail = { id: number; name: string; parent_id: number | null; role: "owner" | "editor" | "viewer"; owner: { id: number; username: string; name: string } | null; trail: Crumb[] }
+
+type Uploading = {
+  id: string
+  name: string
+  size: number
+  loaded: number
+  status: "uploading" | "done" | "error"
+  error?: string
+  abort: () => void
+}
 
 const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null }> = ({ routeFolderId, routeFileId }) => {
   const [folders, setFolders] = useState<Folder[]>([])
@@ -264,6 +330,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [lastClicked, setLastClicked] = useState<string | null>(null)
   const [movingOpen, setMovingOpen] = useState(false)
+  const [uploads, setUploads] = useState<Uploading[]>([])
   const fileInput = useRef<HTMLInputElement>(null)
   const me = api.getUser()
   const canEdit = currentRole === "owner" || currentRole === "editor"
@@ -434,10 +501,35 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
   }
 
   const upload = async (list: FileList | File[]) => {
-    if (!list || (list as FileList).length === 0) return
-    const res = await api.uploadFiles(list, currentId)
-    if (Array.isArray(res)) await load()
-    else if (res.error) alert(res.error)
+    const files = Array.from(list)
+    if (files.length === 0) return
+
+    const queued: Uploading[] = files.map(f => ({
+      id: `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${f.name}`,
+      name: f.name,
+      size: f.size,
+      loaded: 0,
+      status: "uploading" as const,
+      abort: () => {},
+    }))
+    setUploads(prev => [...prev, ...queued])
+
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]!
+      const u = queued[i]!
+      const handle = api.uploadFile(f, currentId, (loaded) => {
+        setUploads(prev => prev.map(p => p.id === u.id ? { ...p, loaded } : p))
+      })
+      setUploads(prev => prev.map(p => p.id === u.id ? { ...p, abort: handle.abort } : p))
+      try {
+        await handle.promise
+        setUploads(prev => prev.map(p => p.id === u.id ? { ...p, loaded: f.size, status: "done" } : p))
+      } catch (e: any) {
+        setUploads(prev => prev.map(p => p.id === u.id ? { ...p, status: "error", error: e?.message ?? "Failed" } : p))
+      }
+    }
+
+    await load()
   }
 
   const onDrop: React.DragEventHandler = (e) => {
@@ -771,6 +863,24 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
           </div>
         )
       })()}
+
+      <UploadPanel
+        uploads={uploads}
+        onCancel={(id) => {
+          setUploads(prev => {
+            const target = prev.find(p => p.id === id)
+            if (target?.abort) target.abort()
+            return prev.filter(p => p.id !== id)
+          })
+        }}
+        onDismiss={(id) => setUploads(prev => prev.filter(p => p.id !== id))}
+        onClear={() => {
+          setUploads(prev => {
+            for (const p of prev) if (p.status === "uploading") p.abort?.()
+            return []
+          })
+        }}
+      />
     </div>
   )
 }
@@ -1413,10 +1523,28 @@ const SharesView: React.FC = () => {
 
 type GalleryFile = { id: number; name: string; mime: string; size: number; version: number; created_at: string }
 
-const AuthedImage: React.FC<{ src: string; alt: string; useAuth: boolean; className?: string }> = ({ src, alt, useAuth, className }) => {
+const AuthedImage: React.FC<{ src: string; alt: string; useAuth: boolean }> = ({ src, alt, useAuth }) => {
+  const ref = useRef<HTMLDivElement>(null)
   const [resolved, setResolved] = useState<string | null>(useAuth ? null : src)
+  const [loaded, setLoaded] = useState(false)
+  const [visible, setVisible] = useState(!useAuth)
+
   useEffect(() => {
-    if (!useAuth) { setResolved(src); return }
+    if (!useAuth) return
+    const node = ref.current
+    if (!node) return
+    const obs = new IntersectionObserver(entries => {
+      if (entries[0]?.isIntersecting) {
+        setVisible(true)
+        obs.disconnect()
+      }
+    }, { rootMargin: "200px" })
+    obs.observe(node)
+    return () => obs.disconnect()
+  }, [useAuth])
+
+  useEffect(() => {
+    if (!useAuth || !visible || resolved) return
     let url: string | null = null
     let aborted = false
     ;(async () => {
@@ -1433,9 +1561,22 @@ const AuthedImage: React.FC<{ src: string; alt: string; useAuth: boolean; classN
       aborted = true
       if (url) URL.revokeObjectURL(url)
     }
-  }, [src, useAuth])
-  if (!resolved) return <div className={`thumb-skeleton ${className ?? ""}`} />
-  return <img src={resolved} alt={alt} loading="lazy" className={className} />
+  }, [src, useAuth, visible, resolved])
+
+  return (
+    <div ref={ref} className="thumb-wrap">
+      {!loaded && <div className="thumb-spinner" aria-hidden="true" />}
+      {resolved && (
+        <img
+          src={resolved}
+          alt={alt}
+          loading="lazy"
+          onLoad={() => setLoaded(true)}
+          className={loaded ? "loaded" : ""}
+        />
+      )}
+    </div>
+  )
 }
 
 const PhotosGallery: React.FC<{
@@ -1663,7 +1804,9 @@ const PublicFolderPage: React.FC<{ username: string; folderId: number }> = ({ us
   return (
     <div className="public-folder">
       <header className="public-header">
-        <div className="public-brand" onClick={() => window.location.assign("/")}>Stohr</div>
+        <div className="public-brand" onClick={() => window.location.assign("/")}>
+          <img src={logoUrl} alt="Stohr" />
+        </div>
         <div className="public-meta">
           <div className="public-title">{data.folder.name}</div>
           <div className="public-owner">@{data.owner.username}</div>
@@ -1705,7 +1848,9 @@ const SharePage: React.FC<{ token: string }> = ({ token }) => {
   return (
     <div className="public-folder">
       <header className="public-header">
-        <div className="public-brand" onClick={() => window.location.assign("/")}>Stohr</div>
+        <div className="public-brand" onClick={() => window.location.assign("/")}>
+          <img src={logoUrl} alt="Stohr" />
+        </div>
         <div className="public-meta">
           <div className="public-title">{meta.name}</div>
           <div className="public-owner">{formatBytes(meta.size)} • {meta.mime}</div>
@@ -1759,18 +1904,19 @@ const ShareText: React.FC<{ url: string }> = ({ url }) => {
 const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, route }) => {
   const [userSnapshot, setUserSnapshot] = useState(api.getUser())
 
-  const activeTab: "files" | "shared" | "links" | "trash" | "settings" = (() => {
+  const activeTab: "files" | "shared" | "links" | "trash" | "settings" | "admin" = (() => {
     if (route.kind === "shared") return "shared"
     if (route.kind === "links") return "links"
     if (route.kind === "trash") return "trash"
     if (route.kind === "settings") return "settings"
+    if (route.kind === "admin") return "admin"
     return "files"
   })()
 
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand">Stohr</div>
+        <div className="brand"><img src={logoUrl} alt="Stohr" /></div>
         <div className={`nav${activeTab === "files" ? " active" : ""}`} onClick={() => navigate("/")}>
           <FolderOpen size={18} strokeWidth={1.75} /> <span>My Files</span>
         </div>
@@ -1786,6 +1932,11 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
         <div className={`nav${activeTab === "settings" ? " active" : ""}`} onClick={() => navigate("/app/settings")}>
           <SettingsIcon size={18} strokeWidth={1.75} /> <span>Settings</span>
         </div>
+        {userSnapshot?.is_owner && (
+          <div className={`nav${activeTab === "admin" ? " active" : ""}`} onClick={() => navigate("/app/admin")}>
+            <AlertTriangle size={18} strokeWidth={1.75} /> <span>Admin</span>
+          </div>
+        )}
         <div className="user-footer">
           <div className="who">{userSnapshot?.name ?? ""}</div>
           <div className="who">@{userSnapshot?.username ?? ""}</div>
@@ -1807,7 +1958,102 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
           onAccountDeleted={onLogout}
         />
       )}
+      {activeTab === "admin" && <AdminView />}
     </div>
+  )
+}
+
+type Subscription = {
+  tier: string
+  quota_bytes: number
+  used_bytes: number
+  status: string | null
+  renews_at: string | null
+  has_subscription: boolean
+}
+
+const SubscriptionPanel: React.FC = () => {
+  const [sub, setSub] = useState<Subscription | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+
+  const load = async () => {
+    const data = await api.getMySubscription()
+    if (!data.error) setSub(data)
+  }
+  useEffect(() => { load() }, [])
+
+  const upgrade = async (tier: "personal" | "pro" | "studio") => {
+    setBusy(true); setError("")
+    const res = await api.startCheckout(tier, "monthly")
+    setBusy(false)
+    if (res.error || !res.checkout_url) {
+      setError(res.error ?? "Could not start checkout")
+      return
+    }
+    window.location.href = res.checkout_url
+  }
+
+  if (!sub) {
+    return (
+      <section className="settings-card">
+        <h3>Subscription</h3>
+        <div style={{ color: "var(--muted)", fontSize: 14 }}>Loading…</div>
+      </section>
+    )
+  }
+
+  const pct = sub.quota_bytes > 0 ? Math.min(100, (sub.used_bytes / sub.quota_bytes) * 100) : 0
+  const tierLabel = sub.tier.charAt(0).toUpperCase() + sub.tier.slice(1)
+
+  return (
+    <section className="settings-card">
+      <h3>Subscription</h3>
+      <div className="sub-current">
+        <div className="sub-tier-row">
+          <div>
+            <div className="sub-tier">{tierLabel}</div>
+            {sub.status && <div className="sub-status">{sub.status}{sub.renews_at ? ` · renews ${new Date(sub.renews_at).toLocaleDateString()}` : ""}</div>}
+          </div>
+          <div className="sub-usage-text">
+            {formatBytes(sub.used_bytes)} <span style={{ color: "var(--muted)" }}>of {formatBytes(sub.quota_bytes)}</span>
+          </div>
+        </div>
+        <div className="sub-bar">
+          <div className="sub-fill" style={{ width: `${pct}%`, background: pct > 90 ? "var(--danger)" : "var(--brand)" }} />
+        </div>
+      </div>
+
+      {sub.tier === "free" && (
+        <>
+          <div style={{ marginTop: 16, color: "var(--muted)", fontSize: 13 }}>Upgrade for more storage:</div>
+          <div className="sub-upgrade-grid">
+            <button disabled={busy} onClick={() => upgrade("personal")}>
+              <div className="sub-up-tier">Personal</div>
+              <div className="sub-up-meta">50 GB · $6/mo</div>
+            </button>
+            <button className="primary" disabled={busy} onClick={() => upgrade("pro")}>
+              <div className="sub-up-tier">Pro</div>
+              <div className="sub-up-meta">250 GB · $14/mo</div>
+            </button>
+            <button disabled={busy} onClick={() => upgrade("studio")}>
+              <div className="sub-up-tier">Studio</div>
+              <div className="sub-up-meta">1 TB · $34/mo</div>
+            </button>
+          </div>
+        </>
+      )}
+
+      {sub.tier !== "free" && sub.has_subscription && (
+        <div style={{ marginTop: 16 }}>
+          <a href="https://app.lemonsqueezy.com/my-orders" target="_blank" rel="noreferrer">
+            <button>Manage subscription ↗</button>
+          </a>
+        </div>
+      )}
+
+      {error && <div className="msg err" style={{ marginTop: 12 }}>{error}</div>}
+    </section>
   )
 }
 
@@ -1986,6 +2232,8 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
             </div>
           </section>
 
+          <SubscriptionPanel />
+
           <InvitesPanel />
 
           <section className="settings-card">
@@ -2027,6 +2275,1073 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
   )
 }
 
+type AdminInviteRequest = {
+  id: number
+  email: string
+  name: string | null
+  reason: string | null
+  status: "pending" | "invited" | "dismissed"
+  processed_at: string | null
+  created_at: string
+}
+
+const AdminView: React.FC = () => {
+  const me = api.getUser()
+  const [section, setSection] = useState<"requests" | "users" | "invites" | "payments" | "stats">("requests")
+
+  if (!me?.is_owner) {
+    return (
+      <div className="main">
+        <div className="toolbar"><div className="crumbs"><span className="current">Admin</span></div></div>
+        <div className="content"><div className="empty"><div>Owner access required</div></div></div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="main">
+      <div className="toolbar">
+        <div className="crumbs"><span className="current">Admin</span></div>
+      </div>
+      <div className="content">
+        <div className="admin-sections">
+          <button className={section === "requests" ? "active" : ""} onClick={() => setSection("requests")}>Requests</button>
+          <button className={section === "users" ? "active" : ""} onClick={() => setSection("users")}>Users</button>
+          <button className={section === "invites" ? "active" : ""} onClick={() => setSection("invites")}>Invites</button>
+          <button className={section === "payments" ? "active" : ""} onClick={() => setSection("payments")}>Payments</button>
+          <button className={section === "stats" ? "active" : ""} onClick={() => setSection("stats")}>Stats</button>
+        </div>
+        {section === "requests" && <AdminRequests />}
+        {section === "users" && <AdminUsers meId={me.id} />}
+        {section === "invites" && <AdminInvites />}
+        {section === "payments" && <AdminPayments />}
+        {section === "stats" && <AdminStats />}
+      </div>
+    </div>
+  )
+}
+
+const AdminRequests: React.FC = () => {
+  const [tab, setTab] = useState<"pending" | "invited" | "dismissed">("pending")
+  const [rows, setRows] = useState<AdminInviteRequest[]>([])
+  const [busy, setBusy] = useState<number | null>(null)
+  const [invited, setInvited] = useState<{ id: number; email: string; token: string } | null>(null)
+
+  const load = async () => {
+    const data = await api.adminListInviteRequests(tab)
+    setRows(Array.isArray(data) ? data : [])
+  }
+  useEffect(() => { load() }, [tab])
+
+  const sendInvite = async (id: number) => {
+    setBusy(id)
+    const res = await api.adminInviteFromRequest(id)
+    setBusy(null)
+    if (res.error) return alert(res.error)
+    setInvited({ id, email: res.email, token: res.invite_token })
+    await load()
+  }
+
+  const dismiss = async (id: number) => {
+    if (!confirm("Dismiss this request?")) return
+    setBusy(id)
+    const res = await api.adminDismissRequest(id)
+    setBusy(null)
+    if (res.error) return alert(res.error)
+    await load()
+  }
+
+  const remove = async (id: number) => {
+    if (!confirm("Permanently delete this request?")) return
+    setBusy(id)
+    const res = await api.adminDeleteRequest(id)
+    setBusy(null)
+    if (res.error) return alert(res.error)
+    await load()
+  }
+
+  const inviteUrl = invited ? `${window.location.origin}/signup?invite=${invited.token}` : ""
+
+  return (
+    <section className="settings-card">
+      <h3>Invite requests</h3>
+      <div className="admin-tabs">
+        <button className={tab === "pending" ? "active" : ""} onClick={() => setTab("pending")}>Pending</button>
+        <button className={tab === "invited" ? "active" : ""} onClick={() => setTab("invited")}>Invited</button>
+        <button className={tab === "dismissed" ? "active" : ""} onClick={() => setTab("dismissed")}>Dismissed</button>
+      </div>
+
+      {invited && (
+        <div className="msg ok" style={{ marginTop: 12 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Invite minted for {invited.email}</div>
+          <div className="share-link" style={{ margin: "4px 0" }}>{inviteUrl}</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => navigator.clipboard.writeText(inviteUrl)}>Copy link</button>
+            <button onClick={() => setInvited(null)}>Done</button>
+          </div>
+        </div>
+      )}
+
+      {rows.length === 0 && (
+        <div style={{ marginTop: 16, color: "var(--muted)", fontSize: 14 }}>No {tab} requests.</div>
+      )}
+
+      <div className="admin-list">
+        {rows.map(r => (
+          <div key={r.id} className="admin-row">
+            <div className="admin-row-main">
+              <div className="admin-row-line">
+                <strong>{r.email}</strong>
+                {r.name && <span className="admin-row-name">· {r.name}</span>}
+                <span className="admin-row-when">{new Date(r.created_at).toLocaleDateString()}</span>
+              </div>
+              {r.reason && <div className="admin-row-reason">{r.reason}</div>}
+            </div>
+            <div className="admin-row-actions">
+              {r.status === "pending" && (
+                <>
+                  <button className="primary" disabled={busy === r.id} onClick={() => sendInvite(r.id)}>Send invite</button>
+                  <button disabled={busy === r.id} onClick={() => dismiss(r.id)}>Dismiss</button>
+                </>
+              )}
+              {r.status !== "pending" && (
+                <button className="danger" disabled={busy === r.id} onClick={() => remove(r.id)}>Delete</button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+type AdminUser = {
+  id: number
+  username: string
+  email: string
+  name: string
+  is_owner: boolean
+  storage_bytes: number
+  file_count: number
+  created_at: string
+}
+
+const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
+  const [users, setUsers] = useState<AdminUser[]>([])
+  const [busy, setBusy] = useState<number | null>(null)
+
+  const load = async () => {
+    const data = await api.adminListUsers()
+    setUsers(Array.isArray(data) ? data : [])
+  }
+  useEffect(() => { load() }, [])
+
+  const toggleOwner = async (u: AdminUser) => {
+    if (u.id === meId) return
+    if (!confirm(`${u.is_owner ? "Remove" : "Grant"} owner role ${u.is_owner ? "from" : "to"} @${u.username}?`)) return
+    setBusy(u.id)
+    const res = await api.adminSetOwner(u.id, !u.is_owner)
+    setBusy(null)
+    if (res.error) return alert(res.error)
+    await load()
+  }
+
+  const remove = async (u: AdminUser) => {
+    if (u.id === meId) return alert("Use Settings to delete your own account.")
+    if (!confirm(`Permanently delete @${u.username}? All their files will be removed.`)) return
+    setBusy(u.id)
+    const res = await api.adminDeleteUser(u.id)
+    setBusy(null)
+    if (res.error) return alert(res.error)
+    await load()
+  }
+
+  return (
+    <section className="settings-card">
+      <h3>Users <span className="admin-count">({users.length})</span></h3>
+      {users.length === 0 && <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 14 }}>No users yet.</div>}
+      <div className="admin-list">
+        {users.map(u => (
+          <div key={u.id} className="admin-row">
+            <div className="admin-row-main">
+              <div className="admin-row-line">
+                <strong>@{u.username}</strong>
+                <span className="admin-row-name">{u.name}</span>
+                <span className="admin-row-name">· {u.email}</span>
+                {u.is_owner && <span className="admin-pill admin-pill-owner">owner</span>}
+                {u.id === meId && <span className="admin-pill">you</span>}
+                <span className="admin-row-when">{new Date(u.created_at).toLocaleDateString()}</span>
+              </div>
+              <div className="admin-row-reason">
+                {formatBytes(u.storage_bytes)} · {u.file_count} file{u.file_count === 1 ? "" : "s"}
+              </div>
+            </div>
+            <div className="admin-row-actions">
+              <button disabled={busy === u.id || u.id === meId} onClick={() => toggleOwner(u)}>
+                {u.is_owner ? "Revoke owner" : "Make owner"}
+              </button>
+              {u.id !== meId && (
+                <button className="danger" disabled={busy === u.id} onClick={() => remove(u)}>Delete</button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+type AdminInvite = {
+  id: number
+  token: string
+  email: string | null
+  invited_by: number | null
+  invited_by_username: string | null
+  used_at: string | null
+  used_by: number | null
+  used_by_username: string | null
+  created_at: string
+}
+
+const AdminInvites: React.FC = () => {
+  const [filter, setFilter] = useState<"all" | "unused" | "used">("unused")
+  const [invites, setInvites] = useState<AdminInvite[]>([])
+  const [busy, setBusy] = useState<number | null>(null)
+
+  const load = async () => {
+    const data = await api.adminListAllInvites(filter)
+    setInvites(Array.isArray(data) ? data : [])
+  }
+  useEffect(() => { load() }, [filter])
+
+  const remove = async (id: number) => {
+    if (!confirm("Delete this invite?")) return
+    setBusy(id)
+    const res = await api.adminDeleteInvite(id)
+    setBusy(null)
+    if (res.error) return alert(res.error)
+    await load()
+  }
+
+  return (
+    <section className="settings-card">
+      <h3>All invites <span className="admin-count">({invites.length})</span></h3>
+      <div className="admin-tabs">
+        <button className={filter === "unused" ? "active" : ""} onClick={() => setFilter("unused")}>Unused</button>
+        <button className={filter === "used" ? "active" : ""} onClick={() => setFilter("used")}>Used</button>
+        <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>All</button>
+      </div>
+      {invites.length === 0 && <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 14 }}>No {filter === "all" ? "" : filter} invites.</div>}
+      <div className="admin-list">
+        {invites.map(inv => {
+          const url = `${window.location.origin}/signup?invite=${inv.token}`
+          return (
+            <div key={inv.id} className="admin-row">
+              <div className="admin-row-main">
+                <div className="admin-row-line">
+                  <strong>{inv.email ?? "Open invite"}</strong>
+                  {inv.invited_by_username && <span className="admin-row-name">from @{inv.invited_by_username}</span>}
+                  {inv.used_by_username && <span className="admin-pill admin-pill-used">used by @{inv.used_by_username}</span>}
+                  <span className="admin-row-when">{new Date(inv.created_at).toLocaleDateString()}</span>
+                </div>
+                {!inv.used_at && <div className="admin-row-reason" style={{ fontFamily: "ui-monospace, monospace", fontSize: 11 }}>{url}</div>}
+              </div>
+              <div className="admin-row-actions">
+                {!inv.used_at && (
+                  <>
+                    <button onClick={() => navigator.clipboard.writeText(url)}>Copy</button>
+                    <button className="danger" disabled={busy === inv.id} onClick={() => remove(inv.id)}>Delete</button>
+                  </>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+type AutoSetupResult = {
+  store: { id: string; name: string; slug: string; url: string }
+  webhook: { id: string; url: string } | null
+  webhook_error: string | null
+  plans: Record<string, { monthly: string | null; yearly: string | null; product_name: string | null }>
+  unmatched_products: string[]
+}
+
+const TIER_DETAILS: Record<"personal" | "pro" | "studio", { label: string; storage: string; monthly: string; yearly: string }> = {
+  personal: { label: "Personal", storage: "50 GB", monthly: "$6", yearly: "$60" },
+  pro: { label: "Pro", storage: "250 GB", monthly: "$14", yearly: "$140" },
+  studio: { label: "Studio", storage: "1 TB", monthly: "$34", yearly: "$340" },
+}
+
+const AutoSetupCard: React.FC<{ webhookUrl: string; mode: "test" | "live"; onSetup: () => void }> = ({ webhookUrl, mode, onSetup }) => {
+  const [apiKey, setApiKey] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<AutoSetupResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [storesAvailable, setStoresAvailable] = useState<string[] | null>(null)
+
+  const run = async () => {
+    if (!apiKey.trim()) { setError("Paste your Lemon Squeezy API key"); return }
+    setBusy(true); setError(null); setStoresAvailable(null)
+    const res = await api.adminAutoSetupPayments({
+      api_key: apiKey.trim(),
+      webhook_url: webhookUrl,
+      mode,
+    })
+    setBusy(false)
+    if (res.error) {
+      if (Array.isArray(res.stores)) {
+        setStoresAvailable(res.stores.map((s: any) => s.name))
+      }
+      setError(res.error)
+      return
+    }
+    setResult(res as AutoSetupResult)
+    onSetup()
+  }
+
+  if (result) {
+    const todo: Array<{ tier: "personal" | "pro" | "studio"; missing: string[] }> = []
+    for (const tier of ["personal", "pro", "studio"] as const) {
+      const p = result.plans[tier]!
+      const missing: string[] = []
+      if (!p.product_name) {
+        missing.push(`Create product "${tier.charAt(0).toUpperCase() + tier.slice(1)}"`)
+      }
+      if (!p.monthly) missing.push(`Add monthly variant at ${TIER_DETAILS[tier].monthly}`)
+      if (!p.yearly) missing.push(`Add yearly variant at ${TIER_DETAILS[tier].yearly}`)
+      if (missing.length > 0) todo.push({ tier, missing })
+    }
+    return (
+      <div className="autosetup-result">
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <div className="autosetup-check">✓</div>
+          <div>
+            <div style={{ fontWeight: 600 }}>Connected to {result.store.name}</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>{result.store.url}</div>
+          </div>
+        </div>
+        <div className="autosetup-grid">
+          {(["personal", "pro", "studio"] as const).map(tier => {
+            const p = result.plans[tier]!
+            const ok = !!p.monthly || !!p.yearly
+            return (
+              <div key={tier} className={`autosetup-tier ${ok ? "ok" : "warn"}`}>
+                <div className="autosetup-tier-name">{tier}</div>
+                <div className="autosetup-tier-status">
+                  {p.product_name ? p.product_name : "Not found"}
+                </div>
+                <div className="autosetup-tier-periods">
+                  <span className={p.monthly ? "yes" : "no"}>monthly {p.monthly ? "✓" : "—"}</span>
+                  <span className={p.yearly ? "yes" : "no"}>yearly {p.yearly ? "✓" : "—"}</span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        <div style={{ marginTop: 12, fontSize: 13 }}>
+          {result.webhook && <div className="msg ok">Webhook created at {result.webhook.url}</div>}
+          {result.webhook_error && (
+            <div className="msg err">
+              Webhook creation failed: {result.webhook_error}<br />
+              <span style={{ fontSize: 12, opacity: 0.85 }}>Add it manually in Lemon Squeezy → Settings → Webhooks pointing at <code>{webhookUrl}</code>, then paste the signing secret below.</span>
+            </div>
+          )}
+          {result.unmatched_products.length > 0 && (
+            <div className="msg" style={{ background: "var(--bg)", border: "1px solid var(--border)", padding: "10px 12px", borderRadius: 6, marginTop: 8, fontSize: 13 }}>
+              Unmatched products (rename to "Personal", "Pro", or "Studio" to map them): {result.unmatched_products.join(", ")}
+            </div>
+          )}
+          {todo.length > 0 && (
+            <div className="msg" style={{ background: "var(--err-bg)", border: "1px solid var(--err-border)", color: "var(--err-fg)", padding: "12px 14px", borderRadius: 6, marginTop: 8, fontSize: 13 }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                Lemon Squeezy doesn't allow API product creation — finish these in their dashboard, then re-run:
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.5 }}>
+                {todo.map(t => (
+                  <li key={t.tier}>
+                    <strong style={{ textTransform: "capitalize" }}>{t.tier}</strong>: {t.missing.join("; ")}
+                  </li>
+                ))}
+              </ul>
+              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>
+                Make sure to mark products and variants as <strong>Published</strong> (not Draft).
+              </div>
+            </div>
+          )}
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <button onClick={() => setResult(null)}>Run again</button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="autosetup-card">
+      <div className="autosetup-head">
+        <div className="autosetup-title">Auto-setup with API key</div>
+        <div className="autosetup-sub">
+          Paste your Lemon Squeezy API key — we'll detect your store, map Personal/Pro/Studio products to tiers, and register the webhook.
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <input
+          type="password"
+          placeholder="Your Lemon Squeezy API key (Settings → API)"
+          value={apiKey}
+          onChange={e => setApiKey(e.target.value)}
+        />
+        {error && (
+          <div className="msg err">
+            {error}
+            {storesAvailable && storesAvailable.length > 0 && (
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
+                Found stores: {storesAvailable.join(", ")}
+              </div>
+            )}
+          </div>
+        )}
+        <div>
+          <button className="primary" disabled={busy || !apiKey.trim()} onClick={run}>
+            {busy ? "Connecting…" : "Run auto-setup"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+type PaymentConfigForm = {
+  mode: "test" | "live"
+  store_id: string
+  store_url: string
+  api_key: string
+  webhook_secret: string
+  live_webhook_secret: string
+  api_key_set: boolean
+  webhook_secret_set: boolean
+  live_webhook_secret_set: boolean
+  tier_personal_monthly: string
+  tier_personal_yearly: string
+  tier_pro_monthly: string
+  tier_pro_yearly: string
+  tier_studio_monthly: string
+  tier_studio_yearly: string
+  live_tier_personal_monthly: string
+  live_tier_personal_yearly: string
+  live_tier_pro_monthly: string
+  live_tier_pro_yearly: string
+  live_tier_studio_monthly: string
+  live_tier_studio_yearly: string
+}
+
+type AdminSubscription = {
+  id: number
+  username: string
+  email: string
+  tier: string
+  subscription_status: string | null
+  subscription_renews_at: string | null
+  ls_subscription_id: string | null
+  ls_customer_id: string | null
+}
+
+type LsEventRow = {
+  id: number
+  event_name: string
+  signature_valid: boolean
+  user_id: number | null
+  ls_subscription_id: string | null
+  error: string | null
+  received_at: string
+}
+
+const AdminPayments: React.FC = () => {
+  const [tab, setTab] = useState<"connection" | "plans" | "subscriptions" | "events">("connection")
+  const [cfg, setCfg] = useState<PaymentConfigForm | null>(null)
+  const [subs, setSubs] = useState<AdminSubscription[]>([])
+  const [events, setEvents] = useState<LsEventRow[]>([])
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
+
+  const loadCfg = async () => {
+    const data = await api.adminGetPaymentConfig()
+    if (!data.error) {
+      setCfg({
+        mode: data.mode === "live" ? "live" : "test",
+        store_id: data.store_id ?? "",
+        store_url: data.store_url ?? "",
+        api_key: "",
+        webhook_secret: "",
+        live_webhook_secret: "",
+        api_key_set: !!data.api_key_set,
+        webhook_secret_set: !!data.webhook_secret_set,
+        live_webhook_secret_set: !!data.live_webhook_secret_set,
+        tier_personal_monthly: data.tier_personal_monthly ?? "",
+        tier_personal_yearly: data.tier_personal_yearly ?? "",
+        tier_pro_monthly: data.tier_pro_monthly ?? "",
+        tier_pro_yearly: data.tier_pro_yearly ?? "",
+        tier_studio_monthly: data.tier_studio_monthly ?? "",
+        tier_studio_yearly: data.tier_studio_yearly ?? "",
+        live_tier_personal_monthly: data.live_tier_personal_monthly ?? "",
+        live_tier_personal_yearly: data.live_tier_personal_yearly ?? "",
+        live_tier_pro_monthly: data.live_tier_pro_monthly ?? "",
+        live_tier_pro_yearly: data.live_tier_pro_yearly ?? "",
+        live_tier_studio_monthly: data.live_tier_studio_monthly ?? "",
+        live_tier_studio_yearly: data.live_tier_studio_yearly ?? "",
+      })
+    }
+  }
+
+  const setMode = async (mode: "test" | "live") => {
+    if (!cfg || cfg.mode === mode) return
+    setCfg({ ...cfg, mode })
+    await api.adminSavePaymentConfig({ mode })
+  }
+  const loadSubs = async () => {
+    const data = await api.adminListSubscriptions()
+    setSubs(Array.isArray(data) ? data : [])
+  }
+  const loadEvents = async () => {
+    const data = await api.adminListPaymentEvents()
+    setEvents(Array.isArray(data) ? data : [])
+  }
+
+  useEffect(() => {
+    if (tab === "connection" || tab === "plans") loadCfg()
+    if (tab === "subscriptions") loadSubs()
+    if (tab === "events") loadEvents()
+  }, [tab])
+
+  const save = async (patch: Partial<PaymentConfigForm>) => {
+    if (!cfg) return
+    setSaving(true); setMsg(null)
+    const body: Record<string, unknown> = { ...patch }
+    if (patch.api_key === "" || patch.api_key?.includes("…")) delete body.api_key
+    if (patch.webhook_secret === "" || patch.webhook_secret?.includes("…")) delete body.webhook_secret
+    const res = await api.adminSavePaymentConfig(body)
+    setSaving(false)
+    if (res.error) return setMsg({ kind: "err", text: res.error })
+    setMsg({ kind: "ok", text: "Saved" })
+    await loadCfg()
+  }
+
+  const setTier = async (id: number, tier: "free" | "personal" | "pro" | "studio") => {
+    if (!confirm(`Set tier to ${tier}?`)) return
+    const res = await api.adminSetUserTier(id, tier)
+    if (res.error) return alert(res.error)
+    await loadSubs()
+  }
+
+  const webhookUrl = `${window.location.origin}/api/lemonsqueezy/webhook`
+
+  return (
+    <section className="settings-card">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+        <h3 style={{ marginBottom: 0 }}>Payments <span className="admin-count">Lemon Squeezy</span></h3>
+        {cfg && (
+          <div className="mode-toggle" role="tablist" aria-label="Mode">
+            <button
+              className={cfg.mode === "test" ? "active" : ""}
+              onClick={() => setMode("test")}
+              role="tab"
+              aria-selected={cfg.mode === "test"}
+            >Test</button>
+            <button
+              className={cfg.mode === "live" ? "active" : ""}
+              onClick={() => setMode("live")}
+              role="tab"
+              aria-selected={cfg.mode === "live"}
+            >Live</button>
+          </div>
+        )}
+      </div>
+      <div className="admin-tabs">
+        <button className={tab === "connection" ? "active" : ""} onClick={() => setTab("connection")}>Connection</button>
+        <button className={tab === "plans" ? "active" : ""} onClick={() => setTab("plans")}>Plans</button>
+        <button className={tab === "subscriptions" ? "active" : ""} onClick={() => setTab("subscriptions")}>Subscriptions</button>
+        <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Events</button>
+      </div>
+
+      {msg && <div className={`msg ${msg.kind}`} style={{ marginTop: 12 }}>{msg.text}</div>}
+
+      {tab === "connection" && cfg && (
+        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>
+            Configuring <strong style={{ color: "var(--text)" }}>{cfg.mode}</strong> mode. Switch the toggle above to configure the other.
+          </div>
+          <AutoSetupCard webhookUrl={webhookUrl} mode={cfg.mode} onSetup={loadCfg} />
+          <div style={{ borderTop: "1px solid var(--border)", paddingTop: 16, fontSize: 13, color: "var(--muted)" }}>
+            Or configure manually:
+          </div>
+          <div>
+            <label>Webhook URL (paste into Lemon Squeezy)</label>
+            <div className="share-link">{webhookUrl}</div>
+            <button onClick={() => navigator.clipboard.writeText(webhookUrl)} style={{ marginTop: 6 }}>Copy</button>
+          </div>
+          <div>
+            <label>Store URL <span style={{ color: "var(--muted)", fontWeight: 400 }}>(shared between modes)</span></label>
+            <input value={cfg.store_url} onChange={e => setCfg({ ...cfg, store_url: e.target.value })} placeholder="https://your-store.lemonsqueezy.com" />
+          </div>
+          <div>
+            <label>Store ID <span style={{ color: "var(--muted)", fontWeight: 400 }}>(shared between modes)</span></label>
+            <input value={cfg.store_id} onChange={e => setCfg({ ...cfg, store_id: e.target.value })} placeholder="e.g. 12345" />
+          </div>
+          <div>
+            <label>API Key <span style={{ color: "var(--muted)", fontWeight: 400 }}>(shared){cfg.api_key_set && " — set, leave blank to keep current"}</span></label>
+            <input type="password" value={cfg.api_key} onChange={e => setCfg({ ...cfg, api_key: e.target.value })} placeholder={cfg.api_key_set ? "•••• (unchanged)" : "Your Lemon Squeezy API key"} />
+          </div>
+          <div>
+            <label>
+              Webhook Secret ({cfg.mode})
+              {(cfg.mode === "test" ? cfg.webhook_secret_set : cfg.live_webhook_secret_set) && <span style={{ color: "var(--muted)", fontWeight: 400 }}> — set, leave blank to keep current</span>}
+            </label>
+            {cfg.mode === "test" ? (
+              <input type="password" value={cfg.webhook_secret} onChange={e => setCfg({ ...cfg, webhook_secret: e.target.value })} placeholder={cfg.webhook_secret_set ? "•••• (unchanged)" : "test webhook signing secret"} />
+            ) : (
+              <input type="password" value={cfg.live_webhook_secret} onChange={e => setCfg({ ...cfg, live_webhook_secret: e.target.value })} placeholder={cfg.live_webhook_secret_set ? "•••• (unchanged)" : "live webhook signing secret"} />
+            )}
+          </div>
+          <div className="settings-actions">
+            <button className="primary" disabled={saving} onClick={() => save({
+              store_url: cfg.store_url,
+              store_id: cfg.store_id,
+              api_key: cfg.api_key,
+              webhook_secret: cfg.mode === "test" ? cfg.webhook_secret : undefined,
+              live_webhook_secret: cfg.mode === "live" ? cfg.live_webhook_secret : undefined,
+            })}>{saving ? "Saving…" : "Save connection"}</button>
+          </div>
+        </div>
+      )}
+
+      {tab === "plans" && cfg && (() => {
+        const prefix = cfg.mode === "live" ? "live_tier" : "tier"
+        const fieldKey = (tier: string, period: "monthly" | "yearly") => `${prefix}_${tier}_${period}` as keyof PaymentConfigForm
+        const valueOf = (tier: string, period: "monthly" | "yearly") => (cfg as any)[fieldKey(tier, period)] ?? ""
+        return (
+          <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ color: "var(--muted)", fontSize: 13 }}>
+              <strong style={{ color: "var(--text)", textTransform: "capitalize" }}>{cfg.mode}</strong> mode plans. Switch the toggle above to edit the other set.
+            </div>
+            {(["personal", "pro", "studio"] as const).map(tier => {
+              const monthlyId = valueOf(tier, "monthly")
+              const yearlyId = valueOf(tier, "yearly")
+              const details = TIER_DETAILS[tier]
+              return (
+                <div key={tier} className="plan-card">
+                  <div className="plan-head">
+                    <div>
+                      <div className="plan-name">{details.label}</div>
+                      <div className="plan-storage">{details.storage}</div>
+                    </div>
+                  </div>
+                  <div className="plan-periods">
+                    {(["monthly", "yearly"] as const).map(period => {
+                      const id = period === "monthly" ? monthlyId : yearlyId
+                      const display = period === "monthly" ? `${details.monthly}/mo` : `${details.yearly}/yr`
+                      return (
+                        <div key={period} className={`plan-period ${id ? "ok" : "missing"}`}>
+                          <div className="plan-period-head">
+                            <span className="plan-period-label">{period}</span>
+                            <span className={`plan-period-status ${id ? "ok" : "missing"}`}>
+                              {id ? "✓ Linked" : "Not linked"}
+                            </span>
+                          </div>
+                          <div className="plan-price">{display}</div>
+                          <input
+                            value={id}
+                            onChange={e => setCfg({ ...cfg, [fieldKey(tier, period)]: e.target.value } as any)}
+                            placeholder="LS variant ID"
+                            spellCheck={false}
+                          />
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+            <div className="settings-actions">
+              <button className="primary" disabled={saving} onClick={() => {
+                const patch: Record<string, unknown> = {}
+                for (const t of ["personal", "pro", "studio"] as const) {
+                  patch[fieldKey(t, "monthly")] = valueOf(t, "monthly")
+                  patch[fieldKey(t, "yearly")] = valueOf(t, "yearly")
+                }
+                save(patch as Partial<PaymentConfigForm>)
+              }}>{saving ? "Saving…" : "Save plans"}</button>
+            </div>
+          </div>
+        )
+      })()}
+
+      {tab === "subscriptions" && (
+        <div style={{ marginTop: 16 }}>
+          {subs.length === 0 && <div style={{ color: "var(--muted)", fontSize: 14 }}>No active subscriptions yet.</div>}
+          <div className="admin-list">
+            {subs.map(s => (
+              <div key={s.id} className="admin-row">
+                <div className="admin-row-main">
+                  <div className="admin-row-line">
+                    <strong>@{s.username}</strong>
+                    <span className="admin-row-name">{s.email}</span>
+                    <span className="admin-pill admin-pill-owner">{s.tier}</span>
+                    {s.subscription_status && <span className="admin-pill">{s.subscription_status}</span>}
+                    {s.subscription_renews_at && <span className="admin-row-when">renews {new Date(s.subscription_renews_at).toLocaleDateString()}</span>}
+                  </div>
+                </div>
+                <div className="admin-row-actions">
+                  <select value={s.tier} onChange={e => setTier(s.id, e.target.value as any)} style={{ padding: "6px 8px", border: "1px solid var(--border)", borderRadius: 6, background: "var(--panel)", color: "var(--text)", fontSize: 12 }}>
+                    <option value="free">free</option>
+                    <option value="personal">personal</option>
+                    <option value="pro">pro</option>
+                    <option value="studio">studio</option>
+                  </select>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === "events" && (
+        <div style={{ marginTop: 16 }}>
+          {events.length === 0 && <div style={{ color: "var(--muted)", fontSize: 14 }}>No webhook events yet.</div>}
+          <div className="admin-list">
+            {events.map(e => (
+              <div key={e.id} className="admin-row">
+                <div className="admin-row-main">
+                  <div className="admin-row-line">
+                    <strong>{e.event_name}</strong>
+                    <span className={`admin-pill ${e.signature_valid ? "admin-pill-used" : ""}`} style={{ background: e.signature_valid ? undefined : "var(--err-bg)", color: e.signature_valid ? undefined : "var(--err-fg)", borderColor: e.signature_valid ? undefined : "var(--err-border)" }}>
+                      {e.signature_valid ? "verified" : "bad signature"}
+                    </span>
+                    {e.user_id && <span className="admin-row-name">user #{e.user_id}</span>}
+                    {e.ls_subscription_id && <span className="admin-row-name">sub {e.ls_subscription_id}</span>}
+                    <span className="admin-row-when">{new Date(e.received_at).toLocaleString()}</span>
+                  </div>
+                  {e.error && <div className="admin-row-reason" style={{ color: "var(--danger)" }}>{e.error}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+type AdminStatsData = {
+  users: number
+  folders: number
+  files: number
+  total_storage_bytes: number
+  invites_total: number
+  invites_used: number
+  invites_unused: number
+  requests_pending: number
+}
+
+const AdminStats: React.FC = () => {
+  const [s, setS] = useState<AdminStatsData | null>(null)
+
+  useEffect(() => {
+    api.adminGetStats().then(setS).catch(() => setS(null))
+  }, [])
+
+  if (!s) return <section className="settings-card"><h3>Stats</h3><div style={{ color: "var(--muted)", fontSize: 14 }}>Loading…</div></section>
+
+  const stats: Array<{ label: string; value: string }> = [
+    { label: "Users", value: String(s.users) },
+    { label: "Total storage", value: formatBytes(s.total_storage_bytes) },
+    { label: "Files", value: String(s.files) },
+    { label: "Folders", value: String(s.folders) },
+    { label: "Pending requests", value: String(s.requests_pending) },
+    { label: "Active invites", value: String(s.invites_unused) },
+    { label: "Used invites", value: String(s.invites_used) },
+    { label: "Total invites", value: String(s.invites_total) },
+  ]
+
+  return (
+    <section className="settings-card">
+      <h3>Stats</h3>
+      <div className="admin-stats">
+        {stats.map(stat => (
+          <div key={stat.label} className="admin-stat">
+            <div className="admin-stat-value">{stat.value}</div>
+            <div className="admin-stat-label">{stat.label}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+const InviteRequestForm: React.FC = () => {
+  const [email, setEmail] = useState("")
+  const [name, setName] = useState("")
+  const [reason, setReason] = useState("")
+  const [status, setStatus] = useState<"idle" | "submitting" | "success">("idle")
+  const [error, setError] = useState("")
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (status === "submitting") return
+    if (!email.trim()) { setError("Email is required"); return }
+
+    setStatus("submitting")
+    setError("")
+    try {
+      const res = await api.requestInvite({
+        email: email.trim(),
+        name: name.trim() || undefined,
+        reason: reason.trim() || undefined,
+      })
+      if (!res.ok) {
+        setError(res.error ?? "Something went wrong. Try again?")
+        setStatus("idle")
+        return
+      }
+      setStatus("success")
+    } catch {
+      setError("Network error. Try again?")
+      setStatus("idle")
+    }
+  }
+
+  if (status === "success") {
+    return (
+      <div className="lp-invite-card lp-invite-success">
+        <div className="lp-invite-check" aria-hidden="true">✓</div>
+        <h3>You're on the list</h3>
+        <p>We'll email <strong>{email}</strong> when there's space. No spam, ever.</p>
+      </div>
+    )
+  }
+
+  return (
+    <form className="lp-invite-card" onSubmit={submit}>
+      <div className="lp-invite-head">
+        <h3>Request an invite</h3>
+        <p>We'll email you when there's space.</p>
+      </div>
+
+      <label className="lp-field">
+        <span>Email</span>
+        <input
+          type="email"
+          required
+          autoComplete="email"
+          placeholder="you@example.com"
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+        />
+      </label>
+
+      <label className="lp-field">
+        <span>Name <span className="lp-field-opt">(optional)</span></span>
+        <input
+          type="text"
+          autoComplete="name"
+          placeholder="What should we call you?"
+          value={name}
+          onChange={e => setName(e.target.value)}
+        />
+      </label>
+
+      <label className="lp-field">
+        <span>Why? <span className="lp-field-opt">(optional)</span></span>
+        <textarea
+          rows={3}
+          placeholder="What are you hoping to use stohr for?"
+          value={reason}
+          onChange={e => setReason(e.target.value)}
+        />
+      </label>
+
+      {error && <div className="lp-invite-error" role="alert">{error}</div>}
+
+      <button
+        type="submit"
+        className="lp-btn lp-btn-primary lp-btn-block lp-btn-lg"
+        disabled={status === "submitting"}
+      >
+        {status === "submitting" ? "Sending…" : "Request invite"}
+      </button>
+    </form>
+  )
+}
+
+const LandingPage: React.FC = () => {
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      const t = e.target as HTMLElement
+      const a = t.closest("a")
+      if (!a) return
+      const href = a.getAttribute("href") ?? ""
+      if (href.startsWith("#")) {
+        e.preventDefault()
+        const el = document.querySelector(href)
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" })
+      }
+    }
+    document.addEventListener("click", onClick)
+    return () => document.removeEventListener("click", onClick)
+  }, [])
+
+  return (
+    <div className="lp">
+      <div className="lp-banner" role="status">
+        <span className="lp-banner-pulse" aria-hidden="true" />
+        Currently in <em>beta</em> — invite only
+      </div>
+      <header className="lp-nav">
+        <a href="/" className="lp-brand"><img src={logoUrl} alt="stohr" /></a>
+        <nav className="lp-nav-links">
+          <a href="#features">Features</a>
+          <a href="#pricing">Pricing</a>
+          <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <div className="lp-nav-cta">
+          <a href="/login" className="lp-link">Sign in</a>
+          <a href="/signup" className="lp-btn lp-btn-primary">Get started</a>
+        </div>
+      </header>
+
+      <section className="lp-hero">
+        <div className="lp-hero-text">
+          <p className="lp-eyebrow">Self-hostable cloud storage</p>
+          <h1>
+            Your files.<br />
+            <em>Your storage.</em><br />
+            Your rules.
+          </h1>
+          <p className="lp-lede">
+            Photo galleries, real-time collaboration, public sharing — without
+            the surveillance, the upsells, or the dark patterns. Run it on a
+            $6 droplet, or pay us to.
+          </p>
+          <div className="lp-cta-row">
+            <a href="/signup" className="lp-btn lp-btn-primary lp-btn-lg">Start free</a>
+            <a href="#pricing" className="lp-btn lp-btn-ghost lp-btn-lg">See pricing</a>
+          </div>
+        </div>
+        <div className="lp-hero-form">
+          <InviteRequestForm />
+        </div>
+      </section>
+
+      <section className="lp-features" id="features">
+        <h2>Built for the way <em>you</em> store.</h2>
+        <ol className="lp-feature-list">
+          <li>
+            <span className="lp-num">01</span>
+            <div>
+              <h3>Photo galleries, instantly.</h3>
+              <p>Mark any folder as a Photos folder and the view becomes a tight square grid with click-to-lightbox keyboard navigation. Zero plugins, zero config — just toggle a checkbox.</p>
+            </div>
+          </li>
+          <li>
+            <span className="lp-num">02</span>
+            <div>
+              <h3>Real collaboration.</h3>
+              <p>Share folders by username or email, with viewer or editor roles. Pending invites resolve automatically when the other person signs up — no copying tokens around.</p>
+            </div>
+          </li>
+          <li>
+            <span className="lp-num">03</span>
+            <div>
+              <h3>Public links without the chrome.</h3>
+              <p>Flip on public access and you get a clean <code>/p/you/123</code> URL anyone can browse — no signup wall, no upsells, no email capture before they see your work.</p>
+            </div>
+          </li>
+          <li>
+            <span className="lp-num">04</span>
+            <div>
+              <h3>Self-host or hosted.</h3>
+              <p>Same code on both sides. Run it yourself on a $6 droplet with one command, or let us host it. Migrate either way whenever you want — your files are S3-compatible.</p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section className="lp-pricing" id="pricing">
+        <div className="lp-pricing-head">
+          <h2>Simple pricing.</h2>
+          <p>Pay for storage, not for features. Every plan includes everything below.</p>
+        </div>
+
+        <div className="lp-tiers">
+          <article className="lp-tier">
+            <header className="lp-tier-head">Free</header>
+            <div className="lp-price"><span className="lp-amount">$0</span></div>
+            <div className="lp-storage">5 GB</div>
+            <a href="/signup" className="lp-btn lp-btn-ghost lp-btn-block">Start free</a>
+            <ul>
+              <li>Photo galleries</li>
+              <li>Public sharing</li>
+              <li>Up to 5 collaborators</li>
+            </ul>
+          </article>
+
+          <article className="lp-tier">
+            <header className="lp-tier-head">Personal</header>
+            <div className="lp-price"><span className="lp-amount">$6</span><span className="lp-period">/mo</span></div>
+            <div className="lp-storage">50 GB</div>
+            <a href="/signup" className="lp-btn lp-btn-primary lp-btn-block">Choose Personal</a>
+            <ul>
+              <li>Everything in Free</li>
+              <li>Unlimited collaborators</li>
+              <li>Version history</li>
+            </ul>
+          </article>
+
+          <article className="lp-tier lp-tier-pop">
+            <header className="lp-tier-head">Pro <span className="lp-pop">popular</span></header>
+            <div className="lp-price"><span className="lp-amount">$14</span><span className="lp-period">/mo</span></div>
+            <div className="lp-storage">250 GB</div>
+            <a href="/signup" className="lp-btn lp-btn-primary lp-btn-block">Choose Pro</a>
+            <ul>
+              <li>Everything in Personal</li>
+              <li>Custom domains <em>(soon)</em></li>
+              <li>Priority support</li>
+            </ul>
+          </article>
+
+          <article className="lp-tier">
+            <header className="lp-tier-head">Studio</header>
+            <div className="lp-price"><span className="lp-amount">$34</span><span className="lp-period">/mo</span></div>
+            <div className="lp-storage">1 TB</div>
+            <a href="/signup" className="lp-btn lp-btn-primary lp-btn-block">Choose Studio</a>
+            <ul>
+              <li>Everything in Pro</li>
+              <li>API access</li>
+              <li>Direct line for issues</li>
+            </ul>
+          </article>
+        </div>
+
+        <p className="lp-pricing-foot">
+          Yearly: $60 / $140 / $340 — saves two months. Cancel anytime. <strong>Self-host stays free, forever.</strong>
+        </p>
+      </section>
+
+      <footer className="lp-footer">
+        <div className="lp-footer-brand">stohr · 2026</div>
+        <div className="lp-footer-links">
+          <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer">Open source</a>
+          <a href="/login">Sign in</a>
+          <a href="#pricing">Pricing</a>
+        </div>
+      </footer>
+    </div>
+  )
+}
+
 const App: React.FC = () => {
   const [loggedIn, setLoggedIn] = useState(!!api.getToken())
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location))
@@ -2060,7 +3375,19 @@ const App: React.FC = () => {
 
   if (loggedIn) return <Shell onLogout={logout} route={route} />
   if (needsSetup === null) return null
-  return <Auth onLogin={() => setLoggedIn(true)} initialInvite={initialInvite} needsSetup={needsSetup} />
+
+  const path = window.location.pathname
+
+  if (needsSetup) {
+    return <Auth onLogin={() => setLoggedIn(true)} initialInvite={null} needsSetup={true} />
+  }
+  if (path === "/signup") {
+    return <Auth onLogin={() => setLoggedIn(true)} initialInvite={initialInvite} needsSetup={false} initialMode="signup" />
+  }
+  if (path === "/login") {
+    return <Auth onLogin={() => setLoggedIn(true)} initialInvite={null} needsSetup={false} initialMode="login" />
+  }
+  return <LandingPage />
 }
 
 createRoot(document.getElementById("app")!).render(<App />)

@@ -5,10 +5,14 @@ const PORT = Number(process.env.WEB_PORT ?? 3001)
 
 Bun.serve({
   port: PORT,
+  hostname: "0.0.0.0",
+  maxRequestBodySize: Number.MAX_SAFE_INTEGER,
+  idleTimeout: 0,
   routes: {
     "/": index,
     "/s/:token": index,
     "/signup": index,
+    "/login": index,
     "/app/*": index,
     "/p/:username/:folderId": index,
   },
