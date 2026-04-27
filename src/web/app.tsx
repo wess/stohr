@@ -17,6 +17,7 @@ import {
   FolderPlus,
   Inbox,
   Link2,
+  Mail,
   Monitor,
   Moon,
   Music,
@@ -26,10 +27,51 @@ import {
   Share2,
   Trash2,
   Upload as UploadIcon,
+  UserPlus,
+  Users,
   X,
 } from "lucide-react"
 import * as api from "./api.ts"
 import { applyTheme, getTheme, setTheme as setThemePref, type Theme } from "./theme.ts"
+
+type Route =
+  | { kind: "root" }
+  | { kind: "folder"; id: number; ownerUsername?: string }
+  | { kind: "file"; id: number; ownerUsername?: string }
+  | { kind: "shared" }
+  | { kind: "links" }
+  | { kind: "trash" }
+  | { kind: "settings" }
+  | { kind: "share"; token: string }
+
+const parseRoute = (loc: { pathname: string; search: string }): Route => {
+  const path = loc.pathname
+  const share = path.match(/^\/s\/(.+)$/)
+  if (share) return { kind: "share", token: share[1]! }
+  const f1 = path.match(/^\/app\/u\/([^/]+)\/f\/(\d+)/)
+  if (f1) return { kind: "folder", ownerUsername: f1[1], id: Number(f1[2]) }
+  const f2 = path.match(/^\/app\/u\/([^/]+)\/file\/(\d+)/)
+  if (f2) return { kind: "file", ownerUsername: f2[1], id: Number(f2[2]) }
+  const f3 = path.match(/^\/app\/f\/(\d+)/)
+  if (f3) return { kind: "folder", id: Number(f3[1]) }
+  if (path === "/app/shared") return { kind: "shared" }
+  if (path === "/app/links") return { kind: "links" }
+  if (path === "/app/trash") return { kind: "trash" }
+  if (path === "/app/settings") return { kind: "settings" }
+  return { kind: "root" }
+}
+
+const navigate = (path: string) => {
+  if (window.location.pathname + window.location.search === path) return
+  history.pushState(null, "", path)
+  window.dispatchEvent(new PopStateEvent("popstate"))
+}
+
+const folderHref = (id: number, ownerUsername?: string) =>
+  ownerUsername ? `/app/u/${ownerUsername}/f/${id}` : `/app/f/${id}`
+
+const fileHref = (id: number, ownerUsername: string) =>
+  `/app/u/${ownerUsername}/file/${id}`
 
 type Folder = { id: number; name: string; parent_id: number | null; created_at: string }
 type FileItem = { id: number; name: string; mime: string; size: number; folder_id: number | null; version: number; created_at: string }
@@ -74,40 +116,112 @@ const FileThumb: React.FC<{ file: FileItem }> = ({ file }) => {
   )
 }
 
-const Auth: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
-  const [mode, setMode] = useState<"login" | "signup">("login")
+const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needsSetup: boolean }> = ({ onLogin, initialInvite, needsSetup }) => {
+  const [mode, setMode] = useState<"login" | "signup">(needsSetup || initialInvite ? "signup" : "login")
   const [name, setName] = useState("")
+  const [username, setUsername] = useState("")
+  const [identity, setIdentity] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [inviteToken, setInviteToken] = useState(initialInvite ?? "")
+  const [inviteEmailLock, setInviteEmailLock] = useState<string | null>(null)
   const [error, setError] = useState("")
+
+  useEffect(() => {
+    if (needsSetup) return
+    if (mode !== "signup" || !inviteToken) return
+    let cancelled = false
+    api.checkInvite(inviteToken).then((res: any) => {
+      if (cancelled) return
+      if (res?.valid === false) {
+        setError(res.error ?? "Invalid invite")
+        setInviteEmailLock(null)
+      } else if (res?.valid && res.email) {
+        setEmail(res.email)
+        setInviteEmailLock(res.email)
+        setError("")
+      } else {
+        setInviteEmailLock(null)
+        setError("")
+      }
+    })
+    return () => { cancelled = true }
+  }, [mode, inviteToken, needsSetup])
 
   const submit = async () => {
     setError("")
     const res = mode === "signup"
-      ? await api.signup(name, email, password)
-      : await api.login(email, password)
+      ? await api.signup({ name, username, email, password, inviteToken: needsSetup ? undefined : inviteToken })
+      : await api.login(identity, password)
     if (res.error) return setError(res.error)
     if (!res.token) return setError("Authentication failed")
+    if (window.location.pathname === "/signup") {
+      history.replaceState(null, "", "/")
+    }
     onLogin()
   }
+
+  const heading = needsSetup
+    ? "Set up your Stohr"
+    : mode === "login" ? "Sign in to your cloud storage" : "Create your account"
 
   return (
     <div className="auth">
       <h1>Stohr</h1>
-      <h2>{mode === "login" ? "Sign in to your cloud storage" : "Create your account"}</h2>
-      {error && <div className="error">{error}</div>}
-      {mode === "signup" && (
-        <input placeholder="Name" value={name} onChange={e => setName(e.target.value)} />
+      <h2>{heading}</h2>
+      {needsSetup && (
+        <div style={{ background: "var(--accent-bg)", color: "var(--brand)", border: "1px solid var(--brand)", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 }}>
+          No accounts yet. The first user becomes the owner and can invite others.
+        </div>
       )}
-      <input placeholder="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} />
-      <input placeholder="Password" type="password" value={password}
-        onChange={e => setPassword(e.target.value)}
-        onKeyDown={e => e.key === "Enter" && submit()}
-      />
-      <button className="primary" onClick={submit}>{mode === "login" ? "Sign in" : "Create account"}</button>
-      <div className="toggle" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
-        {mode === "login" ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
-      </div>
+      {error && <div className="error">{error}</div>}
+      {mode === "signup" ? (
+        <>
+          <input placeholder="Name" value={name} onChange={e => setName(e.target.value)} />
+          <input placeholder="Username" value={username}
+            onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
+            autoCapitalize="off"
+            autoCorrect="off"
+          />
+          <input
+            placeholder="Email"
+            type="email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            disabled={!!inviteEmailLock}
+          />
+          <input placeholder="Password (min 8 chars)" type="password" value={password}
+            onChange={e => setPassword(e.target.value)}
+            onKeyDown={e => needsSetup && e.key === "Enter" && submit()}
+          />
+          {!needsSetup && (
+            <input placeholder="Invite token" value={inviteToken}
+              onChange={e => setInviteToken(e.target.value.trim())}
+              onKeyDown={e => e.key === "Enter" && submit()}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          <input placeholder="Email or username" value={identity}
+            onChange={e => setIdentity(e.target.value)}
+            autoCapitalize="off"
+            autoCorrect="off"
+          />
+          <input placeholder="Password" type="password" value={password}
+            onChange={e => setPassword(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && submit()}
+          />
+        </>
+      )}
+      <button className="primary" onClick={submit}>
+        {needsSetup ? "Create owner account" : mode === "login" ? "Sign in" : "Create account"}
+      </button>
+      {!needsSetup && (
+        <div className="toggle" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
+          {mode === "login" ? "Have an invite? Create your account" : "Already have an account? Sign in"}
+        </div>
+      )}
     </div>
   )
 }
@@ -124,18 +238,20 @@ const Modal: React.FC<{ title: string; onClose: () => void; children: React.Reac
 type PaletteFolder = { id: number; name: string; parent_id: number | null }
 type PaletteResults = { files: FileItem[]; folders: PaletteFolder[] }
 
-const Files: React.FC = () => {
+type FolderDetail = { id: number; name: string; parent_id: number | null; role: "owner" | "editor" | "viewer"; owner: { id: number; username: string; name: string } | null; trail: Crumb[] }
+
+const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null }> = ({ routeFolderId, routeFileId }) => {
   const [folders, setFolders] = useState<Folder[]>([])
   const [files, setFiles] = useState<FileItem[]>([])
-  const [currentId, setCurrentId] = useState<number | null>(null)
+  const [currentId, setCurrentId] = useState<number | null>(routeFolderId)
   const [crumbs, setCrumbs] = useState<Crumb[]>([])
+  const [currentRole, setCurrentRole] = useState<"owner" | "editor" | "viewer">("owner")
+  const [currentOwner, setCurrentOwner] = useState<{ id: number; username: string; name: string } | null>(null)
   const [search, setSearch] = useState("")
   const [dragOver, setDragOver] = useState(false)
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState("")
-  const [sharing, setSharing] = useState<FileItem | null>(null)
-  const [shareResult, setShareResult] = useState<{ url: string } | null>(null)
-  const [shareExpiry, setShareExpiry] = useState("")
+  const [sharing, setSharing] = useState<{ kind: "file" | "folder"; id: number; name: string } | null>(null)
   const [renaming, setRenaming] = useState<{ kind: "folder" | "file"; id: number; name: string } | null>(null)
   const [previewing, setPreviewing] = useState<FileItem | null>(null)
   const [viewingVersions, setViewingVersions] = useState<FileItem | null>(null)
@@ -143,6 +259,24 @@ const Files: React.FC = () => {
   const [lastClicked, setLastClicked] = useState<string | null>(null)
   const [movingOpen, setMovingOpen] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
+  const me = api.getUser()
+  const canEdit = currentRole === "owner" || currentRole === "editor"
+
+  useEffect(() => {
+    if (routeFolderId !== currentId) setCurrentId(routeFolderId)
+  }, [routeFolderId])
+
+  useEffect(() => {
+    if (!routeFileId) return
+    let aborted = false
+    ;(async () => {
+      const f = await api.getFile(routeFileId)
+      if (aborted || !f || f.error) return
+      setCurrentId(f.folder_id ?? null)
+      setPreviewing(f)
+    })()
+    return () => { aborted = true }
+  }, [routeFileId])
 
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [paletteQuery, setPaletteQuery] = useState("")
@@ -157,15 +291,34 @@ const Files: React.FC = () => {
     ])
     setFolders(Array.isArray(fo) ? fo : [])
     setFiles(Array.isArray(fi) ? fi : [])
-    if (currentId == null) setCrumbs([])
-    else {
-      const data = await api.getFolder(currentId)
-      setCrumbs(data.trail ?? [])
+    if (currentId == null) {
+      setCrumbs([])
+      setCurrentRole("owner")
+      setCurrentOwner(null)
+    } else {
+      const data = await api.getFolder(currentId) as FolderDetail & { error?: string }
+      if (data && !data.error) {
+        setCrumbs(data.trail ?? [])
+        setCurrentRole(data.role ?? "owner")
+        setCurrentOwner(data.owner ?? null)
+      }
     }
   }
 
   useEffect(() => { load() }, [currentId, search])
   useEffect(() => { setSelected(new Set()); setLastClicked(null) }, [currentId, search])
+
+  useEffect(() => {
+    if (currentId == null) {
+      if (window.location.pathname.startsWith("/app/")) navigate("/")
+      return
+    }
+    const ownerSlug = currentOwner && me && currentOwner.id !== me.id ? currentOwner.username : undefined
+    const want = folderHref(currentId, ownerSlug)
+    if (window.location.pathname !== want) {
+      history.replaceState(null, "", want)
+    }
+  }, [currentId, currentOwner?.id])
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -291,15 +444,6 @@ const Files: React.FC = () => {
     await load()
   }
 
-  const share = async () => {
-    if (!sharing) return
-    const secs = shareExpiry ? Number(shareExpiry) * 3600 : undefined
-    const res = await api.createShare(sharing.id, secs)
-    if (res.token) {
-      setShareResult({ url: `${window.location.origin}/s/${res.token}` })
-    } else alert(res.error ?? "Failed to share")
-  }
-
   const del = async (kind: "folder" | "file", id: number) => {
     if (!confirm(`Delete this ${kind}?`)) return
     const res = kind === "folder" ? await api.deleteFolder(id) : await api.deleteFile(id)
@@ -321,15 +465,26 @@ const Files: React.FC = () => {
     <div className="main">
       <div className="toolbar">
         <div className="crumbs">
-          <span className="crumb" onClick={() => setCurrentId(null)}>All Files</span>
-          {crumbs.map((c, i) => (
-            <React.Fragment key={c.id}>
+          {currentRole === "owner"
+            ? <span className="crumb" onClick={() => navigate("/")}>All Files</span>
+            : currentOwner && <span className="crumb" onClick={() => navigate("/app/shared")}>Shared with me</span>}
+          {currentOwner && currentRole !== "owner" && (
+            <>
               <span className="sep"><ChevronRight size={14} /></span>
-              {i === crumbs.length - 1
-                ? <span className="current">{c.name}</span>
-                : <span className="crumb" onClick={() => setCurrentId(c.id)}>{c.name}</span>}
-            </React.Fragment>
-          ))}
+              <span style={{ color: "var(--muted)" }}>@{currentOwner.username}</span>
+            </>
+          )}
+          {crumbs.map((c, i) => {
+            const ownerSlug = currentOwner && me && currentOwner.id !== me.id ? currentOwner.username : undefined
+            return (
+              <React.Fragment key={c.id}>
+                <span className="sep"><ChevronRight size={14} /></span>
+                {i === crumbs.length - 1
+                  ? <span className="current">{c.name}</span>
+                  : <span className="crumb" onClick={() => navigate(folderHref(c.id, ownerSlug))}>{c.name}</span>}
+              </React.Fragment>
+            )
+          })}
         </div>
         <input className="search" placeholder="Search files..." value={search} onChange={e => setSearch(e.target.value)} />
         <button onClick={() => setCreatingFolder(true)}>
@@ -389,7 +544,11 @@ const Files: React.FC = () => {
               <div
                 key={key}
                 className={`card${sel ? " selected" : ""}`}
-                onClick={(e) => selected.size > 0 ? toggleSelect(key, e) : setCurrentId(f.id)}
+                onClick={(e) => {
+                  if (selected.size > 0) return toggleSelect(key, e)
+                  const ownerSlug = currentOwner && me && currentOwner.id !== me.id ? currentOwner.username : undefined
+                  navigate(folderHref(f.id, ownerSlug))
+                }}
               >
                 <div className={`check${sel ? " on" : ""}`} onClick={e => toggleSelect(key, e)}>
                   <div className="check-box" />
@@ -398,8 +557,11 @@ const Files: React.FC = () => {
                 <div className="name">{f.name}</div>
                 <div className="meta">Folder</div>
                 <div className="row" onClick={e => e.stopPropagation()}>
-                  <button onClick={() => setRenaming({ kind: "folder", id: f.id, name: f.name })}>Rename</button>
-                  <button className="danger" onClick={() => del("folder", f.id)}>Delete</button>
+                  {currentRole === "owner" && (
+                    <button onClick={() => setSharing({ kind: "folder", id: f.id, name: f.name })}>Share</button>
+                  )}
+                  {canEdit && <button onClick={() => setRenaming({ kind: "folder", id: f.id, name: f.name })}>Rename</button>}
+                  {canEdit && <button className="danger" onClick={() => del("folder", f.id)}>Delete</button>}
                 </div>
               </div>
             )
@@ -424,10 +586,12 @@ const Files: React.FC = () => {
                 </div>
                 <div className="row" onClick={e => e.stopPropagation()}>
                   <button onClick={() => downloadFile(f)}>Download</button>
-                  <button onClick={() => { setSharing(f); setShareResult(null); setShareExpiry("") }}>Share</button>
+                  {currentRole === "owner" && (
+                    <button onClick={() => setSharing({ kind: "file", id: f.id, name: f.name })}>Share</button>
+                  )}
                   {f.version > 1 && <button onClick={() => setViewingVersions(f)}>Versions</button>}
-                  <button onClick={() => setRenaming({ kind: "file", id: f.id, name: f.name })}>Rename</button>
-                  <button className="danger" onClick={() => del("file", f.id)}>Delete</button>
+                  {canEdit && <button onClick={() => setRenaming({ kind: "file", id: f.id, name: f.name })}>Rename</button>}
+                  {canEdit && <button className="danger" onClick={() => del("file", f.id)}>Delete</button>}
                 </div>
               </div>
             )
@@ -449,27 +613,11 @@ const Files: React.FC = () => {
       )}
 
       {sharing && (
-        <Modal title={`Share "${sharing.name}"`} onClose={() => { setSharing(null); setShareResult(null) }}>
-          {shareResult ? (
-            <>
-              <div>Your share link:</div>
-              <div className="share-link">{shareResult.url}</div>
-              <div className="actions">
-                <button onClick={() => navigator.clipboard.writeText(shareResult.url)}>Copy</button>
-                <button className="primary" onClick={() => { setSharing(null); setShareResult(null) }}>Done</button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div style={{ marginBottom: 8, color: "var(--muted)" }}>Expires in (hours, blank = never)</div>
-              <input type="number" min="0" placeholder="e.g. 24" value={shareExpiry} onChange={e => setShareExpiry(e.target.value)} />
-              <div className="actions">
-                <button onClick={() => setSharing(null)}>Cancel</button>
-                <button className="primary" onClick={share}>Create link</button>
-              </div>
-            </>
-          )}
-        </Modal>
+        <SharingModal
+          target={sharing}
+          ownerUsername={me?.username ?? null}
+          onClose={() => setSharing(null)}
+        />
       )}
 
       {renaming && (
@@ -515,7 +663,7 @@ const Files: React.FC = () => {
           if ("mime" in item) {
             setPreviewing(item as FileItem)
           } else {
-            setCurrentId(item.id)
+            navigate(folderHref(item.id))
           }
         }
         const onKeyDown = (e: React.KeyboardEvent) => {
@@ -898,6 +1046,280 @@ const downloadFile = async (f: FileItem) => {
   URL.revokeObjectURL(url)
 }
 
+type CollabRow = {
+  id: number
+  user_id: number | null
+  email: string | null
+  role: "viewer" | "editor"
+  user: { id: number; username: string; name: string; email?: string } | null
+  invite_token?: string
+}
+
+const CollaboratorsPanel: React.FC<{ kind: "file" | "folder"; id: number }> = ({ kind, id }) => {
+  const [rows, setRows] = useState<CollabRow[]>([])
+  const [identity, setIdentity] = useState("")
+  const [role, setRole] = useState<"viewer" | "editor">("viewer")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+  const [pendingInvite, setPendingInvite] = useState<{ token: string; email: string } | null>(null)
+
+  const load = async () => {
+    const list = kind === "folder" ? await api.listFolderCollabs(id) : await api.listFileCollabs(id)
+    setRows(Array.isArray(list) ? list : [])
+  }
+  useEffect(() => { load() }, [kind, id])
+
+  const add = async () => {
+    if (!identity.trim() || busy) return
+    setBusy(true)
+    setError("")
+    setPendingInvite(null)
+    const fn = kind === "folder" ? api.addFolderCollab : api.addFileCollab
+    const res = await fn(id, identity.trim(), role)
+    setBusy(false)
+    if (res.error) return setError(res.error)
+    if (res.invite_token && res.email) {
+      setPendingInvite({ token: res.invite_token, email: res.email })
+    }
+    setIdentity("")
+    await load()
+  }
+
+  const remove = async (collabId: number) => {
+    if (!confirm("Remove this collaborator?")) return
+    const fn = kind === "folder" ? api.removeFolderCollab : api.removeFileCollab
+    const res = await fn(id, collabId)
+    if (res.error) return alert(res.error)
+    await load()
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8 }}>
+        Add by username or email. Unknown emails get an invite link you can send.
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          placeholder="username or email"
+          value={identity}
+          onChange={e => setIdentity(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && add()}
+          autoCapitalize="off"
+          autoCorrect="off"
+          style={{ flex: 1 }}
+        />
+        <select
+          value={role}
+          onChange={e => setRole(e.target.value as "viewer" | "editor")}
+          style={{ padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 6, background: "var(--panel)", color: "var(--text)" }}
+        >
+          <option value="viewer">Viewer</option>
+          <option value="editor">Editor</option>
+        </select>
+        <button className="primary" onClick={add} disabled={busy}>
+          <UserPlus size={14} /> <span>Add</span>
+        </button>
+      </div>
+      {error && <div className="msg err" style={{ marginTop: 8 }}>{error}</div>}
+      {pendingInvite && (
+        <div className="msg ok" style={{ marginTop: 8 }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Invite link for {pendingInvite.email}:</div>
+          <div className="share-link" style={{ margin: "4px 0" }}>
+            {window.location.origin}/signup?invite={pendingInvite.token}
+          </div>
+          <button onClick={() => navigator.clipboard.writeText(`${window.location.origin}/signup?invite=${pendingInvite.token}`)}>Copy invite link</button>
+        </div>
+      )}
+      <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6 }}>
+        {rows.length === 0 && <div style={{ color: "var(--muted)", fontSize: 13 }}>No collaborators yet</div>}
+        {rows.map(r => (
+          <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 6 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {r.user ? `@${r.user.username}` : r.email}
+                {r.user && <span style={{ color: "var(--muted)", marginLeft: 6, fontWeight: 400 }}>{r.user.name}</span>}
+                {!r.user && <span className="badge" style={{ marginLeft: 8 }}>pending</span>}
+              </div>
+            </div>
+            <span style={{ fontSize: 12, color: "var(--muted)", textTransform: "capitalize" }}>{r.role}</span>
+            <button className="danger" onClick={() => remove(r.id)} style={{ padding: "4px 8px", fontSize: 12 }}>
+              <X size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const SharingModal: React.FC<{
+  target: { kind: "file" | "folder"; id: number; name: string }
+  ownerUsername: string | null
+  onClose: () => void
+}> = ({ target, ownerUsername, onClose }) => {
+  const directLink = ownerUsername
+    ? `${window.location.origin}${target.kind === "folder" ? `/app/u/${ownerUsername}/f/${target.id}` : `/app/u/${ownerUsername}/file/${target.id}`}`
+    : null
+  const [tab, setTab] = useState<"people" | "link">("people")
+  const [publicLink, setPublicLink] = useState<{ url: string } | null>(null)
+  const [publicExpiry, setPublicExpiry] = useState("")
+
+  const createPublic = async () => {
+    if (target.kind !== "file") return
+    const secs = publicExpiry ? Number(publicExpiry) * 3600 : undefined
+    const res = await api.createShare(target.id, secs)
+    if (res.token) setPublicLink({ url: `${window.location.origin}/s/${res.token}` })
+    else alert(res.error ?? "Failed to share")
+  }
+
+  return (
+    <Modal title={`Share "${target.name}"`} onClose={onClose}>
+      <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--border)", marginBottom: 16 }}>
+        <button
+          onClick={() => setTab("people")}
+          style={{
+            border: "none",
+            borderRadius: 0,
+            background: "transparent",
+            padding: "8px 14px",
+            borderBottom: `2px solid ${tab === "people" ? "var(--brand)" : "transparent"}`,
+            color: tab === "people" ? "var(--brand)" : "var(--muted)",
+            fontWeight: 600,
+          }}
+        >
+          <Users size={14} /> <span>People</span>
+        </button>
+        {target.kind === "file" && (
+          <button
+            onClick={() => setTab("link")}
+            style={{
+              border: "none",
+              borderRadius: 0,
+              background: "transparent",
+              padding: "8px 14px",
+              borderBottom: `2px solid ${tab === "link" ? "var(--brand)" : "transparent"}`,
+              color: tab === "link" ? "var(--brand)" : "var(--muted)",
+              fontWeight: 600,
+            }}
+          >
+            <Link2 size={14} /> <span>Public link</span>
+          </button>
+        )}
+      </div>
+
+      {tab === "people" && (
+        <>
+          <CollaboratorsPanel kind={target.kind} id={target.id} />
+          {directLink && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Collaborators with access can open:</div>
+              <div className="share-link">{directLink}</div>
+              <button onClick={() => navigator.clipboard.writeText(directLink)} style={{ marginTop: 6 }}>Copy link</button>
+            </div>
+          )}
+        </>
+      )}
+
+      {tab === "link" && target.kind === "file" && (
+        <>
+          {publicLink ? (
+            <>
+              <div>Anyone with this link can download:</div>
+              <div className="share-link">{publicLink.url}</div>
+              <div className="actions">
+                <button onClick={() => navigator.clipboard.writeText(publicLink.url)}>Copy</button>
+                <button className="primary" onClick={onClose}>Done</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ marginBottom: 8, color: "var(--muted)" }}>Expires in (hours, blank = never)</div>
+              <input type="number" min="0" placeholder="e.g. 24" value={publicExpiry} onChange={e => setPublicExpiry(e.target.value)} />
+              <div className="actions">
+                <button onClick={onClose}>Cancel</button>
+                <button className="primary" onClick={createPublic}>Create link</button>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </Modal>
+  )
+}
+
+type SharedFolder = { id: number; user_id: number; parent_id: number | null; name: string; created_at: string; role: "viewer" | "editor"; owner: { id: number; username: string; name: string } | null }
+type SharedFile = FileItem & { user_id: number; role: "viewer" | "editor"; owner: { id: number; username: string; name: string } | null }
+
+const SharedView: React.FC = () => {
+  const [data, setData] = useState<{ folders: SharedFolder[]; files: SharedFile[] }>({ folders: [], files: [] })
+  const [previewing, setPreviewing] = useState<FileItem | null>(null)
+
+  const load = async () => {
+    const res = await api.listSharedWithMe()
+    if (res && "folders" in res) setData(res)
+    else setData({ folders: [], files: [] })
+  }
+  useEffect(() => { load() }, [])
+
+  const isEmpty = data.folders.length === 0 && data.files.length === 0
+
+  return (
+    <div className="main">
+      <div className="toolbar">
+        <div className="crumbs"><span className="current">Shared with me</span></div>
+      </div>
+      <div className="content">
+        {isEmpty && (
+          <div className="empty">
+            <div className="big"><Users size={64} strokeWidth={1.25} /></div>
+            <div>Nothing shared with you yet</div>
+            <div style={{ marginTop: 8, fontSize: 13 }}>
+              When someone adds you as a collaborator, the folder or file will appear here.
+            </div>
+          </div>
+        )}
+        {!isEmpty && (
+          <div className="grid">
+            {data.folders.map(f => (
+              <div
+                key={`sf-${f.id}`}
+                className="card"
+                onClick={() => navigate(folderHref(f.id, f.owner?.username))}
+              >
+                <div className="icon"><FolderIcon size={32} strokeWidth={1.5} /></div>
+                <div className="name">{f.name}</div>
+                <div className="meta">
+                  {f.owner && <span>@{f.owner.username}</span>}
+                  <span className="badge" style={{ marginLeft: 6 }}>{f.role}</span>
+                </div>
+              </div>
+            ))}
+            {data.files.map(f => (
+              <div
+                key={`sfi-${f.id}`}
+                className="card"
+                onClick={() => setPreviewing(f)}
+              >
+                <FileThumb file={f} />
+                <div className="name">{f.name}</div>
+                <div className="meta">
+                  {formatBytes(f.size)}
+                  {f.owner && <span style={{ marginLeft: 8 }}>@{f.owner.username}</span>}
+                  <span className="badge" style={{ marginLeft: 6 }}>{f.role}</span>
+                </div>
+                <div className="row" onClick={e => e.stopPropagation()}>
+                  <button onClick={() => downloadFile(f)}>Download</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {previewing && <PreviewModal file={previewing} onClose={() => setPreviewing(null)} />}
+    </div>
+  )
+}
+
 const SharesView: React.FC = () => {
   const [shares, setShares] = useState<Share[]>([])
 
@@ -976,36 +1398,52 @@ const SharePage: React.FC<{ token: string }> = ({ token }) => {
   )
 }
 
-const Shell: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
-  const [tab, setTab] = useState<"files" | "shares" | "trash" | "settings">("files")
+const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, route }) => {
   const [userSnapshot, setUserSnapshot] = useState(api.getUser())
+
+  const activeTab: "files" | "shared" | "links" | "trash" | "settings" = (() => {
+    if (route.kind === "shared") return "shared"
+    if (route.kind === "links") return "links"
+    if (route.kind === "trash") return "trash"
+    if (route.kind === "settings") return "settings"
+    return "files"
+  })()
 
   return (
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">Stohr</div>
-        <div className={`nav${tab === "files" ? " active" : ""}`} onClick={() => setTab("files")}>
+        <div className={`nav${activeTab === "files" ? " active" : ""}`} onClick={() => navigate("/")}>
           <FolderOpen size={18} strokeWidth={1.75} /> <span>My Files</span>
         </div>
-        <div className={`nav${tab === "shares" ? " active" : ""}`} onClick={() => setTab("shares")}>
-          <Link2 size={18} strokeWidth={1.75} /> <span>Shared</span>
+        <div className={`nav${activeTab === "shared" ? " active" : ""}`} onClick={() => navigate("/app/shared")}>
+          <Users size={18} strokeWidth={1.75} /> <span>Shared with me</span>
         </div>
-        <div className={`nav${tab === "trash" ? " active" : ""}`} onClick={() => setTab("trash")}>
+        <div className={`nav${activeTab === "links" ? " active" : ""}`} onClick={() => navigate("/app/links")}>
+          <Link2 size={18} strokeWidth={1.75} /> <span>Public links</span>
+        </div>
+        <div className={`nav${activeTab === "trash" ? " active" : ""}`} onClick={() => navigate("/app/trash")}>
           <Trash2 size={18} strokeWidth={1.75} /> <span>Trash</span>
         </div>
-        <div className={`nav${tab === "settings" ? " active" : ""}`} onClick={() => setTab("settings")}>
+        <div className={`nav${activeTab === "settings" ? " active" : ""}`} onClick={() => navigate("/app/settings")}>
           <SettingsIcon size={18} strokeWidth={1.75} /> <span>Settings</span>
         </div>
         <div className="user-footer">
           <div className="who">{userSnapshot?.name ?? ""}</div>
-          <div className="who">{userSnapshot?.email ?? ""}</div>
+          <div className="who">@{userSnapshot?.username ?? ""}</div>
           <div className="logout" onClick={onLogout}>Sign out</div>
         </div>
       </aside>
-      {tab === "files" && <Files />}
-      {tab === "shares" && <SharesView />}
-      {tab === "trash" && <TrashView />}
-      {tab === "settings" && (
+      {activeTab === "files" && (
+        <Files
+          routeFolderId={route.kind === "folder" ? route.id : null}
+          routeFileId={route.kind === "file" ? route.id : null}
+        />
+      )}
+      {activeTab === "shared" && <SharedView />}
+      {activeTab === "links" && <SharesView />}
+      {activeTab === "trash" && <TrashView />}
+      {activeTab === "settings" && (
         <Settings
           onProfileUpdate={() => setUserSnapshot(api.getUser())}
           onAccountDeleted={onLogout}
@@ -1015,9 +1453,86 @@ const Shell: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   )
 }
 
+type Invite = { id: number; token: string; email: string | null; used_at: string | null; used_by: number | null; created_at: string }
+
+const InvitesPanel: React.FC = () => {
+  const [invites, setInvites] = useState<Invite[]>([])
+  const [email, setEmail] = useState("")
+  const [error, setError] = useState("")
+
+  const load = async () => {
+    const list = await api.listInvites()
+    setInvites(Array.isArray(list) ? list : [])
+  }
+  useEffect(() => { load() }, [])
+
+  const create = async () => {
+    setError("")
+    const res = await api.createInvite(email.trim() || undefined)
+    if (res.error) return setError(res.error)
+    setEmail("")
+    await load()
+  }
+
+  const revoke = async (id: number) => {
+    if (!confirm("Revoke this invite?")) return
+    const res = await api.revokeInvite(id)
+    if (res.error) return alert(res.error)
+    await load()
+  }
+
+  const copyLink = (token: string) => {
+    navigator.clipboard.writeText(`${window.location.origin}/signup?invite=${token}`)
+  }
+
+  return (
+    <section className="settings-card">
+      <h3>Invites</h3>
+      <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 12 }}>
+        Stohr is invite-only. Mint an invite to bring someone in.
+      </div>
+      <label>Email (optional, locks the invite to this address)</label>
+      <input type="email" placeholder="alice@example.com" value={email} onChange={e => setEmail(e.target.value)} />
+      {error && <div className="msg err">{error}</div>}
+      <div className="settings-actions">
+        <button className="primary" onClick={create}>
+          <Mail size={14} /> <span>Create invite</span>
+        </button>
+      </div>
+      <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+        {invites.length === 0 && <div style={{ color: "var(--muted)", fontSize: 13 }}>No invites yet</div>}
+        {invites.map(inv => {
+          const url = `${window.location.origin}/signup?invite=${inv.token}`
+          return (
+            <div key={inv.id} style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                <div style={{ flex: 1, fontWeight: 500 }}>
+                  {inv.email ?? "Open invite"}
+                  {inv.used_at && <span className="badge" style={{ marginLeft: 8, background: "var(--muted)" }}>used</span>}
+                </div>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                  {new Date(inv.created_at).toLocaleDateString()}
+                </span>
+              </div>
+              <div className="share-link" style={{ margin: "4px 0", fontSize: 11 }}>{url}</div>
+              <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                <button onClick={() => copyLink(inv.token)} disabled={!!inv.used_at}>Copy link</button>
+                {!inv.used_at && (
+                  <button className="danger" onClick={() => revoke(inv.id)} style={{ marginLeft: "auto" }}>Revoke</button>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => void }> = ({ onProfileUpdate, onAccountDeleted }) => {
   const current = api.getUser()
   const [name, setName] = useState(current?.name ?? "")
+  const [username, setUsername] = useState(current?.username ?? "")
   const [email, setEmail] = useState(current?.email ?? "")
   const [profileMsg, setProfileMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
 
@@ -1038,10 +1553,11 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
 
   const saveProfile = async () => {
     setProfileMsg(null)
-    const patch: { name?: string; email?: string } = {}
+    const patch: { name?: string; email?: string; username?: string } = {}
     if (name.trim() && name.trim() !== current?.name) patch.name = name.trim()
     if (email.trim() && email.trim() !== current?.email) patch.email = email.trim()
-    if (!patch.name && !patch.email) {
+    if (username.trim() && username.trim() !== current?.username) patch.username = username.trim()
+    if (!patch.name && !patch.email && !patch.username) {
       setProfileMsg({ kind: "err", text: "Nothing changed" })
       return
     }
@@ -1097,6 +1613,13 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
             <h3>Profile</h3>
             <label>Name</label>
             <input value={name} onChange={e => setName(e.target.value)} />
+            <label>Username</label>
+            <input
+              value={username}
+              onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
+              autoCapitalize="off"
+              autoCorrect="off"
+            />
             <label>Email</label>
             <input type="email" value={email} onChange={e => setEmail(e.target.value)} />
             {profileMsg && <div className={`msg ${profileMsg.kind}`}>{profileMsg.text}</div>}
@@ -1104,6 +1627,8 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
               <button className="primary" onClick={saveProfile}>Save changes</button>
             </div>
           </section>
+
+          <InvitesPanel />
 
           <section className="settings-card">
             <h3>Change password</h3>
@@ -1146,21 +1671,37 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
 
 const App: React.FC = () => {
   const [loggedIn, setLoggedIn] = useState(!!api.getToken())
-  const sharePath = useMemo(() => {
-    const m = window.location.pathname.match(/^\/s\/(.+)$/)
-    return m ? m[1] : null
+  const [route, setRoute] = useState<Route>(() => parseRoute(window.location))
+  const [needsSetup, setNeedsSetup] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    const onPop = () => setRoute(parseRoute(window.location))
+    window.addEventListener("popstate", onPop)
+    return () => window.removeEventListener("popstate", onPop)
   }, [])
 
-  if (sharePath) return <SharePage token={sharePath} />
+  useEffect(() => {
+    if (loggedIn) { setNeedsSetup(false); return }
+    api.getSetupStatus().then(s => setNeedsSetup(!!s?.needsSetup)).catch(() => setNeedsSetup(false))
+  }, [loggedIn])
+
+  const initialInvite = useMemo(() => {
+    if (window.location.pathname !== "/signup") return null
+    const params = new URLSearchParams(window.location.search)
+    return params.get("invite")
+  }, [])
+
+  if (route.kind === "share") return <SharePage token={route.token} />
 
   const logout = () => {
     api.setToken(null)
     setLoggedIn(false)
+    history.replaceState(null, "", "/")
   }
 
-  return loggedIn
-    ? <Shell onLogout={logout} />
-    : <Auth onLogin={() => setLoggedIn(true)} />
+  if (loggedIn) return <Shell onLogout={logout} route={route} />
+  if (needsSetup === null) return null
+  return <Auth onLogin={() => setLoggedIn(true)} initialInvite={initialInvite} needsSetup={needsSetup} />
 }
 
 createRoot(document.getElementById("app")!).render(<App />)

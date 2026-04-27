@@ -4,19 +4,20 @@ import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
 import { requireAuth } from "@atlas/auth"
 import { drop } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
+import { canWrite, folderAccess, isOwner } from "../permissions/index.ts"
+import type { FolderRow } from "../permissions/index.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
-const collectSubtree = async (db: Connection, userId: number, rootId: number): Promise<number[]> => {
+const collectSubtreeAll = async (db: Connection, rootId: number): Promise<number[]> => {
   const ids = [rootId]
   const queue = [rootId]
   while (queue.length) {
     const pid = queue.shift()!
     const children = await db.all(
       from("folders")
-        .where(q => q("user_id").equals(userId))
         .where(q => q("parent_id").equals(pid))
-        .select("id")
+        .select("id"),
     ) as Array<{ id: number }>
     for (const c of children) {
       ids.push(c.id)
@@ -26,6 +27,38 @@ const collectSubtree = async (db: Connection, userId: number, rootId: number): P
   return ids
 }
 
+const buildTrail = async (
+  db: Connection,
+  userId: number,
+  folder: FolderRow,
+): Promise<Array<{ id: number; name: string }>> => {
+  const trail: Array<{ id: number; name: string }> = [{ id: folder.id, name: folder.name }]
+  const isOwn = folder.user_id === userId
+  let cursor: { id: number; parent_id: number | null; name: string } = folder
+  while (cursor.parent_id) {
+    if (!isOwn) {
+      const directGrant = await db.one(
+        from("collaborations")
+          .where(q => q("resource_type").equals("folder"))
+          .where(q => q("resource_id").equals(cursor.id))
+          .where(q => q("user_id").equals(userId))
+          .select("id"),
+      )
+      if (directGrant) break
+    }
+    const parent = await db.one(
+      from("folders")
+        .where(q => q("id").equals(cursor.parent_id!))
+        .where(q => q("deleted_at").isNull())
+        .select("id", "parent_id", "name"),
+    ) as { id: number; parent_id: number | null; name: string } | null
+    if (!parent) break
+    trail.unshift({ id: parent.id, name: parent.name })
+    cursor = parent
+  }
+  return trail
+}
+
 export const folderRoutes = (db: Connection, secret: string, store: StorageHandle) => {
   const guard = pipeline(requireAuth({ secret }))
   const authed = pipeline(requireAuth({ secret }), parseJson)
@@ -33,19 +66,29 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
   return [
     get("/folders", guard(async (c) => {
       const userId = authId(c)
-      const parentRaw = new URL(c.request.url).searchParams.get("parent_id")
-        ?? new URL(c.request.url).searchParams.get("parentId")
+      const url = new URL(c.request.url)
+      const parentRaw = url.searchParams.get("parent_id") ?? url.searchParams.get("parentId")
       const parentId = parentRaw === null || parentRaw === "" || parentRaw === "null" ? null : Number(parentRaw)
 
-      const base = from("folders")
-        .where(q => q("user_id").equals(userId))
-        .where(q => q("deleted_at").isNull())
+      if (parentId === null) {
+        const rows = await db.all(
+          from("folders")
+            .where(q => q("user_id").equals(userId))
+            .where(q => q("deleted_at").isNull())
+            .where(q => q("parent_id").isNull())
+            .orderBy("name", "ASC"),
+        )
+        return json(c, 200, rows)
+      }
+
+      const access = await folderAccess(db, userId, parentId)
+      if (!access) return json(c, 404, { error: "Folder not found" })
 
       const rows = await db.all(
-        (parentId === null
-          ? base.where(q => q("parent_id").isNull())
-          : base.where(q => q("parent_id").equals(parentId))
-        ).orderBy("name", "ASC")
+        from("folders")
+          .where(q => q("parent_id").equals(parentId))
+          .where(q => q("deleted_at").isNull())
+          .orderBy("name", "ASC"),
       )
 
       return json(c, 200, rows)
@@ -54,28 +97,15 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
     get("/folders/:id", guard(async (c) => {
       const userId = authId(c)
       const id = Number(c.params.id)
-      const row = await db.one(
-        from("folders")
-          .where(q => q("id").equals(id))
-          .where(q => q("user_id").equals(userId))
-          .where(q => q("deleted_at").isNull())
+      const access = await folderAccess(db, userId, id)
+      if (!access) return json(c, 404, { error: "Folder not found" })
+
+      const trail = await buildTrail(db, userId, access.folder)
+      const owner = await db.one(
+        from("users").where(q => q("id").equals(access.folder.user_id)).select("id", "username", "name"),
       )
-      if (!row) return json(c, 404, { error: "Folder not found" })
 
-      const trail: Array<{ id: number; name: string }> = []
-      let cursor: any = row
-      while (cursor) {
-        trail.unshift({ id: cursor.id, name: cursor.name })
-        if (!cursor.parent_id) break
-        cursor = await db.one(
-          from("folders")
-            .where(q => q("id").equals(cursor.parent_id))
-            .where(q => q("user_id").equals(userId))
-            .where(q => q("deleted_at").isNull())
-        )
-      }
-
-      return json(c, 200, { ...row, trail })
+      return json(c, 200, { ...access.folder, trail, role: access.role, owner })
     })),
 
     post("/folders", authed(async (c) => {
@@ -85,20 +115,18 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       const parentId = body.parent_id ?? body.parentId ?? null
       if (!name || !name.trim()) return json(c, 422, { error: "Name required" })
 
+      let ownerId = userId
       if (parentId != null) {
-        const parent = await db.one(
-          from("folders")
-            .where(q => q("id").equals(parentId))
-            .where(q => q("user_id").equals(userId))
-            .where(q => q("deleted_at").isNull())
-        )
-        if (!parent) return json(c, 404, { error: "Parent folder not found" })
+        const access = await folderAccess(db, userId, parentId)
+        if (!access) return json(c, 404, { error: "Parent folder not found" })
+        if (!canWrite(access.role)) return json(c, 403, { error: "You don't have permission to add to this folder" })
+        ownerId = access.folder.user_id
       }
 
       const rows = await db.execute(
         from("folders")
-          .insert({ user_id: userId, parent_id: parentId, name: name.trim() })
-          .returning("id", "name", "parent_id", "created_at")
+          .insert({ user_id: ownerId, parent_id: parentId, name: name.trim() })
+          .returning("id", "name", "parent_id", "created_at"),
       )
 
       return json(c, 201, rows[0])
@@ -112,13 +140,9 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       const hasParent = body.parent_id !== undefined || body.parentId !== undefined
       if (!hasName && !hasParent) return json(c, 422, { error: "Nothing to update" })
 
-      const row = await db.one(
-        from("folders")
-          .where(q => q("id").equals(id))
-          .where(q => q("user_id").equals(userId))
-          .where(q => q("deleted_at").isNull())
-      )
-      if (!row) return json(c, 404, { error: "Folder not found" })
+      const access = await folderAccess(db, userId, id)
+      if (!access) return json(c, 404, { error: "Folder not found" })
+      if (!canWrite(access.role)) return json(c, 403, { error: "Read-only access" })
 
       const patchData: Record<string, unknown> = {}
       if (hasName) {
@@ -130,22 +154,24 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
         const rawParent = body.parent_id !== undefined ? body.parent_id : body.parentId
         const parentId = rawParent === null ? null : Number(rawParent)
         if (parentId === id) return json(c, 422, { error: "Cannot move folder into itself" })
-        if (parentId != null) {
-          const subtree = await collectSubtree(db, userId, id)
+
+        if (parentId === null) {
+          if (!isOwner(access.role)) return json(c, 403, { error: "Only the owner can move a folder to the root" })
+        } else {
+          const subtree = await collectSubtreeAll(db, id)
           if (subtree.includes(parentId)) return json(c, 422, { error: "Cannot move folder into its own subtree" })
-          const parent = await db.one(
-            from("folders")
-              .where(q => q("id").equals(parentId))
-              .where(q => q("user_id").equals(userId))
-              .where(q => q("deleted_at").isNull())
-          )
-          if (!parent) return json(c, 404, { error: "Target folder not found" })
+          const targetAccess = await folderAccess(db, userId, parentId)
+          if (!targetAccess) return json(c, 404, { error: "Target folder not found" })
+          if (!canWrite(targetAccess.role)) return json(c, 403, { error: "No write access on target" })
+          if (targetAccess.folder.user_id !== access.folder.user_id) {
+            return json(c, 422, { error: "Cannot move folder across owners" })
+          }
         }
         patchData.parent_id = parentId
       }
 
       await db.execute(
-        from("folders").where(q => q("id").equals(id)).update(patchData)
+        from("folders").where(q => q("id").equals(id)).update(patchData),
       )
 
       return json(c, 200, { id, ...patchData })
@@ -154,22 +180,21 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
     del("/folders/:id", guard(async (c) => {
       const userId = authId(c)
       const id = Number(c.params.id)
-      const row = await db.one(
-        from("folders")
-          .where(q => q("id").equals(id))
-          .where(q => q("user_id").equals(userId))
-          .where(q => q("deleted_at").isNull())
-      )
-      if (!row) return json(c, 404, { error: "Folder not found" })
+      const access = await folderAccess(db, userId, id)
+      if (!access) return json(c, 404, { error: "Folder not found" })
+      if (!canWrite(access.role)) return json(c, 403, { error: "Read-only access" })
 
-      const ids = await collectSubtree(db, userId, id)
+      const ids = await collectSubtreeAll(db, id)
 
       for (const fid of ids) {
         await db.execute(
-          from("folders").where(q => q("id").equals(fid)).update({ deleted_at: raw("NOW()") })
+          from("folders").where(q => q("id").equals(fid)).update({ deleted_at: raw("NOW()") }),
         )
         await db.execute(
-          from("files").where(q => q("folder_id").equals(fid)).where(q => q("deleted_at").isNull()).update({ deleted_at: raw("NOW()") })
+          from("files")
+            .where(q => q("folder_id").equals(fid))
+            .where(q => q("deleted_at").isNull())
+            .update({ deleted_at: raw("NOW()") }),
         )
       }
 
@@ -180,7 +205,7 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       const userId = authId(c)
       const id = Number(c.params.id)
       const row = await db.one(
-        from("folders").where(q => q("id").equals(id)).where(q => q("user_id").equals(userId))
+        from("folders").where(q => q("id").equals(id)).where(q => q("user_id").equals(userId)),
       ) as { id: number; parent_id: number | null; deleted_at: string | null } | null
       if (!row) return json(c, 404, { error: "Folder not found" })
       if (!row.deleted_at) return json(c, 200, { id })
@@ -188,7 +213,7 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       let newParentId: number | null = row.parent_id
       if (newParentId != null) {
         const parent = await db.one(
-          from("folders").where(q => q("id").equals(newParentId)).where(q => q("deleted_at").isNull())
+          from("folders").where(q => q("id").equals(newParentId)).where(q => q("deleted_at").isNull()),
         )
         if (!parent) newParentId = null
       }
@@ -196,7 +221,7 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       await db.execute(
         from("folders")
           .where(q => q("id").equals(id))
-          .update({ deleted_at: null, parent_id: newParentId })
+          .update({ deleted_at: null, parent_id: newParentId }),
       )
 
       return json(c, 200, { restored: id, parent_id: newParentId })
@@ -206,24 +231,25 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       const userId = authId(c)
       const id = Number(c.params.id)
       const row = await db.one(
-        from("folders").where(q => q("id").equals(id)).where(q => q("user_id").equals(userId))
+        from("folders").where(q => q("id").equals(id)).where(q => q("user_id").equals(userId)),
       )
       if (!row) return json(c, 404, { error: "Folder not found" })
 
-      const ids = await collectSubtree(db, userId, id)
+      const ids = await collectSubtreeAll(db, id)
 
       const allFiles = await db.all(
-        from("files").where(q => q("folder_id").inList(ids)).select("id", "storage_key", "thumb_key")
+        from("files").where(q => q("folder_id").inList(ids)).select("id", "storage_key", "thumb_key"),
       ) as Array<{ id: number; storage_key: string; thumb_key: string | null }>
 
+      const fileIdList = allFiles.map(f => f.id).concat(-1)
       const allVersions = await db.all(
-        from("file_versions")
-          .where(q => q("file_id").inList(allFiles.map(f => f.id).concat(-1)))
-          .select("storage_key")
+        from("file_versions").where(q => q("file_id").inList(fileIdList)).select("storage_key"),
       ) as Array<{ storage_key: string }>
 
-      await db.execute(from("shares").where(q => q("file_id").inList(allFiles.map(f => f.id).concat(-1))).del())
-      await db.execute(from("file_versions").where(q => q("file_id").inList(allFiles.map(f => f.id).concat(-1))).del())
+      await db.execute(from("collaborations").where(q => q("resource_type").equals("file")).where(q => q("resource_id").inList(fileIdList)).del())
+      await db.execute(from("collaborations").where(q => q("resource_type").equals("folder")).where(q => q("resource_id").inList(ids)).del())
+      await db.execute(from("shares").where(q => q("file_id").inList(fileIdList)).del())
+      await db.execute(from("file_versions").where(q => q("file_id").inList(fileIdList)).del())
       await db.execute(from("files").where(q => q("folder_id").inList(ids)).del())
       await db.execute(from("folders").where(q => q("id").inList(ids)).del())
 

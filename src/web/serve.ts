@@ -8,6 +8,7 @@ Bun.serve({
   routes: {
     "/": index,
     "/s/:token": index,
+    "/signup": index,
     "/app/*": index,
   },
   async fetch(req) {

@@ -55,6 +55,10 @@ export const trashRoutes = (db: Connection, secret: string, store: StorageHandle
         from("file_versions").where(q => q("file_id").inList(fileIds)).select("storage_key")
       ) as Array<{ storage_key: string }>
 
+      const folderIds = folders.map(f => f.id).concat(-1)
+
+      await db.execute(from("collaborations").where(q => q("resource_type").equals("file")).where(q => q("resource_id").inList(fileIds)).del())
+      await db.execute(from("collaborations").where(q => q("resource_type").equals("folder")).where(q => q("resource_id").inList(folderIds)).del())
       await db.execute(from("shares").where(q => q("file_id").inList(fileIds)).del())
       await db.execute(from("file_versions").where(q => q("file_id").inList(fileIds)).del())
       await db.execute(

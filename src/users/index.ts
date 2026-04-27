@@ -4,11 +4,16 @@ import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
 import { hash, requireAuth, token, verify } from "@atlas/auth"
 import { drop } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
+import { isEmail, isValidUsername, normalizeUsername } from "../util/username.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
-const issueToken = (secret: string, user: { id: number; email: string; name: string }) =>
-  token.sign({ id: user.id, email: user.email, name: user.name }, secret, { expiresIn: 86400 * 7 })
+const issueToken = (secret: string, user: { id: number; email: string; username: string; name: string; is_owner: boolean }) =>
+  token.sign(
+    { id: user.id, email: user.email, username: user.username, name: user.name, is_owner: user.is_owner },
+    secret,
+    { expiresIn: 86400 * 7 },
+  )
 
 export const userRoutes = (db: Connection, secret: string, store: StorageHandle) => {
   const guard = pipeline(requireAuth({ secret }))
@@ -18,7 +23,7 @@ export const userRoutes = (db: Connection, secret: string, store: StorageHandle)
     get("/me", guard(async (c) => {
       const userId = authId(c)
       const user = await db.one(
-        from("users").where(q => q("id").equals(userId)).select("id", "email", "name", "created_at")
+        from("users").where(q => q("id").equals(userId)).select("id", "email", "username", "name", "is_owner", "created_at"),
       )
       if (!user) return json(c, 404, { error: "User not found" })
       return json(c, 200, user)
@@ -26,39 +31,49 @@ export const userRoutes = (db: Connection, secret: string, store: StorageHandle)
 
     patch("/me", authed(async (c) => {
       const userId = authId(c)
-      const body = c.body as { name?: string; email?: string }
+      const body = c.body as { name?: string; email?: string; username?: string }
       const name = body.name?.trim()
       const email = body.email?.trim().toLowerCase()
+      const usernameRaw = body.username?.trim()
+      const username = usernameRaw ? normalizeUsername(usernameRaw) : undefined
 
-      if (!name && !email) return json(c, 422, { error: "Provide name or email" })
+      if (!name && !email && !username) return json(c, 422, { error: "Provide name, email, or username" })
 
       const updates: Record<string, unknown> = {}
       if (name) updates.name = name
       if (email) {
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-          return json(c, 422, { error: "Invalid email format" })
+        if (!isEmail(email)) return json(c, 422, { error: "Invalid email format" })
+        const existing = await db.one(
+          from("users").where(q => q("email").equals(email)).select("id"),
+        ) as { id: number } | null
+        if (existing && existing.id !== userId) return json(c, 409, { error: "Email already in use" })
+        updates.email = email
+      }
+      if (username) {
+        if (!isValidUsername(username)) {
+          return json(c, 422, { error: "Username must be 3-32 chars, lowercase letters, digits, and underscores" })
         }
         const existing = await db.one(
-          from("users").where(q => q("email").equals(email)).select("id")
+          from("users").where(q => q("username").equals(username)).select("id"),
         ) as { id: number } | null
-        if (existing && existing.id !== userId) {
-          return json(c, 409, { error: "Email already in use" })
-        }
-        updates.email = email
+        if (existing && existing.id !== userId) return json(c, 409, { error: "Username already in use" })
+        updates.username = username
       }
 
       await db.execute(
-        from("users").where(q => q("id").equals(userId)).update(updates)
+        from("users").where(q => q("id").equals(userId)).update(updates),
       )
 
       const fresh = await db.one(
-        from("users").where(q => q("id").equals(userId)).select("id", "email", "name", "created_at")
-      ) as { id: number; email: string; name: string; created_at: string }
+        from("users").where(q => q("id").equals(userId)).select("id", "email", "username", "name", "is_owner", "created_at"),
+      ) as { id: number; email: string; username: string; name: string; is_owner: boolean; created_at: string }
 
       return json(c, 200, {
         id: fresh.id,
         email: fresh.email,
+        username: fresh.username,
         name: fresh.name,
+        is_owner: fresh.is_owner,
         created_at: fresh.created_at,
         token: await issueToken(secret, fresh),
       })
@@ -74,7 +89,7 @@ export const userRoutes = (db: Connection, secret: string, store: StorageHandle)
       if (next.length < 8) return json(c, 422, { error: "New password must be at least 8 characters" })
 
       const user = await db.one(
-        from("users").where(q => q("id").equals(userId)).select("id", "password")
+        from("users").where(q => q("id").equals(userId)).select("id", "password"),
       ) as { id: number; password: string } | null
       if (!user) return json(c, 404, { error: "User not found" })
 
@@ -83,7 +98,7 @@ export const userRoutes = (db: Connection, secret: string, store: StorageHandle)
 
       const hashed = await hash(next)
       await db.execute(
-        from("users").where(q => q("id").equals(userId)).update({ password: hashed })
+        from("users").where(q => q("id").equals(userId)).update({ password: hashed }),
       )
 
       return json(c, 200, { ok: true })
@@ -95,7 +110,7 @@ export const userRoutes = (db: Connection, secret: string, store: StorageHandle)
       if (!body.password) return json(c, 422, { error: "password required" })
 
       const user = await db.one(
-        from("users").where(q => q("id").equals(userId)).select("id", "password")
+        from("users").where(q => q("id").equals(userId)).select("id", "password"),
       ) as { id: number; password: string } | null
       if (!user) return json(c, 404, { error: "User not found" })
 
@@ -103,7 +118,7 @@ export const userRoutes = (db: Connection, secret: string, store: StorageHandle)
       if (!ok) return json(c, 401, { error: "Password is incorrect" })
 
       const keys = await db.all(
-        from("files").where(q => q("user_id").equals(userId)).select("storage_key")
+        from("files").where(q => q("user_id").equals(userId)).select("storage_key"),
       ) as Array<{ storage_key: string }>
 
       await db.execute(from("users").where(q => q("id").equals(userId)).del())
@@ -111,6 +126,37 @@ export const userRoutes = (db: Connection, secret: string, store: StorageHandle)
       await Promise.allSettled(keys.map(k => drop(store, k.storage_key)))
 
       return json(c, 200, { deleted: true })
+    })),
+
+    get("/users/search", guard(async (c) => {
+      const userId = authId(c)
+      const url = new URL(c.request.url)
+      const qParam = (url.searchParams.get("q") ?? "").trim()
+      if (!qParam) return json(c, 200, [])
+      const pattern = `%${qParam.replace(/[%_]/g, m => `\\${m}`)}%`
+      const rows = await db.all(
+        from("users")
+          .where(q =>
+            q.or(
+              q("username").ilike(pattern),
+              q("email").ilike(pattern),
+              q("name").ilike(pattern),
+            ),
+          )
+          .select("id", "username", "name")
+          .orderBy("username", "ASC")
+          .limit(11),
+      ) as Array<{ id: number; username: string; name: string }>
+      return json(c, 200, rows.filter(r => r.id !== userId).slice(0, 10))
+    })),
+
+    get("/u/:username", guard(async (c) => {
+      const username = normalizeUsername(c.params.username)
+      const row = await db.one(
+        from("users").where(q => q("username").equals(username)).select("id", "username", "name"),
+      )
+      if (!row) return json(c, 404, { error: "User not found" })
+      return json(c, 200, row)
     })),
   ]
 }

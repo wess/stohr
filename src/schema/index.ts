@@ -3,9 +3,33 @@ import { column, defineSchema } from "@atlas/db"
 export const users = defineSchema("users", {
   id: column.serial().primaryKey(),
   email: column.text().unique(),
+  username: column.text().unique(),
   name: column.text(),
   password: column.text(),
+  is_owner: column.boolean().default(false),
   created_at: column.timestamp().default("now()"),
+})
+
+export const invites = defineSchema("invites", {
+  id: column.serial().primaryKey(),
+  token: column.text().unique(),
+  email: column.text().nullable(),
+  invited_by: column.integer().nullable().ref("users", "id"),
+  used_at: column.timestamp().nullable(),
+  used_by: column.integer().nullable().ref("users", "id"),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const collaborations = defineSchema("collaborations", {
+  id: column.serial().primaryKey(),
+  resource_type: column.text(),
+  resource_id: column.integer(),
+  user_id: column.integer().nullable().ref("users", "id"),
+  email: column.text().nullable(),
+  role: column.text().default("viewer"),
+  invited_by: column.integer().nullable().ref("users", "id"),
+  created_at: column.timestamp().default("now()"),
+  accepted_at: column.timestamp().nullable(),
 })
 
 export const folders = defineSchema("folders", {

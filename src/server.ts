@@ -9,6 +9,8 @@ import { shareRoutes } from "./shares/index.ts"
 import { trashRoutes } from "./trash/index.ts"
 import { userRoutes } from "./users/index.ts"
 import { searchRoutes } from "./search/index.ts"
+import { inviteRoutes } from "./invites/index.ts"
+import { collabRoutes } from "./collabs/index.ts"
 import { createStorage } from "./storage/index.ts"
 
 const config = defineConfig({
@@ -43,6 +45,8 @@ serve({
     ...shareRoutes(db, config.secret, store),
     ...trashRoutes(db, config.secret, store),
     ...searchRoutes(db, config.secret),
+    ...inviteRoutes(db, config.secret),
+    ...collabRoutes(db, config.secret),
   ],
 })
 

@@ -5,22 +5,10 @@ import { requireAuth } from "@atlas/auth"
 import { drop, fetchObject, makeKey, put } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { generateImageThumb, isThumbable, thumbKeyFor } from "../storage/thumb.ts"
+import { canWrite, fileAccess, folderAccess } from "../permissions/index.ts"
+import type { FileRow } from "../permissions/index.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
-
-type FileRow = {
-  id: number
-  user_id: number
-  folder_id: number | null
-  name: string
-  mime: string
-  size: number
-  storage_key: string
-  thumb_key: string | null
-  version: number
-  deleted_at: string | null
-  created_at: string
-}
 
 const archiveCurrent = async (db: Connection, file: FileRow, uploaderId: number) => {
   await db.execute(
@@ -31,7 +19,7 @@ const archiveCurrent = async (db: Connection, file: FileRow, uploaderId: number)
       size: file.size,
       storage_key: file.storage_key,
       uploaded_by: uploaderId,
-    })
+    }),
   )
 }
 
@@ -47,52 +35,70 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       const q = url.searchParams.get("q")
       const folderId = folderRaw === null || folderRaw === "" || folderRaw === "null" ? null : Number(folderRaw)
 
-      let query = from("files")
-        .where(p => p("user_id").equals(userId))
-        .where(p => p("deleted_at").isNull())
-
       if (q) {
-        query = query.where(p => p("name").ilike(`%${q}%`))
-      } else if (folderId === null) {
-        query = query.where(p => p("folder_id").isNull())
-      } else {
-        query = query.where(p => p("folder_id").equals(folderId))
+        const rows = await db.all(
+          from("files")
+            .where(p => p("user_id").equals(userId))
+            .where(p => p("deleted_at").isNull())
+            .where(p => p("name").ilike(`%${q}%`))
+            .select("id", "name", "mime", "size", "folder_id", "version", "created_at")
+            .orderBy("created_at", "DESC")
+            .limit(200),
+        )
+        return json(c, 200, rows)
       }
 
+      if (folderId === null) {
+        const rows = await db.all(
+          from("files")
+            .where(p => p("user_id").equals(userId))
+            .where(p => p("deleted_at").isNull())
+            .where(p => p("folder_id").isNull())
+            .select("id", "name", "mime", "size", "folder_id", "version", "created_at")
+            .orderBy("created_at", "DESC")
+            .limit(200),
+        )
+        return json(c, 200, rows)
+      }
+
+      const access = await folderAccess(db, userId, folderId)
+      if (!access) return json(c, 404, { error: "Folder not found" })
+
       const rows = await db.all(
-        query
+        from("files")
+          .where(p => p("folder_id").equals(folderId))
+          .where(p => p("deleted_at").isNull())
           .select("id", "name", "mime", "size", "folder_id", "version", "created_at")
           .orderBy("created_at", "DESC")
-          .limit(200)
+          .limit(200),
       )
-
       return json(c, 200, rows)
     })),
 
     get("/files/:id", guard(async (c) => {
       const userId = authId(c)
       const id = Number(c.params.id)
-      const row = await db.one(
-        from("files")
-          .where(p => p("id").equals(id))
-          .where(p => p("user_id").equals(userId))
-          .where(p => p("deleted_at").isNull())
-          .select("id", "name", "mime", "size", "folder_id", "version", "created_at")
-      )
-      if (!row) return json(c, 404, { error: "File not found" })
-      return json(c, 200, row)
+      const access = await fileAccess(db, userId, id)
+      if (!access) return json(c, 404, { error: "File not found" })
+      const f = access.file
+      return json(c, 200, {
+        id: f.id,
+        name: f.name,
+        mime: f.mime,
+        size: f.size,
+        folder_id: f.folder_id,
+        version: f.version,
+        created_at: f.created_at,
+        role: access.role,
+      })
     })),
 
     get("/files/:id/download", guard(async (c) => {
       const userId = authId(c)
       const id = Number(c.params.id)
-      const row = await db.one(
-        from("files")
-          .where(p => p("id").equals(id))
-          .where(p => p("user_id").equals(userId))
-          .where(p => p("deleted_at").isNull())
-      ) as FileRow | null
-      if (!row) return json(c, 404, { error: "File not found" })
+      const access = await fileAccess(db, userId, id)
+      if (!access) return json(c, 404, { error: "File not found" })
+      const row = access.file
 
       const res = await fetchObject(store, row.storage_key)
       if (!res.body) return json(c, 500, { error: "Storage returned empty body" })
@@ -104,10 +110,10 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         putHeader(
           putHeader(c, "content-type", row.mime),
           "content-disposition",
-          disposition
+          disposition,
         ),
         "content-length",
-        String(row.size)
+        String(row.size),
       )
       return stream(withHeaders, 200, res.body)
     })),
@@ -115,17 +121,10 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
     get("/files/:id/thumb", guard(async (c) => {
       const userId = authId(c)
       const id = Number(c.params.id)
-      const row = await db.one(
-        from("files")
-          .where(p => p("id").equals(id))
-          .where(p => p("user_id").equals(userId))
-          .where(p => p("deleted_at").isNull())
-          .select("thumb_key"),
-      ) as { thumb_key: string | null } | null
+      const access = await fileAccess(db, userId, id)
+      if (!access || !access.file.thumb_key) return json(c, 404, { error: "No thumbnail" })
 
-      if (!row || !row.thumb_key) return json(c, 404, { error: "No thumbnail" })
-
-      const res = await fetchObject(store, row.thumb_key)
+      const res = await fetchObject(store, access.file.thumb_key)
       if (!res.body) return json(c, 404, { error: "No thumbnail" })
 
       const withHeaders = putHeader(
@@ -147,14 +146,12 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       const folderRaw = body.fields?.folder_id ?? body.fields?.folderId
       const folderId = !folderRaw || folderRaw === "null" || folderRaw === "" ? null : Number(folderRaw)
 
+      let ownerId = userId
       if (folderId != null) {
-        const folder = await db.one(
-          from("folders")
-            .where(q => q("id").equals(folderId))
-            .where(q => q("user_id").equals(userId))
-            .where(q => q("deleted_at").isNull())
-        )
-        if (!folder) return json(c, 404, { error: "Folder not found" })
+        const access = await folderAccess(db, userId, folderId)
+        if (!access) return json(c, 404, { error: "Folder not found" })
+        if (!canWrite(access.role)) return json(c, 403, { error: "Read-only access to this folder" })
+        ownerId = access.folder.user_id
       }
 
       const result: Array<{ id: number; name: string; mime: string; size: number; folder_id: number | null; version: number; created_at: string; new_version?: boolean }> = []
@@ -163,7 +160,7 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         const name = (file as any).name ?? "upload.bin"
         const mime = file.type || "application/octet-stream"
         const size = file.size
-        const key = makeKey(userId, name)
+        const key = makeKey(ownerId, name)
         await put(store, key, file, mime)
 
         let thumbKey: string | null = null
@@ -183,17 +180,17 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         const existing = folderId === null
           ? await db.one(
               from("files")
-                .where(q => q("user_id").equals(userId))
+                .where(q => q("user_id").equals(ownerId))
                 .where(q => q("folder_id").isNull())
                 .where(q => q("name").equals(name))
-                .where(q => q("deleted_at").isNull())
+                .where(q => q("deleted_at").isNull()),
             ) as FileRow | null
           : await db.one(
               from("files")
-                .where(q => q("user_id").equals(userId))
+                .where(q => q("user_id").equals(ownerId))
                 .where(q => q("folder_id").equals(folderId))
                 .where(q => q("name").equals(name))
-                .where(q => q("deleted_at").isNull())
+                .where(q => q("deleted_at").isNull()),
             ) as FileRow | null
 
         if (existing) {
@@ -204,15 +201,15 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
             from("files")
               .where(q => q("id").equals(existing.id))
               .update({ mime, size, storage_key: key, thumb_key: thumbKey, version: newVersion })
-              .returning("id", "name", "mime", "size", "folder_id", "version", "created_at")
+              .returning("id", "name", "mime", "size", "folder_id", "version", "created_at"),
           )
           if (oldThumb) await Promise.allSettled([drop(store, oldThumb)])
           result.push({ ...rows[0], new_version: true } as any)
         } else {
           const rows = await db.execute(
             from("files")
-              .insert({ user_id: userId, folder_id: folderId, name, mime, size, storage_key: key, thumb_key: thumbKey, version: 1 })
-              .returning("id", "name", "mime", "size", "folder_id", "version", "created_at")
+              .insert({ user_id: ownerId, folder_id: folderId, name, mime, size, storage_key: key, thumb_key: thumbKey, version: 1 })
+              .returning("id", "name", "mime", "size", "folder_id", "version", "created_at"),
           )
           result.push({ ...rows[0], new_version: false } as any)
         }
@@ -231,13 +228,9 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       const hasFolder = body.folder_id !== undefined || body.folderId !== undefined
       if (!hasName && !hasFolder) return json(c, 422, { error: "Nothing to update" })
 
-      const row = await db.one(
-        from("files")
-          .where(p => p("id").equals(id))
-          .where(p => p("user_id").equals(userId))
-          .where(p => p("deleted_at").isNull())
-      )
-      if (!row) return json(c, 404, { error: "File not found" })
+      const access = await fileAccess(db, userId, id)
+      if (!access) return json(c, 404, { error: "File not found" })
+      if (!canWrite(access.role)) return json(c, 403, { error: "Read-only access" })
 
       const patchData: Record<string, unknown> = {}
       if (hasName) patchData.name = String(body.name).trim()
@@ -245,19 +238,20 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         const rawFid = body.folder_id !== undefined ? body.folder_id : body.folderId
         const fid = rawFid === null ? null : Number(rawFid)
         if (fid !== null) {
-          const folder = await db.one(
-            from("folders")
-              .where(q => q("id").equals(fid))
-              .where(q => q("user_id").equals(userId))
-              .where(q => q("deleted_at").isNull())
-          )
-          if (!folder) return json(c, 404, { error: "Target folder not found" })
+          const targetAccess = await folderAccess(db, userId, fid)
+          if (!targetAccess) return json(c, 404, { error: "Target folder not found" })
+          if (!canWrite(targetAccess.role)) return json(c, 403, { error: "No write access on target folder" })
+          if (targetAccess.folder.user_id !== access.file.user_id) {
+            return json(c, 422, { error: "Cannot move file across owners" })
+          }
+        } else {
+          if (access.role !== "owner") return json(c, 403, { error: "Only the owner can move a file to the root" })
         }
         patchData.folder_id = fid
       }
 
       await db.execute(
-        from("files").where(p => p("id").equals(id)).update(patchData)
+        from("files").where(p => p("id").equals(id)).update(patchData),
       )
 
       return json(c, 200, { id, ...patchData })
@@ -266,16 +260,12 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
     del("/files/:id", guard(async (c) => {
       const userId = authId(c)
       const id = Number(c.params.id)
-      const row = await db.one(
-        from("files")
-          .where(p => p("id").equals(id))
-          .where(p => p("user_id").equals(userId))
-          .where(p => p("deleted_at").isNull())
-      )
-      if (!row) return json(c, 404, { error: "File not found" })
+      const access = await fileAccess(db, userId, id)
+      if (!access) return json(c, 404, { error: "File not found" })
+      if (!canWrite(access.role)) return json(c, 403, { error: "Read-only access" })
 
       await db.execute(
-        from("files").where(p => p("id").equals(id)).update({ deleted_at: raw("NOW()") })
+        from("files").where(p => p("id").equals(id)).update({ deleted_at: raw("NOW()") }),
       )
 
       return json(c, 200, { trashed: id })
@@ -285,7 +275,7 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       const userId = authId(c)
       const id = Number(c.params.id)
       const row = await db.one(
-        from("files").where(p => p("id").equals(id)).where(p => p("user_id").equals(userId))
+        from("files").where(p => p("id").equals(id)).where(p => p("user_id").equals(userId)),
       ) as FileRow | null
       if (!row) return json(c, 404, { error: "File not found" })
       if (!row.deleted_at) return json(c, 200, { id })
@@ -293,7 +283,7 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       let folderId = row.folder_id
       if (folderId != null) {
         const folder = await db.one(
-          from("folders").where(q => q("id").equals(folderId)).where(q => q("deleted_at").isNull())
+          from("folders").where(q => q("id").equals(folderId)).where(q => q("deleted_at").isNull()),
         )
         if (!folder) folderId = null
       }
@@ -301,7 +291,7 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       await db.execute(
         from("files")
           .where(p => p("id").equals(id))
-          .update({ deleted_at: null, folder_id: folderId })
+          .update({ deleted_at: null, folder_id: folderId }),
       )
 
       return json(c, 200, { restored: id, folder_id: folderId })
@@ -311,14 +301,15 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       const userId = authId(c)
       const id = Number(c.params.id)
       const row = await db.one(
-        from("files").where(p => p("id").equals(id)).where(p => p("user_id").equals(userId))
+        from("files").where(p => p("id").equals(id)).where(p => p("user_id").equals(userId)),
       ) as FileRow | null
       if (!row) return json(c, 404, { error: "File not found" })
 
       const versions = await db.all(
-        from("file_versions").where(q => q("file_id").equals(id)).select("storage_key")
+        from("file_versions").where(q => q("file_id").equals(id)).select("storage_key"),
       ) as Array<{ storage_key: string }>
 
+      await db.execute(from("collaborations").where(q => q("resource_type").equals("file")).where(q => q("resource_id").equals(id)).del())
       await db.execute(from("shares").where(q => q("file_id").equals(id)).del())
       await db.execute(from("file_versions").where(q => q("file_id").equals(id)).del())
       await db.execute(from("files").where(q => q("id").equals(id)).del())
@@ -335,19 +326,15 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
     get("/files/:id/versions", guard(async (c) => {
       const userId = authId(c)
       const id = Number(c.params.id)
-      const file = await db.one(
-        from("files")
-          .where(p => p("id").equals(id))
-          .where(p => p("user_id").equals(userId))
-          .where(p => p("deleted_at").isNull())
-      ) as FileRow | null
-      if (!file) return json(c, 404, { error: "File not found" })
+      const access = await fileAccess(db, userId, id)
+      if (!access) return json(c, 404, { error: "File not found" })
+      const file = access.file
 
       const prior = await db.all(
         from("file_versions")
           .where(q => q("file_id").equals(id))
           .select("version", "mime", "size", "uploaded_by", "uploaded_at")
-          .orderBy("version", "DESC")
+          .orderBy("version", "DESC"),
       ) as Array<{ version: number; mime: string; size: number; uploaded_by: number | null; uploaded_at: string }>
 
       const current = {
@@ -365,20 +352,16 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       const userId = authId(c)
       const id = Number(c.params.id)
       const version = Number(c.params.version)
-      const file = await db.one(
-        from("files")
-          .where(p => p("id").equals(id))
-          .where(p => p("user_id").equals(userId))
-          .where(p => p("deleted_at").isNull())
-      ) as FileRow | null
-      if (!file) return json(c, 404, { error: "File not found" })
+      const access = await fileAccess(db, userId, id)
+      if (!access) return json(c, 404, { error: "File not found" })
+      const file = access.file
 
       let meta: { mime: string; size: number; storage_key: string }
       if (version === file.version) {
         meta = { mime: file.mime, size: file.size, storage_key: file.storage_key }
       } else {
         const v = await db.one(
-          from("file_versions").where(q => q("file_id").equals(id)).where(q => q("version").equals(version))
+          from("file_versions").where(q => q("file_id").equals(id)).where(q => q("version").equals(version)),
         ) as { mime: string; size: number; storage_key: string } | null
         if (!v) return json(c, 404, { error: "Version not found" })
         meta = v
@@ -391,10 +374,10 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         putHeader(
           putHeader(c, "content-type", meta.mime),
           "content-disposition",
-          `attachment; filename="${encodeURIComponent(file.name)}"`
+          `attachment; filename="${encodeURIComponent(file.name)}"`,
         ),
         "content-length",
-        String(meta.size)
+        String(meta.size),
       )
       return stream(withHeaders, 200, res.body)
     })),
@@ -403,17 +386,14 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       const userId = authId(c)
       const id = Number(c.params.id)
       const version = Number(c.params.version)
-      const file = await db.one(
-        from("files")
-          .where(p => p("id").equals(id))
-          .where(p => p("user_id").equals(userId))
-          .where(p => p("deleted_at").isNull())
-      ) as FileRow | null
-      if (!file) return json(c, 404, { error: "File not found" })
+      const access = await fileAccess(db, userId, id)
+      if (!access) return json(c, 404, { error: "File not found" })
+      if (!canWrite(access.role)) return json(c, 403, { error: "Read-only access" })
+      const file = access.file
       if (version === file.version) return json(c, 422, { error: "Already the current version" })
 
       const target = await db.one(
-        from("file_versions").where(q => q("file_id").equals(id)).where(q => q("version").equals(version))
+        from("file_versions").where(q => q("file_id").equals(id)).where(q => q("version").equals(version)),
       ) as { id: number; version: number; mime: string; size: number; storage_key: string } | null
       if (!target) return json(c, 404, { error: "Version not found" })
 
@@ -445,11 +425,11 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
           storage_key: target.storage_key,
           thumb_key: newThumbKey,
           version: newVersion,
-        })
+        }),
       )
 
       await db.execute(
-        from("file_versions").where(q => q("id").equals(target.id)).del()
+        from("file_versions").where(q => q("id").equals(target.id)).del(),
       )
 
       if (oldThumb) await Promise.allSettled([drop(store, oldThumb)])
@@ -461,22 +441,19 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       const userId = authId(c)
       const id = Number(c.params.id)
       const version = Number(c.params.version)
-      const file = await db.one(
-        from("files")
-          .where(p => p("id").equals(id))
-          .where(p => p("user_id").equals(userId))
-          .where(p => p("deleted_at").isNull())
-      ) as FileRow | null
-      if (!file) return json(c, 404, { error: "File not found" })
+      const access = await fileAccess(db, userId, id)
+      if (!access) return json(c, 404, { error: "File not found" })
+      if (!canWrite(access.role)) return json(c, 403, { error: "Read-only access" })
+      const file = access.file
       if (version === file.version) return json(c, 422, { error: "Cannot delete the current version" })
 
       const v = await db.one(
-        from("file_versions").where(q => q("file_id").equals(id)).where(q => q("version").equals(version))
+        from("file_versions").where(q => q("file_id").equals(id)).where(q => q("version").equals(version)),
       ) as { storage_key: string } | null
       if (!v) return json(c, 404, { error: "Version not found" })
 
       await db.execute(
-        from("file_versions").where(q => q("file_id").equals(id)).where(q => q("version").equals(version)).del()
+        from("file_versions").where(q => q("file_id").equals(id)).where(q => q("version").equals(version)).del(),
       )
       await drop(store, v.storage_key)
 

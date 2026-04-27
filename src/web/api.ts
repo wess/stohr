@@ -1,7 +1,9 @@
 const BASE = "/api"
 
+export type AuthUser = { id: number; email: string; username: string; name: string; is_owner: boolean }
+
 let token: string | null = localStorage.getItem("stohr_token")
-let user: { id: number; email: string; name: string } | null = (() => {
+let user: AuthUser | null = (() => {
   const raw = localStorage.getItem("stohr_user")
   return raw ? JSON.parse(raw) : null
 })()
@@ -21,7 +23,7 @@ const jsonReq = async (method: string, path: string, body?: unknown) => {
   return res.json()
 }
 
-export const setToken = (t: string | null, u: typeof user = null) => {
+export const setToken = (t: string | null, u: AuthUser | null = null) => {
   token = t
   user = u
   if (t) localStorage.setItem("stohr_token", t)
@@ -33,16 +35,38 @@ export const setToken = (t: string | null, u: typeof user = null) => {
 export const getToken = () => token
 export const getUser = () => user
 
-export const signup = async (name: string, email: string, password: string) => {
-  const data = await jsonReq("POST", "/signup", { name, email, password })
-  if (data.token) setToken(data.token, { id: data.id, email: data.email, name: data.name })
+export const signup = async (input: {
+  name: string
+  username: string
+  email: string
+  password: string
+  inviteToken?: string
+}) => {
+  const data = await jsonReq("POST", "/signup", {
+    name: input.name,
+    username: input.username,
+    email: input.email,
+    password: input.password,
+    invite_token: input.inviteToken,
+  })
+  if (data.token) setToken(data.token, { id: data.id, email: data.email, username: data.username, name: data.name, is_owner: !!data.is_owner })
   return data
 }
 
-export const login = async (email: string, password: string) => {
-  const data = await jsonReq("POST", "/login", { email, password })
-  if (data.token) setToken(data.token, { id: data.id, email: data.email, name: data.name })
+export const login = async (identity: string, password: string) => {
+  const data = await jsonReq("POST", "/login", { identity, password })
+  if (data.token) setToken(data.token, { id: data.id, email: data.email, username: data.username, name: data.name, is_owner: !!data.is_owner })
   return data
+}
+
+export const checkInvite = async (token: string) => {
+  const res = await fetch(`${BASE}/invites/${encodeURIComponent(token)}/check`)
+  return res.json()
+}
+
+export const getSetupStatus = async () => {
+  const res = await fetch(`${BASE}/setup`)
+  return res.json() as Promise<{ needsSetup: boolean }>
 }
 
 export const listFolders = (parentId: number | null) =>
@@ -80,6 +104,9 @@ export const uploadFiles = async (files: FileList | File[], folderId: number | n
   return res.json()
 }
 
+export const getFile = (id: number) =>
+  jsonReq("GET", `/files/${id}`)
+
 export const renameFile = (id: number, name: string) =>
   jsonReq("PATCH", `/files/${id}`, { name })
 
@@ -111,9 +138,9 @@ export const shareDownloadUrl = (token: string) => `${BASE}/s/${token}`
 export const getMe = () =>
   jsonReq("GET", "/me")
 
-export const updateProfile = async (patch: { name?: string; email?: string }) => {
+export const updateProfile = async (patch: { name?: string; email?: string; username?: string }) => {
   const data = await jsonReq("PATCH", "/me", patch)
-  if (data.token) setToken(data.token, { id: data.id, email: data.email, name: data.name })
+  if (data.token) setToken(data.token, { id: data.id, email: data.email, username: data.username, name: data.name, is_owner: !!data.is_owner })
   return data
 }
 
@@ -165,3 +192,36 @@ export const restoreVersion = (fileId: number, version: number) =>
 
 export const deleteVersion = (fileId: number, version: number) =>
   jsonReq("DELETE", `/files/${fileId}/versions/${version}`)
+
+export const listInvites = () =>
+  jsonReq("GET", "/invites")
+
+export const createInvite = (email?: string) =>
+  jsonReq("POST", "/invites", { email: email || undefined })
+
+export const revokeInvite = (id: number) =>
+  jsonReq("DELETE", `/invites/${id}`)
+
+export const listSharedWithMe = () =>
+  jsonReq("GET", "/shared")
+
+export const listFolderCollabs = (id: number) =>
+  jsonReq("GET", `/folders/${id}/collaborators`)
+
+export const listFileCollabs = (id: number) =>
+  jsonReq("GET", `/files/${id}/collaborators`)
+
+export const addFolderCollab = (id: number, identity: string, role: "viewer" | "editor") =>
+  jsonReq("POST", `/folders/${id}/collaborators`, { identity, role })
+
+export const addFileCollab = (id: number, identity: string, role: "viewer" | "editor") =>
+  jsonReq("POST", `/files/${id}/collaborators`, { identity, role })
+
+export const removeFolderCollab = (id: number, collabId: number) =>
+  jsonReq("DELETE", `/folders/${id}/collaborators/${collabId}`)
+
+export const removeFileCollab = (id: number, collabId: number) =>
+  jsonReq("DELETE", `/files/${id}/collaborators/${collabId}`)
+
+export const userSearch = (q: string) =>
+  jsonReq("GET", `/users/search?q=${encodeURIComponent(q)}`)
