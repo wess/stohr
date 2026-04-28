@@ -1,14 +1,14 @@
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 import { del, get, json, pipeline } from "@atlas/server"
-import { requireAuth } from "@atlas/auth"
+import { requireAuth } from "../auth/guard.ts"
 import { drop } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
 export const trashRoutes = (db: Connection, secret: string, store: StorageHandle) => {
-  const guard = pipeline(requireAuth({ secret }))
+  const guard = pipeline(requireAuth({ secret, db }))
 
   return [
     get("/trash", guard(async (c) => {

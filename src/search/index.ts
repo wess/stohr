@@ -1,7 +1,7 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { get, json, pipeline } from "@atlas/server"
-import { requireAuth } from "@atlas/auth"
+import { requireAuth } from "../auth/guard.ts"
 import { escapeLike, mimePatternsFor, parseQuery } from "./parse.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -14,7 +14,7 @@ const clampLimit = (s: string | null, fallback = 20, max = 50): number => {
 }
 
 export const searchRoutes = (db: Connection, secret: string) => {
-  const guard = pipeline(requireAuth({ secret }))
+  const guard = pipeline(requireAuth({ secret, db }))
 
   return [
     get("/search", guard(async (c) => {

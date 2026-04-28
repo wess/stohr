@@ -2,6 +2,7 @@
 .omc
 docs/superpowers
 .envrc
+.claude
 
 # dependencies (bun install)
 node_modules

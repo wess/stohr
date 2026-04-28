@@ -1,7 +1,7 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { del, get, json, parseMultipart, patch, pipeline, post, putHeader, stream } from "@atlas/server"
-import { requireAuth } from "@atlas/auth"
+import { requireAuth } from "../auth/guard.ts"
 import { drop, fetchObject, makeKey, put } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { generateImageThumb, isThumbable, thumbKeyFor } from "../storage/thumb.ts"
@@ -24,8 +24,8 @@ const archiveCurrent = async (db: Connection, file: FileRow, uploaderId: number)
 }
 
 export const fileRoutes = (db: Connection, secret: string, store: StorageHandle) => {
-  const guard = pipeline(requireAuth({ secret }))
-  const upload = pipeline(requireAuth({ secret }), parseMultipart)
+  const guard = pipeline(requireAuth({ secret, db }))
+  const upload = pipeline(requireAuth({ secret, db }), parseMultipart)
 
   return [
     get("/files", guard(async (c) => {

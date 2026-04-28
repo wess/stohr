@@ -42,6 +42,17 @@ export const paymentConfig = defineSchema("payment_config", {
   updated_at: column.timestamp().default("now()"),
 })
 
+export const apps = defineSchema("apps", {
+  id: column.serial().primaryKey(),
+  user_id: column.integer().ref("users", "id"),
+  name: column.text(),
+  description: column.text().nullable(),
+  token_hash: column.text().unique(),
+  token_prefix: column.text(),
+  last_used_at: column.timestamp().nullable(),
+  created_at: column.timestamp().default("now()"),
+})
+
 export const s3AccessKeys = defineSchema("s3_access_keys", {
   id: column.serial().primaryKey(),
   user_id: column.integer().ref("users", "id"),

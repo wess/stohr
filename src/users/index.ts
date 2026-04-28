@@ -1,7 +1,8 @@
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
-import { hash, requireAuth, token, verify } from "@atlas/auth"
+import { hash, token, verify } from "@atlas/auth"
+import { requireAuth } from "../auth/guard.ts"
 import { drop } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { isEmail, isValidUsername, normalizeUsername } from "../util/username.ts"
@@ -16,8 +17,8 @@ const issueToken = (secret: string, user: { id: number; email: string; username:
   )
 
 export const userRoutes = (db: Connection, secret: string, store: StorageHandle) => {
-  const guard = pipeline(requireAuth({ secret }))
-  const authed = pipeline(requireAuth({ secret }), parseJson)
+  const guard = pipeline(requireAuth({ secret, db }))
+  const authed = pipeline(requireAuth({ secret, db }), parseJson)
 
   return [
     get("/me", guard(async (c) => {

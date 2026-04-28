@@ -154,6 +154,12 @@ class StohrClient {
 
   Future<void> deleteFile(int id) async => _json('DELETE', '/files/$id');
 
+  Future<FileItem> renameFile(int id, String name) async =>
+      FileItem.fromJson(await _json('PATCH', '/files/$id', body: {'name': name}) as Map<String, dynamic>);
+
+  Future<FileItem> moveFile(int id, int? folderId) async =>
+      FileItem.fromJson(await _json('PATCH', '/files/$id', body: {'folder_id': folderId}) as Map<String, dynamic>);
+
   // ── shares ─────────────────────────────────────────
 
   Future<Share> createShare(int fileId, {int? expiresInSeconds}) async {
@@ -193,6 +199,23 @@ class StohrClient {
   }
 
   Future<void> revokeS3Key(int id) async => _json('DELETE', '/me/s3-keys/$id');
+
+  // ── apps ──────────────────────────────────────────
+
+  Future<List<App>> listApps() async {
+    final r = await _json('GET', '/me/apps');
+    return (r as List).map((j) => App.fromJson(j as Map<String, dynamic>)).toList();
+  }
+
+  Future<App> createApp(String name, {String? description}) async {
+    final j = await _json('POST', '/me/apps', body: {
+      'name': name,
+      if (description != null) 'description': description,
+    });
+    return App.fromJson(j as Map<String, dynamic>);
+  }
+
+  Future<void> revokeApp(int id) async => _json('DELETE', '/me/apps/$id');
 
   void close() => _http.close();
 }

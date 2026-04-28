@@ -4,7 +4,7 @@ class User {
   final String username;
   final String name;
   final bool isOwner;
-  final String createdAt;
+  final String? createdAt;
 
   User({
     required this.id,
@@ -12,7 +12,7 @@ class User {
     required this.username,
     required this.name,
     required this.isOwner,
-    required this.createdAt,
+    this.createdAt,
   });
 
   factory User.fromJson(Map<String, dynamic> j) => User(
@@ -21,7 +21,7 @@ class User {
         username: j['username'] as String,
         name: j['name'] as String,
         isOwner: (j['is_owner'] as bool?) ?? false,
-        createdAt: j['created_at'] as String,
+        createdAt: j['created_at'] as String?,
       );
 }
 
@@ -164,6 +164,36 @@ class S3AccessKey {
         accessKey: j['access_key'] as String,
         secretKey: j['secret_key'] as String?,
         name: j['name'] as String?,
+        createdAt: j['created_at'] as String,
+        lastUsedAt: j['last_used_at'] as String?,
+      );
+}
+
+class App {
+  final int id;
+  final String name;
+  final String? description;
+  final String? token;
+  final String tokenPrefix;
+  final String createdAt;
+  final String? lastUsedAt;
+
+  App({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.token,
+    required this.tokenPrefix,
+    required this.createdAt,
+    required this.lastUsedAt,
+  });
+
+  factory App.fromJson(Map<String, dynamic> j) => App(
+        id: j['id'] as int,
+        name: j['name'] as String,
+        description: j['description'] as String?,
+        token: j['token'] as String?,
+        tokenPrefix: j['token_prefix'] as String,
         createdAt: j['created_at'] as String,
         lastUsedAt: j['last_used_at'] as String?,
       );

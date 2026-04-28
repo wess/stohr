@@ -23,6 +23,7 @@ import {
   Music,
   Search,
   Settings as SettingsIcon,
+  Smartphone,
   Sun,
   Share2,
   Trash2,
@@ -2066,7 +2067,17 @@ type S3Key = {
   last_used_at: string | null
 }
 
-const DeveloperPanel: React.FC = () => {
+type App = {
+  id: number
+  name: string
+  description: string | null
+  token?: string
+  token_prefix: string
+  created_at: string
+  last_used_at: string | null
+}
+
+const S3KeysSection: React.FC = () => {
   const [keys, setKeys] = useState<S3Key[]>([])
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState("")
@@ -2102,10 +2113,10 @@ const DeveloperPanel: React.FC = () => {
   const endpoint = window.location.origin + "/s3"
 
   return (
-    <section className="settings-card">
-      <h3>Developer</h3>
-      <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 12 }}>
-        S3-compatible access keys for using your stohr storage with <code>aws-cli</code>, <code>boto3</code>, or any AWS SDK.
+    <div className="dev-section">
+      <h4>S3 access keys</h4>
+      <div className="dev-section-desc">
+        S3-compatible credentials for <code>aws-cli</code>, <code>boto3</code>, or any AWS SDK.
       </div>
 
       <div className="dev-config">
@@ -2167,7 +2178,7 @@ const DeveloperPanel: React.FC = () => {
       )}
 
       {keys.length === 0 ? (
-        <div style={{ marginTop: 16, color: "var(--muted)", fontSize: 13 }}>No access keys yet.</div>
+        <div className="dev-empty">No access keys yet.</div>
       ) : (
         <div className="dev-list">
           {keys.map(k => (
@@ -2189,6 +2200,126 @@ const DeveloperPanel: React.FC = () => {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+const AppsSection: React.FC = () => {
+  const [apps, setApps] = useState<App[]>([])
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState("")
+  const [newDesc, setNewDesc] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [justCreated, setJustCreated] = useState<App | null>(null)
+  const [error, setError] = useState("")
+
+  const load = async () => {
+    const data = await api.listApps()
+    setApps(Array.isArray(data) ? data : [])
+  }
+  useEffect(() => { load() }, [])
+
+  const create = async () => {
+    if (!newName.trim()) return setError("Name is required")
+    setBusy(true); setError("")
+    const res = await api.createApp(newName.trim(), newDesc.trim() || undefined)
+    setBusy(false)
+    if (res.error) return setError(res.error)
+    setJustCreated(res as App)
+    setNewName("")
+    setNewDesc("")
+    setCreating(false)
+    await load()
+  }
+
+  const revoke = async (id: number) => {
+    if (!confirm("Revoke this app token? Anything using it will stop working immediately.")) return
+    const res = await api.revokeApp(id)
+    if (res.error) return alert(res.error)
+    await load()
+  }
+
+  return (
+    <div className="dev-section">
+      <h4>Apps</h4>
+      <div className="dev-section-desc">
+        Personal access tokens for SDKs, mobile apps, and scripts. Use <code>Authorization: Bearer &lt;token&gt;</code> against any API endpoint.
+      </div>
+
+      {justCreated && justCreated.token && (
+        <div className="msg ok" style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>
+            New app token — save it now, it won't be shown again
+          </div>
+          <div className="dev-secret">
+            <label>{justCreated.name}</label>
+            <div className="dev-secret-row">
+              <code>{justCreated.token}</code>
+              <button onClick={() => navigator.clipboard.writeText(justCreated.token ?? "")}>Copy</button>
+            </div>
+          </div>
+          <button onClick={() => setJustCreated(null)} style={{ marginTop: 8 }}>I've saved it</button>
+        </div>
+      )}
+
+      {creating && !justCreated && (
+        <div className="dev-create">
+          <label>Name</label>
+          <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Flutter app, CI bot" autoFocus />
+          <label style={{ marginTop: 8 }}>Description <span className="lp-field-opt">(optional)</span></label>
+          <input value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="What's this app for?" />
+          {error && <div className="msg err" style={{ marginTop: 8 }}>{error}</div>}
+          <div className="settings-actions">
+            <button onClick={() => { setCreating(false); setNewName(""); setNewDesc(""); setError("") }}>Cancel</button>
+            <button className="primary" disabled={busy} onClick={create}>{busy ? "Creating…" : "Create app"}</button>
+          </div>
+        </div>
+      )}
+
+      {!creating && !justCreated && (
+        <div className="settings-actions" style={{ justifyContent: "flex-start", marginTop: 12 }}>
+          <button className="primary" onClick={() => setCreating(true)}>
+            <Smartphone size={14} /> <span>Register new app</span>
+          </button>
+        </div>
+      )}
+
+      {apps.length === 0 ? (
+        <div className="dev-empty">No apps yet.</div>
+      ) : (
+        <div className="dev-list">
+          {apps.map(a => (
+            <div key={a.id} className="dev-row">
+              <div className="dev-row-main">
+                <div className="dev-row-line">
+                  <span className="dev-row-name">{a.name}</span>
+                  <code>{a.token_prefix}…</code>
+                </div>
+                {a.description && (
+                  <div className="dev-row-desc">{a.description}</div>
+                )}
+                <div className="dev-row-meta">
+                  Created {new Date(a.created_at).toLocaleDateString()}
+                  {a.last_used_at
+                    ? ` · last used ${new Date(a.last_used_at).toLocaleDateString()}`
+                    : " · never used"}
+                </div>
+              </div>
+              <button className="danger" onClick={() => revoke(a.id)}>Revoke</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const DeveloperPanel: React.FC = () => {
+  return (
+    <section className="settings-card">
+      <h3>Developer</h3>
+      <S3KeysSection />
+      <AppsSection />
     </section>
   )
 }

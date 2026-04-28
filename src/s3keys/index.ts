@@ -1,7 +1,7 @@
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
-import { requireAuth } from "@atlas/auth"
+import { requireAuth } from "../auth/guard.ts"
 import { randomBytes } from "node:crypto"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -16,8 +16,8 @@ const generateSecretKey = (): string => {
 }
 
 export const s3KeyRoutes = (db: Connection, secret: string) => {
-  const guard = pipeline(requireAuth({ secret }))
-  const authed = pipeline(requireAuth({ secret }), parseJson)
+  const guard = pipeline(requireAuth({ secret, db }))
+  const authed = pipeline(requireAuth({ secret, db }), parseJson)
 
   return [
     get("/me/s3-keys", guard(async (c) => {

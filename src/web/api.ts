@@ -339,6 +339,15 @@ export const createS3Key = (name?: string) =>
 export const revokeS3Key = (id: number) =>
   jsonReq("DELETE", `/me/s3-keys/${id}`)
 
+export const listApps = () =>
+  jsonReq("GET", "/me/apps")
+
+export const createApp = (name: string, description?: string) =>
+  jsonReq("POST", "/me/apps", { name, description })
+
+export const revokeApp = (id: number) =>
+  jsonReq("DELETE", `/me/apps/${id}`)
+
 export const getPublicFolder = async (username: string, folderId: number) => {
   const res = await fetch(`${BASE}/p/${encodeURIComponent(username)}/${folderId}`)
   return res.json()

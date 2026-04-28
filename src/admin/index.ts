@@ -1,7 +1,7 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { del, get, halt, json, parseJson, pipeline, post } from "@atlas/server"
-import { requireAuth } from "@atlas/auth"
+import { requireAuth } from "../auth/guard.ts"
 import { randomToken } from "../util/token.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -25,8 +25,8 @@ type InviteRequest = {
 }
 
 export const adminRoutes = (db: Connection, secret: string) => {
-  const guard = pipeline(requireAuth({ secret }), ownerOnly)
-  const authed = pipeline(requireAuth({ secret }), ownerOnly, parseJson)
+  const guard = pipeline(requireAuth({ secret, db }), ownerOnly)
+  const authed = pipeline(requireAuth({ secret, db }), ownerOnly, parseJson)
 
   return [
     get("/admin/invite-requests", guard(async (c) => {

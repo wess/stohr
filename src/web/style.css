@@ -924,6 +924,36 @@ input:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px 
   color: var(--muted);
   margin-top: 4px;
 }
+.dev-row-desc {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.dev-section {
+  padding-top: 18px;
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.dev-section:first-of-type {
+  padding-top: 0;
+  margin-top: 0;
+  border-top: none;
+}
+.dev-section h4 {
+  margin: 0 0 6px 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.dev-section-desc {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.dev-empty {
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
 
 /* Test/Live mode toggle */
 .mode-toggle {

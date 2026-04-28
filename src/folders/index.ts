@@ -1,7 +1,7 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
-import { requireAuth } from "@atlas/auth"
+import { requireAuth } from "../auth/guard.ts"
 import { drop } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { canWrite, folderAccess, isOwner } from "../permissions/index.ts"
@@ -60,8 +60,8 @@ const buildTrail = async (
 }
 
 export const folderRoutes = (db: Connection, secret: string, store: StorageHandle) => {
-  const guard = pipeline(requireAuth({ secret }))
-  const authed = pipeline(requireAuth({ secret }), parseJson)
+  const guard = pipeline(requireAuth({ secret, db }))
+  const authed = pipeline(requireAuth({ secret, db }), parseJson)
 
   return [
     get("/folders", guard(async (c) => {

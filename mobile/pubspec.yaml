@@ -1,0 +1,30 @@
+name: stohrapp
+description: Stohr cloud storage
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_secure_storage: ^9.2.2
+  image_picker: ^1.1.2
+  file_picker: ^8.1.4
+  path_provider: ^2.1.5
+  share_plus: ^10.1.2
+  cached_network_image: ^3.4.1
+  url_launcher: ^6.3.1
+  http: ^1.1.0
+  stohr:
+    path: ../sdks/dart
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

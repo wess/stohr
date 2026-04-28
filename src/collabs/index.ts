@@ -1,7 +1,7 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
-import { requireAuth } from "@atlas/auth"
+import { requireAuth } from "../auth/guard.ts"
 import { fileAccess, folderAccess, isOwner } from "../permissions/index.ts"
 import { isEmail, normalizeUsername } from "../util/username.ts"
 import { randomToken } from "../util/token.ts"
@@ -238,8 +238,8 @@ const sharedWithMe = (db: Connection) => async (c: any) => {
 }
 
 export const collabRoutes = (db: Connection, secret: string) => {
-  const guard = pipeline(requireAuth({ secret }))
-  const authed = pipeline(requireAuth({ secret }), parseJson)
+  const guard = pipeline(requireAuth({ secret, db }))
+  const authed = pipeline(requireAuth({ secret, db }), parseJson)
 
   return [
     get("/shared", guard(sharedWithMe(db))),

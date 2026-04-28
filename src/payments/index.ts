@@ -1,7 +1,7 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { del, get, halt, json, parseJson, pipeline, post, put } from "@atlas/server"
-import { requireAuth } from "@atlas/auth"
+import { requireAuth } from "../auth/guard.ts"
 import { quotaFor, isValidTier, TIER_QUOTAS } from "./quotas.ts"
 import {
   type LsEvent,
@@ -142,9 +142,9 @@ const applySubscriptionEvent = async (
 }
 
 export const paymentsRoutes = (db: Connection, secret: string) => {
-  const guard = pipeline(requireAuth({ secret }))
-  const adminGuard = pipeline(requireAuth({ secret }), ownerOnly)
-  const adminAuthed = pipeline(requireAuth({ secret }), ownerOnly, parseJson)
+  const guard = pipeline(requireAuth({ secret, db }))
+  const adminGuard = pipeline(requireAuth({ secret, db }), ownerOnly)
+  const adminAuthed = pipeline(requireAuth({ secret, db }), ownerOnly, parseJson)
 
   return [
     get("/payments/plans", async (c) => {

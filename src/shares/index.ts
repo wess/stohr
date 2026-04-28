@@ -1,7 +1,7 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { del, get, json, parseJson, pipeline, post, putHeader, stream } from "@atlas/server"
-import { requireAuth } from "@atlas/auth"
+import { requireAuth } from "../auth/guard.ts"
 import { fetchObject } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 
@@ -13,8 +13,8 @@ const randomToken = () => {
 }
 
 export const shareRoutes = (db: Connection, secret: string, store: StorageHandle) => {
-  const guard = pipeline(requireAuth({ secret }))
-  const authed = pipeline(requireAuth({ secret }), parseJson)
+  const guard = pipeline(requireAuth({ secret, db }))
+  const authed = pipeline(requireAuth({ secret, db }), parseJson)
 
   return [
     get("/shares", guard(async (c) => {
