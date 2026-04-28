@@ -110,7 +110,7 @@ input:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px 
   border: 1px solid var(--border);
 }
 .auth h1 { margin: 0 0 8px; font-size: 26px; color: var(--brand); }
-.auth-logo { display: block; height: 72px; width: auto; margin: 0 auto 16px; }
+.auth-logo { display: block; height: 144px; width: auto; margin: 0 auto 16px; }
 .auth h2 { margin: 0 0 24px; font-size: 16px; color: var(--muted); font-weight: 500; }
 .auth input { margin-bottom: 12px; }
 .auth button { width: 100%; margin-top: 8px; }
@@ -129,7 +129,7 @@ input:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px 
   gap: 4px;
 }
 .brand { font-size: 20px; font-weight: 700; color: var(--brand); margin-bottom: 16px; padding: 4px; display: flex; align-items: center; }
-.brand img { height: 36px; width: auto; display: block; }
+.brand img, .brand svg { height: 72px; width: auto; display: block; }
 .nav {
   padding: 8px 10px;
   border-radius: 6px;
@@ -644,6 +644,19 @@ input:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px 
   background: var(--brand);
   transition: width 0.3s ease;
 }
+.sub-breakdown {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.sub-breakdown strong {
+  color: var(--text);
+  font-weight: 500;
+  margin-left: 4px;
+}
 .sub-upgrade-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -984,6 +997,79 @@ input:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px 
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel);
+}
+
+.oauth-consent {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+}
+.oauth-card {
+  width: 100%;
+  max-width: 440px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px;
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+.oauth-logo { margin: 0 auto 16px; display: block; }
+.oauth-title { margin: 0 0 8px; font-size: 18px; font-weight: 500; }
+.oauth-title strong { font-weight: 700; }
+.oauth-desc { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+.oauth-official {
+  display: inline-block;
+  background: var(--accent-bg);
+  color: var(--brand);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  margin-bottom: 16px;
+}
+.oauth-scopes {
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 18px 0;
+}
+.oauth-scopes-title { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.oauth-scope-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+  padding: 4px 0;
+}
+.oauth-scope-row code {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  flex-shrink: 0;
+}
+.oauth-account { color: var(--muted); font-size: 13px; margin-top: 12px; }
+.oauth-actions { display: flex; gap: 8px; margin-top: 18px; }
+.oauth-actions button { flex: 1; }
+.oauth-redirect-note {
+  margin-top: 16px;
+  font-size: 11px;
+  color: var(--muted);
+  word-break: break-all;
+}
+.oauth-redirect-note code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
 }
 .audit-row.audit-warn { border-left: 3px solid #b45309; }
 .audit-row.audit-ok { border-left: 3px solid var(--brand); }
@@ -1379,7 +1465,7 @@ input:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px 
   display: inline-flex;
   align-items: center;
 }
-.public-brand img { height: 36px; width: auto; display: block; }
+.public-brand img, .public-brand svg { height: 72px; width: auto; display: block; }
 .public-meta {
   text-align: right;
 }
@@ -1616,7 +1702,7 @@ input:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px 
   display: inline-flex;
   align-items: center;
 }
-.lp-brand img { height: 32px; width: auto; display: block; }
+.lp-brand img, .lp-brand svg { height: 64px; width: auto; display: block; }
 .lp-nav-links {
   display: none;
   gap: 32px;

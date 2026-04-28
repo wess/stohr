@@ -35,7 +35,7 @@ import {
 } from "lucide-react"
 import * as api from "./api.ts"
 import { applyTheme, getTheme, setTheme as setThemePref, type Theme } from "./theme.ts"
-import logoUrl from "./logo.png"
+import { Logo } from "./logo.tsx"
 
 type Route =
   | { kind: "root" }
@@ -48,9 +48,11 @@ type Route =
   | { kind: "admin" }
   | { kind: "share"; token: string }
   | { kind: "publicFolder"; username: string; folderId: number }
+  | { kind: "oauthAuthorize"; query: string }
 
 const parseRoute = (loc: { pathname: string; search: string }): Route => {
   const path = loc.pathname
+  if (path === "/oauth/authorize") return { kind: "oauthAuthorize", query: loc.search }
   const share = path.match(/^\/s\/(.+)$/)
   if (share) return { kind: "share", token: share[1]! }
   const pub = path.match(/^\/p\/([^/]+)\/(\d+)/)
@@ -158,7 +160,7 @@ const FileThumb: React.FC<{ file: FileItem }> = ({ file }) => {
   )
 }
 
-const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needsSetup: boolean; initialMode?: "login" | "signup" }> = ({ onLogin, initialInvite, needsSetup, initialMode }) => {
+const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needsSetup: boolean; initialMode?: "login" | "signup"; oauthNext?: string }> = ({ onLogin, initialInvite, needsSetup, initialMode, oauthNext }) => {
   const [mode, setMode] = useState<"login" | "signup">(initialMode ?? (needsSetup || initialInvite ? "signup" : "login"))
   const [name, setName] = useState("")
   const [username, setUsername] = useState("")
@@ -213,6 +215,10 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
     }
     if (!res.token) return setError("Authentication failed")
     if (window.location.pathname === "/signup") history.replaceState(null, "", "/")
+    if (oauthNext) {
+      history.replaceState(null, "", oauthNext)
+      window.dispatchEvent(new PopStateEvent("popstate"))
+    }
     onLogin()
   }
 
@@ -222,6 +228,10 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
     const res = await api.loginMfa(mfaToken, mfaUseBackup ? { backupCode: mfaBackup } : { code: mfaCode })
     if (res.error) return setError(res.error)
     if (!res.token) return setError("Authentication failed")
+    if (oauthNext) {
+      history.replaceState(null, "", oauthNext)
+      window.dispatchEvent(new PopStateEvent("popstate"))
+    }
     onLogin()
   }
 
@@ -231,7 +241,7 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
 
   return (
     <div className="auth">
-      <img src={logoUrl} alt="Stohr" className="auth-logo" />
+      <Logo className="auth-logo" />
       <h2>{heading}</h2>
       {needsSetup && (
         <div style={{ background: "var(--accent-bg)", color: "var(--brand)", border: "1px solid var(--brand)", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 }}>
@@ -1960,6 +1970,107 @@ const FolderSettingsModal: React.FC<{
   )
 }
 
+type OAuthInfo = {
+  client?: { client_id: string; name: string; description: string | null; icon_url: string | null; is_official: boolean }
+  scopes?: string[]
+  redirect_uri?: string
+  state?: string | null
+  error?: string
+  error_description?: string
+}
+
+const SCOPE_DESCRIPTIONS: Record<string, string> = {
+  read: "View your files, folders, and account info",
+  write: "Create, modify, and delete files and folders",
+  share: "Create and revoke public share links",
+}
+
+const OAuthConsent: React.FC<{ query: string }> = ({ query }) => {
+  const [info, setInfo] = useState<OAuthInfo | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    api.oauthAuthorizeInfo(query).then(setInfo)
+  }, [query])
+
+  const params = useMemo(() => {
+    const out: Record<string, string> = {}
+    new URLSearchParams(query).forEach((v, k) => { out[k] = v })
+    return out
+  }, [query])
+
+  const decide = async (approve: boolean) => {
+    setBusy(true); setError(null)
+    const res = approve
+      ? await api.oauthAuthorizeApprove(params)
+      : await api.oauthAuthorizeDeny(params)
+    setBusy(false)
+    if (res.error) {
+      setError(res.error_description ?? res.error)
+      return
+    }
+    if (res.redirect_url) {
+      window.location.replace(res.redirect_url)
+    }
+  }
+
+  if (!info) return <div className="share-page">Loading…</div>
+  if (info.error || !info.client) {
+    return (
+      <div className="share-page">
+        <div className="file-icon"><AlertTriangle size={64} strokeWidth={1.5} /></div>
+        <div className="filename">Authorization failed</div>
+        <div className="filemeta">{info.error_description ?? info.error ?? "Unknown error"}</div>
+      </div>
+    )
+  }
+
+  const me = api.getUser()
+  return (
+    <div className="oauth-consent">
+      <div className="oauth-card">
+        <Logo className="oauth-logo" size={96} />
+        <h2 className="oauth-title">
+          <strong>{info.client.name}</strong> wants to access your Stohr
+        </h2>
+        {info.client.description && <div className="oauth-desc">{info.client.description}</div>}
+        {info.client.is_official && (
+          <div className="oauth-official">Official Stohr application</div>
+        )}
+
+        <div className="oauth-scopes">
+          <div className="oauth-scopes-title">It will be able to:</div>
+          {(info.scopes ?? []).map(s => (
+            <div key={s} className="oauth-scope-row">
+              <code>{s}</code>
+              <span>{SCOPE_DESCRIPTIONS[s] ?? "Access your account"}</span>
+            </div>
+          ))}
+        </div>
+
+        {me && (
+          <div className="oauth-account">
+            Signing in as <strong>@{me.username}</strong>
+          </div>
+        )}
+
+        {error && <div className="msg err">{error}</div>}
+
+        <div className="oauth-actions">
+          <button onClick={() => decide(false)} disabled={busy}>Deny</button>
+          <button className="primary" onClick={() => decide(true)} disabled={busy}>
+            {busy ? "Working…" : "Authorize"}
+          </button>
+        </div>
+        <div className="oauth-redirect-note">
+          You'll be sent to <code>{info.redirect_uri}</code>.
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const PublicFolderPage: React.FC<{ username: string; folderId: number }> = ({ username, folderId }) => {
   const [data, setData] = useState<
     | { folder: { id: number; name: string; kind: string }; owner: { username: string; name: string }; files: GalleryFile[] }
@@ -1986,7 +2097,7 @@ const PublicFolderPage: React.FC<{ username: string; folderId: number }> = ({ us
     <div className="public-folder">
       <header className="public-header">
         <div className="public-brand" onClick={() => window.location.assign("/")}>
-          <img src={logoUrl} alt="Stohr" />
+          <Logo />
         </div>
         <div className="public-meta">
           <div className="public-title">{data.folder.name}</div>
@@ -2092,7 +2203,7 @@ const SharePage: React.FC<{ token: string }> = ({ token }) => {
     <div className="public-folder">
       <header className="public-header">
         <div className="public-brand" onClick={() => window.location.assign("/")}>
-          <img src={logoUrl} alt="Stohr" />
+          <Logo />
         </div>
         <div className="public-meta">
           <div className="public-title">{meta.name}</div>
@@ -2199,7 +2310,7 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand"><img src={logoUrl} alt="Stohr" /></div>
+        <div className="brand"><Logo /></div>
         <div className={`nav${activeTab === "files" ? " active" : ""}`} onClick={() => navigate("/")}>
           <FolderOpen size={18} strokeWidth={1.75} /> <span>My Files</span>
         </div>
@@ -2250,6 +2361,9 @@ type Subscription = {
   tier: string
   quota_bytes: number
   used_bytes: number
+  active_bytes?: number
+  trash_bytes?: number
+  version_bytes?: number
   status: string | null
   renews_at: string | null
   has_subscription: boolean
@@ -2286,8 +2400,9 @@ const SubscriptionPanel: React.FC = () => {
     )
   }
 
-  const pct = sub.quota_bytes > 0 ? Math.min(100, (sub.used_bytes / sub.quota_bytes) * 100) : 0
-  const tierLabel = sub.tier.charAt(0).toUpperCase() + sub.tier.slice(1)
+  const unlimited = sub.quota_bytes <= 0
+  const pct = unlimited ? 0 : Math.min(100, (sub.used_bytes / sub.quota_bytes) * 100)
+  const tierLabel = unlimited ? "Owner" : sub.tier.charAt(0).toUpperCase() + sub.tier.slice(1)
 
   return (
     <section className="settings-card">
@@ -2297,17 +2412,30 @@ const SubscriptionPanel: React.FC = () => {
           <div>
             <div className="sub-tier">{tierLabel}</div>
             {sub.status && <div className="sub-status">{sub.status}{sub.renews_at ? ` · renews ${new Date(sub.renews_at).toLocaleDateString()}` : ""}</div>}
+            {unlimited && <div className="sub-status">Operator account — no storage cap</div>}
           </div>
           <div className="sub-usage-text">
-            {formatBytes(sub.used_bytes)} <span style={{ color: "var(--muted)" }}>of {formatBytes(sub.quota_bytes)}</span>
+            {formatBytes(sub.used_bytes)}
+            <span style={{ color: "var(--muted)" }}>
+              {unlimited ? " used" : ` of ${formatBytes(sub.quota_bytes)}`}
+            </span>
           </div>
         </div>
-        <div className="sub-bar">
-          <div className="sub-fill" style={{ width: `${pct}%`, background: pct > 90 ? "var(--danger)" : "var(--brand)" }} />
-        </div>
+        {!unlimited && (
+          <div className="sub-bar">
+            <div className="sub-fill" style={{ width: `${pct}%`, background: pct > 90 ? "var(--danger)" : "var(--brand)" }} />
+          </div>
+        )}
+        {(sub.active_bytes !== undefined) && (
+          <div className="sub-breakdown">
+            <span>Active <strong>{formatBytes(sub.active_bytes)}</strong></span>
+            <span>Trash <strong>{formatBytes(sub.trash_bytes ?? 0)}</strong></span>
+            <span>Versions <strong>{formatBytes(sub.version_bytes ?? 0)}</strong></span>
+          </div>
+        )}
       </div>
 
-      {sub.tier === "free" && (
+      {sub.tier === "free" && !unlimited && (
         <>
           <div style={{ marginTop: 16, color: "var(--muted)", fontSize: 13 }}>Upgrade for more storage:</div>
           <div className="sub-upgrade-grid">
@@ -2597,12 +2725,199 @@ const AppsSection: React.FC = () => {
 }
 
 const DeveloperPanel: React.FC = () => {
+  const me = api.getUser()
   return (
     <section className="settings-card">
       <h3>Developer</h3>
       <S3KeysSection />
       <AppsSection />
+      {me?.is_owner && <OAuthClientsSection />}
     </section>
+  )
+}
+
+type OAuthClient = {
+  id: number
+  client_id: string
+  client_secret?: string
+  name: string
+  description: string | null
+  icon_url: string | null
+  redirect_uris: string[]
+  allowed_scopes: string[]
+  is_official: boolean
+  is_public_client: boolean
+  created_at: string
+  revoked_at: string | null
+}
+
+const OAuthClientsSection: React.FC = () => {
+  const [clients, setClients] = useState<OAuthClient[]>([])
+  const [creating, setCreating] = useState(false)
+  const [name, setName] = useState("")
+  const [description, setDescription] = useState("")
+  const [redirectsRaw, setRedirectsRaw] = useState("")
+  const [scopeRead, setScopeRead] = useState(true)
+  const [scopeWrite, setScopeWrite] = useState(true)
+  const [scopeShare, setScopeShare] = useState(true)
+  const [isOfficial, setIsOfficial] = useState(false)
+  const [confidential, setConfidential] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+  const [justCreated, setJustCreated] = useState<OAuthClient | null>(null)
+
+  const load = async () => {
+    const data = await api.adminListOAuthClients()
+    setClients(Array.isArray(data) ? data : [])
+  }
+  useEffect(() => { load() }, [])
+
+  const reset = () => {
+    setName(""); setDescription(""); setRedirectsRaw("")
+    setScopeRead(true); setScopeWrite(true); setScopeShare(true)
+    setIsOfficial(false); setConfidential(false); setError("")
+  }
+
+  const create = async () => {
+    if (!name.trim()) return setError("Name is required")
+    const redirect_uris = redirectsRaw.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
+    if (redirect_uris.length === 0) return setError("At least one redirect URI is required")
+    const allowed_scopes = [
+      ...(scopeRead ? ["read"] : []),
+      ...(scopeWrite ? ["write"] : []),
+      ...(scopeShare ? ["share"] : []),
+    ]
+    if (allowed_scopes.length === 0) return setError("At least one scope is required")
+
+    setBusy(true); setError("")
+    const res = await api.adminCreateOAuthClient({
+      name: name.trim(),
+      description: description.trim() || undefined,
+      redirect_uris,
+      allowed_scopes,
+      is_official: isOfficial,
+      is_public_client: !confidential,
+    })
+    setBusy(false)
+    if (res.error) return setError(res.error)
+    setJustCreated(res as OAuthClient)
+    setCreating(false)
+    reset()
+    await load()
+  }
+
+  const revoke = async (id: number) => {
+    if (!confirm("Revoke this OAuth client? Existing access tokens will continue to work until they expire (1h), but no new tokens can be issued.")) return
+    const res = await api.adminRevokeOAuthClient(id)
+    if (res.error) return alert(res.error)
+    await load()
+  }
+
+  return (
+    <div className="dev-section">
+      <h4>OAuth applications</h4>
+      <div className="dev-section-desc">
+        Register apps that authenticate users via OAuth 2.0 + PKCE. Use for native/desktop/mobile clients (Butter, etc.) or third-party integrations.
+      </div>
+
+      {justCreated && (
+        <div className="msg ok" style={{ marginTop: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Client created — copy these now</div>
+          <div className="dev-secret">
+            <label>Client ID</label>
+            <div className="dev-secret-row">
+              <code>{justCreated.client_id}</code>
+              <button onClick={() => navigator.clipboard.writeText(justCreated.client_id)}>Copy</button>
+            </div>
+            {justCreated.client_secret && (
+              <>
+                <label>Client secret <span style={{ color: "var(--muted)", fontWeight: 400 }}>(only shown once)</span></label>
+                <div className="dev-secret-row">
+                  <code>{justCreated.client_secret}</code>
+                  <button onClick={() => navigator.clipboard.writeText(justCreated.client_secret ?? "")}>Copy</button>
+                </div>
+              </>
+            )}
+          </div>
+          <button onClick={() => setJustCreated(null)} style={{ marginTop: 8 }}>I've saved it</button>
+        </div>
+      )}
+
+      {creating && !justCreated && (
+        <div className="dev-create">
+          <label>Name</label>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Butter" autoFocus />
+          <label style={{ marginTop: 10 }}>Description <span className="lp-field-opt">(optional)</span></label>
+          <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Desktop screenshot uploader" />
+          <label style={{ marginTop: 10 }}>Redirect URIs <span className="lp-field-opt">(one per line, exact match)</span></label>
+          <textarea
+            value={redirectsRaw}
+            onChange={e => setRedirectsRaw(e.target.value)}
+            placeholder="butter://oauth/callback&#10;http://localhost:5173/callback"
+            rows={3}
+            style={{ width: "100%", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12 }}
+          />
+          <label style={{ marginTop: 10 }}>Scopes</label>
+          <div style={{ display: "flex", gap: 12, fontSize: 13 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <input type="checkbox" checked={scopeRead} onChange={e => setScopeRead(e.target.checked)} /> read
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <input type="checkbox" checked={scopeWrite} onChange={e => setScopeWrite(e.target.checked)} /> write
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <input type="checkbox" checked={scopeShare} onChange={e => setScopeShare(e.target.checked)} /> share
+            </label>
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12, fontSize: 13 }}>
+            <input type="checkbox" checked={isOfficial} onChange={e => setIsOfficial(e.target.checked)} />
+            <span>First-party app (skips consent screen)</span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 13 }}>
+            <input type="checkbox" checked={confidential} onChange={e => setConfidential(e.target.checked)} />
+            <span>Confidential client (issues a client_secret — for server-side apps only; native apps must stay public)</span>
+          </label>
+          {error && <div className="msg err" style={{ marginTop: 8 }}>{error}</div>}
+          <div className="settings-actions">
+            <button onClick={() => { setCreating(false); reset() }}>Cancel</button>
+            <button className="primary" disabled={busy} onClick={create}>{busy ? "Creating…" : "Create client"}</button>
+          </div>
+        </div>
+      )}
+
+      {!creating && !justCreated && (
+        <div className="settings-actions" style={{ justifyContent: "flex-start", marginTop: 12 }}>
+          <button className="primary" onClick={() => setCreating(true)}>Register new OAuth client</button>
+        </div>
+      )}
+
+      {clients.length === 0 ? (
+        <div className="dev-empty">No OAuth clients registered yet.</div>
+      ) : (
+        <div className="dev-list">
+          {clients.map(c => (
+            <div key={c.id} className="dev-row" style={{ opacity: c.revoked_at ? 0.5 : 1 }}>
+              <div className="dev-row-main">
+                <div className="dev-row-line">
+                  <span className="dev-row-name">{c.name}</span>
+                  <code>{c.client_id}</code>
+                  {c.is_official && <span className="badge" style={{ background: "var(--brand)", color: "white" }}>official</span>}
+                  {c.revoked_at && <span className="badge" style={{ background: "var(--muted)" }}>revoked</span>}
+                </div>
+                {c.description && <div className="dev-row-desc">{c.description}</div>}
+                <div className="dev-row-meta">
+                  Scopes: {c.allowed_scopes.join(", ")} · Redirects: {c.redirect_uris.length}
+                  {c.is_public_client ? " · public (PKCE)" : " · confidential"}
+                </div>
+              </div>
+              {!c.revoked_at && (
+                <button className="danger" onClick={() => revoke(c.id)}>Revoke</button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -4106,7 +4421,7 @@ const LandingPage: React.FC = () => {
         Currently in <em>beta</em> — invite only
       </div>
       <header className="lp-nav">
-        <a href="/" className="lp-brand"><img src={logoUrl} alt="stohr" /></a>
+        <a href="/" className="lp-brand"><Logo /></a>
         <nav className="lp-nav-links">
           <a href="#features">Features</a>
           <a href="#pricing">Pricing</a>
@@ -4272,6 +4587,13 @@ const App: React.FC = () => {
 
   if (route.kind === "share") return <SharePage token={route.token} />
   if (route.kind === "publicFolder") return <PublicFolderPage username={route.username} folderId={route.folderId} />
+  if (route.kind === "oauthAuthorize") {
+    if (!loggedIn) {
+      const next = encodeURIComponent("/oauth/authorize" + route.query)
+      return <Auth onLogin={() => setLoggedIn(true)} initialInvite={null} needsSetup={false} initialMode="login" oauthNext={`/oauth/authorize${route.query}`} />
+    }
+    return <OAuthConsent query={route.query} />
+  }
 
   const logout = () => {
     api.setToken(null)

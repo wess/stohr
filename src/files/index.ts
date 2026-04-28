@@ -7,6 +7,7 @@ import type { StorageHandle } from "../storage/index.ts"
 import { generateImageThumb, isThumbable, thumbKeyFor } from "../storage/thumb.ts"
 import { canWrite, fileAccess, folderAccess } from "../permissions/index.ts"
 import type { FileRow } from "../permissions/index.ts"
+import { checkQuota } from "../payments/usage.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -158,23 +159,16 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         from("users").where(q => q("id").equals(ownerId)).select("storage_quota_bytes"),
       ) as { storage_quota_bytes: number | string } | null
       const quota = Number(owner?.storage_quota_bytes ?? 0)
-      if (quota > 0) {
-        const existingFiles = await db.all(
-          from("files")
-            .where(q => q("user_id").equals(ownerId))
-            .where(q => q("deleted_at").isNull())
-            .select("size"),
-        ) as Array<{ size: number | string }>
-        const used = existingFiles.reduce((acc, f) => acc + Number(f.size), 0)
-        const incoming = entries.reduce((acc, f) => acc + (f.size ?? 0), 0)
-        if (used + incoming > quota) {
-          return json(c, 402, {
-            error: "Storage quota exceeded",
-            quota_bytes: quota,
-            used_bytes: used,
-            attempted_bytes: incoming,
-          })
-        }
+      const incoming = entries.reduce((acc, f) => acc + (f.size ?? 0), 0)
+      const check = await checkQuota(db, ownerId, quota, incoming)
+      if (!check.ok) {
+        return json(c, 402, {
+          error: "Storage quota exceeded",
+          quota_bytes: check.quota_bytes,
+          used_bytes: check.used_bytes,
+          attempted_bytes: check.attempted_bytes,
+          breakdown: check.breakdown,
+        })
       }
 
       const result: Array<{ id: number; name: string; mime: string; size: number; folder_id: number | null; version: number; created_at: string; new_version?: boolean }> = []

@@ -1,0 +1,41 @@
+window:
+  title: Stohr
+  width: 460
+  height: 640
+  icon: ../src/web/assets/logo.png
+
+build:
+  entry: src/app/index.html
+  host: src/host/index.ts
+
+bundle:
+  identifier: io.stohr.shot
+  category: public.app-category.productivity
+  urlSchemes:
+    - stohrshot
+
+security:
+  csp: "default-src 'self' butter: 'unsafe-inline'"
+  allowlist:
+    - "tray:*"
+    - "shortcut:*"
+    - "shortcut:triggered"
+    - "clipboard:*"
+    - "notify:*"
+    - "shell:openurl"
+    - "shell:openpath"
+    - "auth:status"
+    - "auth:signin"
+    - "auth:signout"
+    - "auth:server"
+    - "auth:client"
+    - "capture:run"
+    - "capture:recent"
+    - "settings:save"
+
+plugins:
+  - butter-plugin-tray
+  - butter-plugin-globalshortcuts
+  - butter-plugin-clipboard
+  - butter-plugin-notifications
+  - butter-plugin-shell

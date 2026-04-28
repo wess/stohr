@@ -3,6 +3,7 @@ import { from, raw } from "@atlas/db"
 import { del, get, halt, json, parseJson, pipeline, post, put } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { quotaFor, isValidTier, TIER_QUOTAS } from "./quotas.ts"
+import { computeUsage } from "./usage.ts"
 import {
   type LsEvent,
   type Mode,
@@ -61,15 +62,6 @@ const loadConfig = async (db: Connection): Promise<PaymentConfig> => {
   }) as PaymentConfig
 }
 
-const usedBytesFor = async (db: Connection, userId: number): Promise<number> => {
-  const rows = await db.all(
-    from("files")
-      .where(q => q("user_id").equals(userId))
-      .where(q => q("deleted_at").isNull())
-      .select("size"),
-  ) as Array<{ size: number | string }>
-  return rows.reduce((acc, r) => acc + Number(r.size), 0)
-}
 
 const findUserForEvent = async (
   db: Connection,
@@ -118,6 +110,12 @@ const applySubscriptionEvent = async (
   if (tierMap) nextTier = tierMap.tier
   if (eventName === "subscription_expired") nextTier = "free"
 
+  // Never cap the owner — they run the instance and own the storage bill.
+  const ownerCheck = await db.one(
+    from("users").where(q => q("id").equals(userId)).select("is_owner"),
+  ) as { is_owner: boolean } | null
+  const isOwner = !!ownerCheck?.is_owner
+
   const update: Record<string, unknown> = {
     ls_subscription_id: subId,
     ls_customer_id: customerId,
@@ -126,11 +124,11 @@ const applySubscriptionEvent = async (
   }
   if (nextTier) {
     update.tier = nextTier
-    update.storage_quota_bytes = quotaFor(nextTier)
+    if (!isOwner) update.storage_quota_bytes = quotaFor(nextTier)
   }
   if (eventName === "subscription_expired") {
     update.tier = "free"
-    update.storage_quota_bytes = quotaFor("free")
+    if (!isOwner) update.storage_quota_bytes = quotaFor("free")
     update.ls_subscription_id = null
     update.subscription_status = "expired"
     update.subscription_renews_at = null
@@ -143,8 +141,8 @@ const applySubscriptionEvent = async (
 
 export const paymentsRoutes = (db: Connection, secret: string) => {
   const guard = pipeline(requireAuth({ secret, db }))
-  const adminGuard = pipeline(requireAuth({ secret, db }), ownerOnly)
-  const adminAuthed = pipeline(requireAuth({ secret, db }), ownerOnly, parseJson)
+  const adminGuard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerOnly)
+  const adminAuthed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerOnly, parseJson)
 
   return [
     get("/payments/plans", async (c) => {
@@ -174,11 +172,14 @@ export const paymentsRoutes = (db: Connection, secret: string) => {
         ls_subscription_id: string | null
       } | null
       if (!user) return json(c, 404, { error: "User not found" })
-      const used = await usedBytesFor(db, userId)
+      const usage = await computeUsage(db, userId)
       return json(c, 200, {
         tier: user.tier,
         quota_bytes: Number(user.storage_quota_bytes),
-        used_bytes: used,
+        used_bytes: usage.total,
+        active_bytes: usage.active,
+        trash_bytes: usage.trash,
+        version_bytes: usage.versions,
         status: user.subscription_status,
         renews_at: user.subscription_renews_at,
         has_subscription: !!user.ls_subscription_id,

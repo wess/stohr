@@ -14,8 +14,8 @@ const authId = (c: any) => (c.assigns.auth as { id: number }).id
 const authJti = (c: any): string | null => (c.assigns.auth as { jti?: string | null }).jti ?? null
 
 export const sessionRoutes = (db: Connection, secret: string) => {
-  const guard = pipeline(requireAuth({ secret, db }))
-  const authed = pipeline(requireAuth({ secret, db }), parseJson)
+  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }))
+  const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), parseJson)
 
   // Sweep expired sessions hourly + once at boot.
   setInterval(() => { void sweepExpiredSessions(db) }, 60 * 60 * 1000)

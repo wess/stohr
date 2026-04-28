@@ -16,6 +16,9 @@ const authJti = (c: any): string | null => (c.assigns.auth as { jti?: string | n
 export const userRoutes = (db: Connection, secret: string, store: StorageHandle) => {
   const guard = pipeline(requireAuth({ secret, db }))
   const authed = pipeline(requireAuth({ secret, db }), parseJson)
+  // Routes that change credentials or destroy the account must reject OAuth
+  // access tokens — only first-party (web/mobile JWT or PAT) callers allowed.
+  const protectedAuthed = pipeline(requireAuth({ secret, db, noOAuth: true }), parseJson)
 
   return [
     get("/me", guard(async (c) => {
@@ -83,7 +86,7 @@ export const userRoutes = (db: Connection, secret: string, store: StorageHandle)
       })
     })),
 
-    post("/me/password", authed(async (c) => {
+    post("/me/password", protectedAuthed(async (c) => {
       const userId = authId(c)
       const body = c.body as { current_password?: string; new_password?: string; currentPassword?: string; newPassword?: string }
       const current = body.current_password ?? body.currentPassword
@@ -117,7 +120,7 @@ export const userRoutes = (db: Connection, secret: string, store: StorageHandle)
       return json(c, 200, { ok: true, revoked_other_sessions: revoked })
     })),
 
-    del("/me", authed(async (c) => {
+    del("/me", protectedAuthed(async (c) => {
       const userId = authId(c)
       const body = c.body as { password?: string }
       if (!body.password) return json(c, 422, { error: "password required" })

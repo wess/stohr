@@ -20,6 +20,10 @@ import { paymentsRoutes } from "./payments/index.ts"
 import { s3KeyRoutes } from "./s3keys/index.ts"
 import { s3Routes } from "./s3/index.ts"
 import { appRoutes } from "./apps/index.ts"
+import { oauthClientRoutes } from "./oauth/clients.ts"
+import { oauthAuthorizeRoutes, sweepExpiredAuthCodes } from "./oauth/authorize.ts"
+import { oauthTokenRoutes, oauthRevokeRoutes, sweepExpiredRefreshTokens } from "./oauth/token.ts"
+import { oauthDiscoveryRoutes } from "./oauth/discovery.ts"
 import { createStorage } from "./storage/index.ts"
 import { withSecurityHeaders } from "./security/headers.ts"
 
@@ -64,7 +68,19 @@ const fetch = router(
   ...s3KeyRoutes(db, config.secret),
   ...s3Routes(db, store),
   ...appRoutes(db, config.secret),
+  ...oauthClientRoutes(db, config.secret),
+  ...oauthAuthorizeRoutes(db, config.secret),
+  ...oauthTokenRoutes(db, config.secret),
+  ...oauthRevokeRoutes(db),
+  ...oauthDiscoveryRoutes(),
 )
+
+// OAuth cleanup: expired auth codes (60s TTL) every 5 min, expired refresh
+// tokens (30 day TTL) every hour. Survives the lifetime of the API process.
+setInterval(() => { void sweepExpiredAuthCodes(db) }, 5 * 60 * 1000)
+setInterval(() => { void sweepExpiredRefreshTokens(db) }, 60 * 60 * 1000)
+void sweepExpiredAuthCodes(db)
+void sweepExpiredRefreshTokens(db)
 
 if (config.secret === "dev-secret-change-me") {
   console.warn("[stohr] WARNING: running with the default SECRET. Set a strong SECRET in .env before production.")

@@ -17,8 +17,8 @@ const hashCodes = async (codes: string[]): Promise<string[]> =>
   Promise.all(codes.map(c => hash(c)))
 
 export const mfaRoutes = (db: Connection, secret: string) => {
-  const guard = pipeline(requireAuth({ secret, db }))
-  const authed = pipeline(requireAuth({ secret, db }), parseJson)
+  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }))
+  const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), parseJson)
 
   return [
     get("/me/mfa", guard(async (c) => {

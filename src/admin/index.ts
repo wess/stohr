@@ -25,8 +25,8 @@ type InviteRequest = {
 }
 
 export const adminRoutes = (db: Connection, secret: string) => {
-  const guard = pipeline(requireAuth({ secret, db }), ownerOnly)
-  const authed = pipeline(requireAuth({ secret, db }), ownerOnly, parseJson)
+  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerOnly)
+  const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerOnly, parseJson)
 
   return [
     get("/admin/invite-requests", guard(async (c) => {

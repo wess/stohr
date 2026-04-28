@@ -5,6 +5,7 @@ import { token } from "@atlas/auth"
 import { assign, halt } from "@atlas/server"
 import type { PipeFn } from "@atlas/server"
 import { isSessionActive, touchSession } from "../security/sessions.ts"
+import { parseScope } from "../oauth/helpers.ts"
 
 export const APP_TOKEN_PREFIX = "stohr_pat_"
 
@@ -23,6 +24,11 @@ type UserRow = {
 type RequireAuthOptions = {
   secret: string
   db: Connection
+  /** If set, OAuth access tokens must have this scope (or richer) to pass. */
+  scope?: string
+  /** If true, OAuth access tokens are rejected — for routes that mint further
+   * credentials (PATs, MFA setup, OAuth client registration). */
+  noOAuth?: boolean
 }
 
 export const requireAuth = (opts: RequireAuthOptions): PipeFn =>
@@ -76,9 +82,29 @@ export const requireAuth = (opts: RequireAuthOptions): PipeFn =>
       })
     }
 
-    // JWTs without a jti predate the sessions feature — accept them but mark
-    // them as legacy so callers can encourage a re-login. JWTs with a jti must
-    // match an active session row.
+    // OAuth access tokens carry a client_id claim. They use stateless verification
+    // (no session lookup) — revocation is handled via refresh-token rotation.
+    if (typeof payload?.client_id === "string") {
+      if (opts.noOAuth) {
+        return halt(conn, 403, { error: "This endpoint cannot be called with an OAuth access token" })
+      }
+      if (opts.scope) {
+        const granted = parseScope(payload.scope ?? "")
+        if (!granted.includes(opts.scope)) {
+          return halt(conn, 403, {
+            error: `Insufficient scope — '${opts.scope}' is required, token has [${granted.join(", ")}]`,
+          })
+        }
+      }
+      return assign(conn, {
+        auth: {
+          ...payload,
+          via: "oauth",
+        },
+      })
+    }
+
+    // Regular user JWT — must match an active session row when a jti is present.
     const jti = typeof payload?.jti === "string" ? payload.jti : null
     if (jti) {
       const sess = await isSessionActive(opts.db, jti)

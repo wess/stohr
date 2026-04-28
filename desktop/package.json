@@ -1,0 +1,17 @@
+{
+  "name": "stohrshot",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "butter dev",
+    "build": "butter build",
+    "bundle": "butter bundle"
+  },
+  "dependencies": {
+    "butterframework": "^1.4.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

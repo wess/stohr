@@ -10,6 +10,7 @@ import {
 import { drop, fetchObject, makeKey, put as putStorage } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { normalizeUsername } from "../util/username.ts"
+import { checkQuota } from "../payments/usage.ts"
 
 type S3Owner = {
   id: number
@@ -208,17 +209,9 @@ export const s3Routes = (db: Connection, store: StorageHandle) => [
     if (!fileName) return errXml(c, "InvalidArgument", "Object key cannot end with a slash", 400)
 
     const quota = Number(owner.storage_quota_bytes)
-    if (quota > 0) {
-      const used = await db.all(
-        from("files")
-          .where(q => q("user_id").equals(owner.id))
-          .where(q => q("deleted_at").isNull())
-          .select("size"),
-      ) as Array<{ size: number | string }>
-      const usedBytes = used.reduce((acc, f) => acc + Number(f.size), 0)
-      if (usedBytes + body.byteLength > quota) {
-        return errXml(c, "EntityTooLarge", `Storage quota exceeded (${usedBytes + body.byteLength} > ${quota})`, 413)
-      }
+    const quotaCheck = await checkQuota(db, owner.id, quota, body.byteLength)
+    if (!quotaCheck.ok) {
+      return errXml(c, "EntityTooLarge", `Storage quota exceeded (${quotaCheck.used_bytes + body.byteLength} > ${quotaCheck.quota_bytes})`, 413)
     }
 
     const folderId = await ensureFolderPath(db, owner.id, folderPath)

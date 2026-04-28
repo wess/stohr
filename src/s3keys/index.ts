@@ -16,8 +16,8 @@ const generateSecretKey = (): string => {
 }
 
 export const s3KeyRoutes = (db: Connection, secret: string) => {
-  const guard = pipeline(requireAuth({ secret, db }))
-  const authed = pipeline(requireAuth({ secret, db }), parseJson)
+  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }))
+  const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), parseJson)
 
   return [
     get("/me/s3-keys", guard(async (c) => {

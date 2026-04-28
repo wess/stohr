@@ -354,6 +354,32 @@ export const adminDeleteInvite = (id: number) =>
 export const adminGetStats = () =>
   jsonReq("GET", "/admin/stats")
 
+export const oauthAuthorizeInfo = (query: string) =>
+  fetch(`${BASE}/oauth/authorize/info${query}`, { headers: headers() }).then(r => r.json())
+
+export const oauthAuthorizeApprove = (params: Record<string, string>) =>
+  jsonReq("POST", "/oauth/authorize/approve", params)
+
+export const oauthAuthorizeDeny = (params: Record<string, string>) =>
+  jsonReq("POST", "/oauth/authorize/deny", params)
+
+export const adminListOAuthClients = () =>
+  jsonReq("GET", "/admin/oauth/clients")
+
+export const adminCreateOAuthClient = (input: {
+  name: string
+  description?: string
+  icon_url?: string
+  redirect_uris: string[]
+  allowed_scopes: string[]
+  is_official?: boolean
+  is_public_client?: boolean
+}) =>
+  jsonReq("POST", "/admin/oauth/clients", input)
+
+export const adminRevokeOAuthClient = (id: number) =>
+  jsonReq("DELETE", `/admin/oauth/clients/${id}`)
+
 export const adminListAuditEvents = (filters: { event?: string; userId?: number; limit?: number } = {}) => {
   const qs = new URLSearchParams()
   if (filters.event) qs.set("event", filters.event)

@@ -47,6 +47,46 @@ export const sessions = defineSchema("sessions", {
   created_at: column.timestamp().default("now()"),
 })
 
+export const oauthClients = defineSchema("oauth_clients", {
+  id: column.serial().primaryKey(),
+  client_id: column.text().unique(),
+  client_secret_hash: column.text().nullable(),
+  name: column.text(),
+  description: column.text().nullable(),
+  icon_url: column.text().nullable(),
+  redirect_uris: column.text(),
+  allowed_scopes: column.text(),
+  is_official: column.boolean().default(false),
+  created_by: column.integer().nullable().ref("users", "id"),
+  created_at: column.timestamp().default("now()"),
+  revoked_at: column.timestamp().nullable(),
+})
+
+export const oauthAuthorizationCodes = defineSchema("oauth_authorization_codes", {
+  code: column.text().primaryKey(),
+  client_id: column.text(),
+  user_id: column.integer().ref("users", "id"),
+  redirect_uri: column.text(),
+  code_challenge: column.text(),
+  code_challenge_method: column.text().default("S256"),
+  scope: column.text(),
+  expires_at: column.timestamp(),
+  used_at: column.timestamp().nullable(),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const oauthRefreshTokens = defineSchema("oauth_refresh_tokens", {
+  token_hash: column.text().primaryKey(),
+  client_id: column.text(),
+  user_id: column.integer().ref("users", "id"),
+  scope: column.text(),
+  parent_token_hash: column.text().nullable(),
+  expires_at: column.timestamp(),
+  revoked_at: column.timestamp().nullable(),
+  last_used_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default("now()"),
+})
+
 export const paymentConfig = defineSchema("payment_config", {
   id: column.serial().primaryKey(),
   provider: column.text().default("lemonsqueezy"),
