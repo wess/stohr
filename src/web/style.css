@@ -955,6 +955,40 @@ input:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px 
   font-size: 13px;
 }
 
+.capture-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 16px 12px;
+  padding: 8px 12px;
+  background: var(--accent-bg, rgba(20, 184, 166, 0.12));
+  color: var(--brand);
+  border: 1px solid var(--brand);
+  border-radius: 6px;
+  font-size: 13px;
+  word-break: break-all;
+}
+.capture-notice button {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.audit-row {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+}
+.audit-row.audit-warn { border-left: 3px solid #b45309; }
+.audit-row.audit-ok { border-left: 3px solid var(--brand); }
+.audit-row.audit-info { border-left: 3px solid var(--muted); }
+
 /* Test/Live mode toggle */
 .mode-toggle {
   display: inline-flex;
@@ -1397,6 +1431,56 @@ input:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px 
   padding: 20px;
   border-radius: 6px;
   border: 1px solid var(--border);
+}
+
+.share-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: calc(100vh - 200px);
+}
+.share-gate-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px 32px;
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+}
+.share-gate-icon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+  color: var(--muted);
+}
+.share-gate-name {
+  font-size: 16px;
+  font-weight: 600;
+  word-break: break-word;
+}
+.share-gate-meta {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.share-gate-warn {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 10px;
+}
+.share-gate-burn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #b45309;
+  background: rgba(180, 83, 9, 0.08);
+  border: 1px solid rgba(180, 83, 9, 0.2);
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-top: 12px;
 }
 
 .share-page {

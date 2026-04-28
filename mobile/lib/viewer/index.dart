@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart' as sp;
 import 'package:stohr/stohr.dart';
 import '../api/index.dart';
+import '../share/index.dart';
 
 class ViewerScreen extends StatefulWidget {
   final FileItem file;
@@ -26,13 +27,10 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   Future<void> _share() async {
     final f = _items[_current];
-    try {
-      final s = await api.createShare(f.id);
-      final url = '${api.baseUrl.replaceAll('/api', '')}/s/${s.token}';
-      await sp.Share.share(url, subject: f.name);
-    } on StohrError catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
-    }
+    final s = await showCreateShareSheet(context, f);
+    if (s == null) return;
+    final url = '${api.baseUrl.replaceAll('/api', '')}/s/${s.token}';
+    await sp.Share.share(url, subject: f.name);
   }
 
   Widget _content(FileItem f) {

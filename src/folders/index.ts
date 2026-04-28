@@ -113,7 +113,9 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       const body = c.body as { name: string; parent_id?: number | null; parentId?: number | null; kind?: string; is_public?: boolean; isPublic?: boolean }
       const name = body.name
       const parentId = body.parent_id ?? body.parentId ?? null
-      const kind = body.kind === "photos" ? "photos" : "standard"
+      const kind = body.kind === "photos" ? "photos"
+        : body.kind === "screenshots" ? "screenshots"
+        : "standard"
       const isPublic = body.is_public ?? body.isPublic ?? false
       if (!name || !name.trim()) return json(c, 422, { error: "Name required" })
 
@@ -159,7 +161,7 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       }
       if (hasKind) {
         const k = body.kind!
-        if (k !== "standard" && k !== "photos") return json(c, 422, { error: "Invalid kind" })
+        if (k !== "standard" && k !== "photos" && k !== "screenshots") return json(c, 422, { error: "Invalid kind" })
         patchData.kind = k
       }
       if (hasPublic) {

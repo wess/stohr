@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "bun src/dev.ts",
     "api": "bun --hot src/server.ts",
-    "web": "bun --hot src/web/serve.ts"
+    "web": "bun --hot src/web/serve.ts",
+    "test": "bun test --concurrency=1 tests/"
   },
   "devDependencies": {
     "@types/react": "latest",
@@ -22,7 +23,9 @@
     "@atlas/migrate": "workspace:*",
     "@atlas/server": "workspace:*",
     "@atlas/storage": "workspace:*",
+    "@types/qrcode": "^1.5.6",
     "lucide-react": "^0.468.0",
+    "qrcode": "^1.5.4",
     "react": "^19",
     "react-dom": "^19",
     "sharp": "^0.34.5"

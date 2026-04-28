@@ -222,5 +222,37 @@ export const adminRoutes = (db: Connection, secret: string) => {
         requests_pending: requestsPending.length,
       })
     })),
+
+    get("/admin/audit", guard(async (c) => {
+      const url = new URL(c.request.url)
+      const event = url.searchParams.get("event")
+      const userIdParam = url.searchParams.get("user_id")
+      const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit") ?? 100)))
+
+      let q = from("audit_events")
+        .leftJoin("users", raw("users.id = audit_events.user_id"))
+        .select(
+          "audit_events.id",
+          "audit_events.user_id",
+          "audit_events.event",
+          "audit_events.metadata",
+          "audit_events.ip",
+          "audit_events.user_agent",
+          "audit_events.created_at",
+          raw("users.username AS username"),
+          raw("users.email AS user_email"),
+        )
+        .orderBy("audit_events.created_at", "DESC")
+        .limit(limit)
+
+      if (event) q = q.where(qb => qb("audit_events.event").equals(event))
+      if (userIdParam) {
+        const uid = Number(userIdParam)
+        if (!Number.isNaN(uid)) q = q.where(qb => qb("audit_events.user_id").equals(uid))
+      }
+
+      const rows = await db.all(q)
+      return json(c, 200, rows)
+    })),
   ]
 }

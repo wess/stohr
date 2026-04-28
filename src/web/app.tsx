@@ -21,6 +21,7 @@ import {
   Monitor,
   Moon,
   Music,
+  Camera,
   Search,
   Settings as SettingsIcon,
   Smartphone,
@@ -83,7 +84,7 @@ const fileHref = (id: number, ownerUsername: string) =>
 type Folder = { id: number; name: string; parent_id: number | null; kind?: string; is_public?: boolean; created_at: string }
 type FileItem = { id: number; name: string; mime: string; size: number; folder_id: number | null; version: number; created_at: string }
 type Crumb = { id: number; name: string }
-type Share = { id: number; token: string; expires_at: string | null; created_at: string; name: string; size: number; mime: string; file_id: number }
+type Share = { id: number; token: string; expires_at: string | null; created_at: string; name: string; size: number; mime: string; file_id: number; password_required?: boolean; burn_on_view?: boolean }
 type TrashedFolder = Folder & { deleted_at: string }
 type TrashedFile = FileItem & { deleted_at: string }
 type FileVersion = { version: number; mime: string; size: number; uploaded_by: number | null; uploaded_at: string; is_current: boolean }
@@ -93,6 +94,40 @@ const formatBytes = (b: number) => {
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`
   if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`
   return `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+const stampForFilename = (d: Date): string => {
+  const pad = (n: number) => n.toString().padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} at ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}`
+}
+
+const captureFrame = async (stream: MediaStream): Promise<Blob> => {
+  const video = document.createElement("video")
+  video.srcObject = stream
+  video.muted = true
+  await video.play()
+  // Give the browser one frame to settle dimensions.
+  await new Promise<void>(r => requestAnimationFrame(() => r()))
+  const w = video.videoWidth || 1920
+  const h = video.videoHeight || 1080
+  const canvas = document.createElement("canvas")
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext("2d")
+  if (!ctx) throw new Error("Could not create canvas context")
+  ctx.drawImage(video, 0, 0, w, h)
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(b => b ? resolve(b) : reject(new Error("Could not encode PNG")), "image/png")
+  })
+}
+
+const ensureScreenshotsFolder = async (): Promise<number> => {
+  const folders = await api.listFolders(null) as Array<{ id: number; name: string; kind?: string }>
+  const existing = folders.find(f => f.kind === "screenshots")
+  if (existing) return existing.id
+  const created = await api.createFolderTyped("Screenshots", null, { kind: "screenshots" }) as { id?: number; error?: string }
+  if (!created.id) throw new Error(created.error ?? "Could not create Screenshots folder")
+  return created.id
 }
 
 const MimeIcon: React.FC<{ mime: string; size?: number }> = ({ mime, size = 28 }) => {
@@ -133,6 +168,10 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
   const [inviteToken, setInviteToken] = useState(initialInvite ?? "")
   const [inviteEmailLock, setInviteEmailLock] = useState<string | null>(null)
   const [error, setError] = useState("")
+  const [mfaToken, setMfaToken] = useState<string | null>(null)
+  const [mfaCode, setMfaCode] = useState("")
+  const [mfaUseBackup, setMfaUseBackup] = useState(false)
+  const [mfaBackup, setMfaBackup] = useState("")
 
   useEffect(() => {
     if (needsSetup) return
@@ -157,14 +196,32 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
 
   const submit = async () => {
     setError("")
-    const res = mode === "signup"
-      ? await api.signup({ name, username, email, password, inviteToken: needsSetup ? undefined : inviteToken })
-      : await api.login(identity, password)
+    if (mode === "signup") {
+      const res = await api.signup({ name, username, email, password, inviteToken: needsSetup ? undefined : inviteToken })
+      if (res.error) return setError(res.error)
+      if (!res.token) return setError("Authentication failed")
+      if (window.location.pathname === "/signup") history.replaceState(null, "", "/")
+      onLogin()
+      return
+    }
+    const res = await api.login(identity, password)
+    if (res.error) return setError(res.error)
+    if (res.mfa_required && res.mfa_token) {
+      setMfaToken(res.mfa_token)
+      setMfaCode("")
+      return
+    }
+    if (!res.token) return setError("Authentication failed")
+    if (window.location.pathname === "/signup") history.replaceState(null, "", "/")
+    onLogin()
+  }
+
+  const submitMfa = async () => {
+    if (!mfaToken) return
+    setError("")
+    const res = await api.loginMfa(mfaToken, mfaUseBackup ? { backupCode: mfaBackup } : { code: mfaCode })
     if (res.error) return setError(res.error)
     if (!res.token) return setError("Authentication failed")
-    if (window.location.pathname === "/signup") {
-      history.replaceState(null, "", "/")
-    }
     onLogin()
   }
 
@@ -182,7 +239,41 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
         </div>
       )}
       {error && <div className="error">{error}</div>}
-      {mode === "signup" ? (
+      {mfaToken ? (
+        <>
+          <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 8 }}>
+            Enter the 6-digit code from your authenticator app.
+          </div>
+          {mfaUseBackup ? (
+            <input
+              placeholder="Backup code (xxxxx-xxxxx)"
+              value={mfaBackup}
+              autoFocus
+              autoCapitalize="off"
+              autoCorrect="off"
+              onChange={e => setMfaBackup(e.target.value.trim())}
+              onKeyDown={e => e.key === "Enter" && submitMfa()}
+            />
+          ) : (
+            <input
+              placeholder="6-digit code"
+              value={mfaCode}
+              autoFocus
+              inputMode="numeric"
+              maxLength={6}
+              onChange={e => setMfaCode(e.target.value.replace(/\D/g, ""))}
+              onKeyDown={e => e.key === "Enter" && submitMfa()}
+            />
+          )}
+          <button className="primary" onClick={submitMfa}>Verify</button>
+          <div className="toggle" onClick={() => { setMfaUseBackup(!mfaUseBackup); setError("") }}>
+            {mfaUseBackup ? "Use authenticator code instead" : "Use a backup code"}
+          </div>
+          <div className="toggle" onClick={() => { setMfaToken(null); setMfaCode(""); setMfaBackup(""); setError("") }}>
+            Cancel
+          </div>
+        </>
+      ) : mode === "signup" ? (
         <>
           <input placeholder="Name" value={name} onChange={e => setName(e.target.value)} />
           <input placeholder="Username" value={username}
@@ -221,13 +312,17 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
           />
         </>
       )}
-      <button className="primary" onClick={submit}>
-        {needsSetup ? "Create owner account" : mode === "login" ? "Sign in" : "Create account"}
-      </button>
-      {!needsSetup && (
-        <div className="toggle" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
-          {mode === "login" ? "Have an invite? Create your account" : "Already have an account? Sign in"}
-        </div>
+      {!mfaToken && (
+        <>
+          <button className="primary" onClick={submit}>
+            {needsSetup ? "Create owner account" : mode === "login" ? "Sign in" : "Create account"}
+          </button>
+          {!needsSetup && (
+            <div className="toggle" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
+              {mode === "login" ? "Have an invite? Create your account" : "Already have an account? Sign in"}
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -539,6 +634,38 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
     if (e.dataTransfer.files.length) upload(e.dataTransfer.files)
   }
 
+  const [captureNotice, setCaptureNotice] = useState<string | null>(null)
+  const captureScreenshot = async () => {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      setCaptureNotice("Screen capture isn't supported in this browser.")
+      return
+    }
+    let stream: MediaStream | null = null
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: "monitor" } as any, audio: false })
+      const blob = await captureFrame(stream)
+      const folderId = await ensureScreenshotsFolder()
+      const stamp = stampForFilename(new Date())
+      const filename = `Screenshot ${stamp}.png`
+      const file = new File([blob], filename, { type: "image/png" })
+      const handle = api.uploadFile(file, folderId)
+      const res = await handle.promise as { id?: number; error?: string } | Array<{ id: number }>
+      const fileId = Array.isArray(res) ? res[0]?.id : res?.id
+      if (!fileId) throw new Error("Upload failed")
+      const share = await api.createShare(fileId, { expiresIn: 30 * 86400 }) as { token?: string; error?: string }
+      if (!share.token) throw new Error(share.error ?? "Share failed")
+      const url = `${window.location.origin}/s/${share.token}`
+      try { await navigator.clipboard.writeText(url) } catch {}
+      setCaptureNotice(`Link copied: ${url}`)
+      await load()
+    } catch (e: any) {
+      const msg = e?.message ?? String(e)
+      if (!/cancel|abort|denied/i.test(msg)) setCaptureNotice(`Screenshot failed: ${msg}`)
+    } finally {
+      stream?.getTracks().forEach(t => t.stop())
+    }
+  }
+
   const createFolder = async () => {
     if (!newFolderName.trim()) return
     await api.createFolder(newFolderName.trim(), currentId)
@@ -598,11 +725,20 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
         <button onClick={() => setCreatingFolder(true)}>
           <FolderPlus size={14} /> <span>Folder</span>
         </button>
+        <button onClick={captureScreenshot} title="Capture screenshot">
+          <Camera size={14} /> <span>Capture</span>
+        </button>
         <button className="primary" onClick={() => fileInput.current?.click()}>
           <UploadIcon size={14} /> <span>Upload</span>
         </button>
         <input ref={fileInput} type="file" multiple hidden onChange={e => e.target.files && upload(e.target.files)} />
       </div>
+      {captureNotice && (
+        <div className="capture-notice">
+          <span>{captureNotice}</span>
+          <button onClick={() => setCaptureNotice(null)} aria-label="Dismiss"><X size={14} /></button>
+        </div>
+      )}
 
       <div className="content"
         onDragOver={e => { e.preventDefault(); setDragOver(true) }}
@@ -661,9 +797,15 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                 <div className={`check${sel ? " on" : ""}`} onClick={e => toggleSelect(key, e)}>
                   <div className="check-box" />
                 </div>
-                <div className="icon"><FolderIcon size={32} strokeWidth={1.5} /></div>
+                <div className="icon">
+                  {f.kind === "screenshots"
+                    ? <Camera size={32} strokeWidth={1.5} />
+                    : <FolderIcon size={32} strokeWidth={1.5} />}
+                </div>
                 <div className="name">{f.name}</div>
-                <div className="meta">Folder</div>
+                <div className="meta">
+                  {f.kind === "photos" ? "Photos" : f.kind === "screenshots" ? "Screenshots" : "Folder"}
+                </div>
                 <div className="row" onClick={e => e.stopPropagation()}>
                   {currentRole === "owner" && (
                     <button onClick={() => setSharing({ kind: "folder", id: f.id, name: f.name })}>Share</button>
@@ -674,7 +816,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
               </div>
             )
           })}
-          {currentKind !== "photos" && files.map(f => {
+          {currentKind !== "photos" && currentKind !== "screenshots" && files.map(f => {
             const key = `fi-${f.id}`
             const sel = selected.has(key)
             return (
@@ -706,7 +848,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
           })}
         </div>
 
-        {currentKind === "photos" && (
+        {(currentKind === "photos" || currentKind === "screenshots") && (
           <PhotosGallery
             files={files}
             thumbUrl={(id, version) => `/api/files/${id}/thumb?v=${version}`}
@@ -1308,15 +1450,31 @@ const SharingModal: React.FC<{
     ? `${window.location.origin}${target.kind === "folder" ? `/app/u/${ownerUsername}/f/${target.id}` : `/app/u/${ownerUsername}/file/${target.id}`}`
     : null
   const [tab, setTab] = useState<"people" | "link">("people")
-  const [publicLink, setPublicLink] = useState<{ url: string } | null>(null)
-  const [publicExpiry, setPublicExpiry] = useState("")
+  const [publicLink, setPublicLink] = useState<{ url: string; passwordRequired: boolean; burnOnView: boolean } | null>(null)
+  const [linkExpiry, setLinkExpiry] = useState<number>(86400)
+  const [linkPassword, setLinkPassword] = useState("")
+  const [linkBurn, setLinkBurn] = useState(false)
+  const [linkBusy, setLinkBusy] = useState(false)
+  const [linkErr, setLinkErr] = useState("")
 
   const createPublic = async () => {
     if (target.kind !== "file") return
-    const secs = publicExpiry ? Number(publicExpiry) * 3600 : undefined
-    const res = await api.createShare(target.id, secs)
-    if (res.token) setPublicLink({ url: `${window.location.origin}/s/${res.token}` })
-    else alert(res.error ?? "Failed to share")
+    setLinkBusy(true); setLinkErr("")
+    const res = await api.createShare(target.id, {
+      expiresIn: linkExpiry,
+      password: linkPassword.trim() || undefined,
+      burnOnView: linkBurn,
+    })
+    setLinkBusy(false)
+    if (res.token) {
+      setPublicLink({
+        url: `${window.location.origin}/s/${res.token}`,
+        passwordRequired: !!res.password_required,
+        burnOnView: !!res.burn_on_view,
+      })
+    } else {
+      setLinkErr(res.error ?? "Failed to share")
+    }
   }
 
   return (
@@ -1371,8 +1529,12 @@ const SharingModal: React.FC<{
         <>
           {publicLink ? (
             <>
-              <div>Anyone with this link can download:</div>
+              <div style={{ marginBottom: 6 }}>Send this link to anyone:</div>
               <div className="share-link">{publicLink.url}</div>
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "var(--muted)" }}>
+                {publicLink.passwordRequired && <span>· Recipient will need the password you set.</span>}
+                {publicLink.burnOnView && <span>· Link self-destructs after the first viewer (other than you) downloads it.</span>}
+              </div>
               <div className="actions">
                 <button onClick={() => navigator.clipboard.writeText(publicLink.url)}>Copy</button>
                 <button className="primary" onClick={onClose}>Done</button>
@@ -1380,11 +1542,25 @@ const SharingModal: React.FC<{
             </>
           ) : (
             <>
-              <div style={{ marginBottom: 8, color: "var(--muted)" }}>Expires in (hours, blank = never)</div>
-              <input type="number" min="0" placeholder="e.g. 24" value={publicExpiry} onChange={e => setPublicExpiry(e.target.value)} />
+              <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Expires in</label>
+              <select value={linkExpiry} onChange={e => setLinkExpiry(Number(e.target.value))}>
+                <option value={3600}>1 hour</option>
+                <option value={86400}>1 day</option>
+                <option value={604800}>7 days</option>
+                <option value={2592000}>30 days</option>
+              </select>
+              <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginTop: 14, marginBottom: 6 }}>Password (optional)</label>
+              <input type="password" autoComplete="new-password" value={linkPassword} onChange={e => setLinkPassword(e.target.value)} placeholder="Leave blank for no password" />
+              <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 14, fontSize: 13 }}>
+                <input type="checkbox" checked={linkBurn} onChange={e => setLinkBurn(e.target.checked)} />
+                <span>Self-destruct after first non-owner view</span>
+              </label>
+              {linkErr && <div className="msg err" style={{ marginTop: 10 }}>{linkErr}</div>}
               <div className="actions">
                 <button onClick={onClose}>Cancel</button>
-                <button className="primary" onClick={createPublic}>Create link</button>
+                <button className="primary" disabled={linkBusy} onClick={createPublic}>
+                  {linkBusy ? "Creating…" : "Create link"}
+                </button>
               </div>
             </>
           )}
@@ -1504,7 +1680,11 @@ const SharesView: React.FC = () => {
               const url = `${window.location.origin}/s/${s.token}`
               return (
                 <tr key={s.id}>
-                  <td><span className="inline-icon"><MimeIcon mime={s.mime} size={16} /></span> {s.name}</td>
+                  <td>
+                    <span className="inline-icon"><MimeIcon mime={s.mime} size={16} /></span> {s.name}
+                    {s.password_required && <span className="badge" style={{ marginLeft: 6 }}>password</span>}
+                    {s.burn_on_view && <span className="badge" style={{ marginLeft: 6 }}>burn</span>}
+                  </td>
                   <td><a href={url} target="_blank" rel="noreferrer">{url}</a></td>
                   <td>{formatBytes(s.size)}</td>
                   <td>{s.expires_at ? new Date(s.expires_at).toLocaleString() : "Never"}</td>
@@ -1825,12 +2005,75 @@ const PublicFolderPage: React.FC<{ username: string; folderId: number }> = ({ us
   )
 }
 
+type ShareMeta = {
+  name?: string
+  size?: number
+  mime?: string
+  expires_at?: string | null
+  password_required?: boolean
+  burn_on_view?: boolean
+  error?: string
+}
+
 const SharePage: React.FC<{ token: string }> = ({ token }) => {
-  const [meta, setMeta] = useState<{ name: string; size: number; mime: string; error?: string } | null>(null)
+  const [meta, setMeta] = useState<ShareMeta | null>(null)
+  const [password, setPassword] = useState("")
+  const [unlocked, setUnlocked] = useState(false)
+  const [content, setContent] = useState<{ blobUrl: string; downloadUrl: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     api.shareMeta(token).then(setMeta)
   }, [token])
+
+  useEffect(() => {
+    return () => {
+      if (content) {
+        URL.revokeObjectURL(content.blobUrl)
+        URL.revokeObjectURL(content.downloadUrl)
+      }
+    }
+  }, [content])
+
+  const reveal = async () => {
+    setBusy(true); setError(null)
+    try {
+      const res = await api.fetchShare(token, password || undefined, true)
+      if (!res.ok) {
+        if (res.status === 401) {
+          setUnlocked(false)
+          setError("Wrong password")
+        } else if (res.status === 410) {
+          setError("This link has expired")
+        } else if (res.status === 404) {
+          setError("This link is no longer available — it may have been viewed already")
+        } else {
+          setError(`Could not load (HTTP ${res.status})`)
+        }
+        return
+      }
+      const blob = await res.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      const downloadUrl = URL.createObjectURL(new Blob([blob], { type: blob.type || "application/octet-stream" }))
+      setContent({ blobUrl, downloadUrl })
+      setUnlocked(true)
+    } catch (e: any) {
+      setError(e?.message ?? "Network error")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const triggerDownload = () => {
+    if (!content || !meta?.name) return
+    const a = document.createElement("a")
+    a.href = content.downloadUrl
+    a.download = meta.name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  }
 
   if (!meta) return <div className="share-page">Loading…</div>
   if (meta.error) {
@@ -1842,9 +2085,8 @@ const SharePage: React.FC<{ token: string }> = ({ token }) => {
     )
   }
 
-  const kind = kindFor(meta.mime)
-  const inlineUrl = api.shareInlineUrl(token)
-  const downloadUrl = api.shareDownloadUrl(token)
+  const kind = meta.mime ? kindFor(meta.mime) : "other"
+  const expiresLabel = meta.expires_at ? new Date(meta.expires_at).toLocaleString() : null
 
   return (
     <div className="public-folder">
@@ -1854,49 +2096,89 @@ const SharePage: React.FC<{ token: string }> = ({ token }) => {
         </div>
         <div className="public-meta">
           <div className="public-title">{meta.name}</div>
-          <div className="public-owner">{formatBytes(meta.size)} • {meta.mime}</div>
+          <div className="public-owner">{formatBytes(meta.size ?? 0)} • {meta.mime}</div>
         </div>
-        <a href={downloadUrl} download={meta.name}>
-          <button className="primary"><Download size={14} /> <span>Download</span></button>
-        </a>
+        {unlocked && content && (
+          <button className="primary" onClick={triggerDownload}>
+            <Download size={14} /> <span>Download</span>
+          </button>
+        )}
       </header>
-      <div className="public-content share-viewer">
-        {kind === "image" && <img className="share-media" src={inlineUrl} alt={meta.name} />}
-        {kind === "video" && <video className="share-media" src={inlineUrl} controls />}
-        {kind === "audio" && (
-          <div className="share-audio">
-            <div className="preview-audio-icon"><Music size={72} strokeWidth={1.25} /></div>
-            <audio src={inlineUrl} controls />
+
+      {!unlocked && (
+        <div className="public-content share-viewer">
+          <div className="share-gate">
+            <div className="share-gate-card">
+              <div className="share-gate-icon"><MimeIcon mime={meta.mime ?? ""} size={48} /></div>
+              <div className="share-gate-name">{meta.name}</div>
+              <div className="share-gate-meta">{formatBytes(meta.size ?? 0)} • {meta.mime}</div>
+              {expiresLabel && <div className="share-gate-warn">Expires {expiresLabel}</div>}
+              {meta.burn_on_view && (
+                <div className="share-gate-burn">
+                  <AlertTriangle size={14} /> One-time view — this link self-destructs after you open it
+                </div>
+              )}
+              {meta.password_required && (
+                <input
+                  type="password"
+                  autoComplete="off"
+                  placeholder="Password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") reveal() }}
+                  style={{ marginTop: 12 }}
+                />
+              )}
+              {error && <div className="msg err" style={{ marginTop: 10 }}>{error}</div>}
+              <div className="actions" style={{ marginTop: 14 }}>
+                <button className="primary" disabled={busy || (!!meta.password_required && !password)} onClick={reveal}>
+                  {busy ? "Loading…" : (meta.burn_on_view ? "Open & destroy link" : "Open")}
+                </button>
+              </div>
+            </div>
           </div>
-        )}
-        {kind === "pdf" && <iframe className="share-pdf" src={inlineUrl} title={meta.name} />}
-        {kind === "text" && <ShareText url={inlineUrl} />}
-        {kind === "other" && (
-          <div className="empty">
-            <div className="big"><MimeIcon mime={meta.mime} size={64} /></div>
-            <div>No inline preview for this file type</div>
-            <a href={downloadUrl} download={meta.name} style={{ marginTop: 16, display: "inline-block" }}>
-              <button className="primary">Download {meta.name}</button>
-            </a>
-          </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {unlocked && content && (
+        <div className="public-content share-viewer">
+          {kind === "image" && <img className="share-media" src={content.blobUrl} alt={meta.name} />}
+          {kind === "video" && <video className="share-media" src={content.blobUrl} controls />}
+          {kind === "audio" && (
+            <div className="share-audio">
+              <div className="preview-audio-icon"><Music size={72} strokeWidth={1.25} /></div>
+              <audio src={content.blobUrl} controls />
+            </div>
+          )}
+          {kind === "pdf" && <iframe className="share-pdf" src={content.blobUrl} title={meta.name} />}
+          {kind === "text" && <ShareText blobUrl={content.blobUrl} />}
+          {kind === "other" && (
+            <div className="empty">
+              <div className="big"><MimeIcon mime={meta.mime ?? ""} size={64} /></div>
+              <div>No inline preview for this file type</div>
+              <button className="primary" onClick={triggerDownload} style={{ marginTop: 16 }}>
+                Download {meta.name}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
-const ShareText: React.FC<{ url: string }> = ({ url }) => {
+const ShareText: React.FC<{ blobUrl: string }> = ({ blobUrl }) => {
   const [text, setText] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     let aborted = false
-    fetch(url).then(r => {
+    fetch(blobUrl).then(r => {
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       return r.text()
     }).then(t => { if (!aborted) setText(t) })
       .catch(e => { if (!aborted) setError(e.message) })
     return () => { aborted = true }
-  }, [url])
+  }, [blobUrl])
   if (error) return <div className="empty">Could not load: {error}</div>
   if (text === null) return <div className="empty">Loading…</div>
   return <pre className="preview-text">{text}</pre>
@@ -2324,6 +2606,279 @@ const DeveloperPanel: React.FC = () => {
   )
 }
 
+type MfaStatus = { enabled: boolean; enabled_at: string | null; backup_codes_remaining: number }
+
+const SecurityPanel: React.FC = () => {
+  const [status, setStatus] = useState<MfaStatus | null>(null)
+  const [setup, setSetup] = useState<{ secret: string; otpauth_url: string; qr: string } | null>(null)
+  const [enableCode, setEnableCode] = useState("")
+  const [backupCodes, setBackupCodes] = useState<string[] | null>(null)
+  const [disablePw, setDisablePw] = useState("")
+  const [disableCode, setDisableCode] = useState("")
+  const [showDisable, setShowDisable] = useState(false)
+  const [showRegen, setShowRegen] = useState(false)
+  const [regenPw, setRegenPw] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+
+  const reload = async () => {
+    const s = await api.getMfaStatus() as MfaStatus
+    setStatus(s)
+  }
+  useEffect(() => { reload() }, [])
+
+  const start = async () => {
+    setBusy(true); setError("")
+    try {
+      const res = await api.startMfaSetup() as { secret: string; otpauth_url: string; error?: string }
+      if (res.error) { setError(res.error); return }
+      const QR: typeof import("qrcode") = await import("qrcode")
+      const qr = await QR.toDataURL(res.otpauth_url, { margin: 1, width: 200 })
+      setSetup({ secret: res.secret, otpauth_url: res.otpauth_url, qr })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const enable = async () => {
+    setBusy(true); setError("")
+    try {
+      const res = await api.enableMfa(enableCode.trim()) as { ok?: boolean; backup_codes?: string[]; error?: string }
+      if (res.error) { setError(res.error); return }
+      setBackupCodes(res.backup_codes ?? [])
+      setSetup(null)
+      setEnableCode("")
+      await reload()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const disable = async () => {
+    setBusy(true); setError("")
+    try {
+      const res = await api.disableMfa(disablePw, disableCode.trim()) as { ok?: boolean; error?: string }
+      if (res.error) { setError(res.error); return }
+      setShowDisable(false)
+      setDisablePw(""); setDisableCode("")
+      setBackupCodes(null)
+      await reload()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const regen = async () => {
+    setBusy(true); setError("")
+    try {
+      const res = await api.regenerateBackupCodes(regenPw) as { backup_codes?: string[]; error?: string }
+      if (res.error) { setError(res.error); return }
+      setBackupCodes(res.backup_codes ?? [])
+      setShowRegen(false)
+      setRegenPw("")
+      await reload()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!status) return null
+
+  return (
+    <section className="settings-card">
+      <h3>Security</h3>
+      <h4 style={{ margin: "4px 0 6px", fontSize: 14 }}>Two-factor authentication</h4>
+      <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 12 }}>
+        TOTP code from your authenticator app on top of your password.
+      </div>
+
+      {!status.enabled && !setup && (
+        <div className="settings-actions" style={{ justifyContent: "flex-start" }}>
+          <button className="primary" disabled={busy} onClick={start}>Set up authenticator</button>
+        </div>
+      )}
+
+      {setup && (
+        <div className="dev-create">
+          <div style={{ fontSize: 13, marginBottom: 8 }}>
+            Scan with Google Authenticator, 1Password, Authy, or any TOTP app — then enter the 6-digit code below.
+          </div>
+          <img src={setup.qr} alt="QR code" style={{ width: 180, height: 180, background: "#fff", padding: 8, borderRadius: 8 }} />
+          <div style={{ marginTop: 10, fontSize: 11, color: "var(--muted)" }}>Or enter this secret manually:</div>
+          <code style={{ display: "block", marginTop: 4, padding: 6, background: "var(--panel)", borderRadius: 4, fontSize: 12, wordBreak: "break-all" }}>
+            {setup.secret}
+          </code>
+          <label style={{ marginTop: 14 }}>6-digit code from your app</label>
+          <input
+            inputMode="numeric"
+            maxLength={6}
+            value={enableCode}
+            onChange={e => setEnableCode(e.target.value.replace(/\D/g, ""))}
+          />
+          {error && <div className="msg err" style={{ marginTop: 8 }}>{error}</div>}
+          <div className="settings-actions">
+            <button onClick={() => { setSetup(null); setEnableCode(""); setError("") }}>Cancel</button>
+            <button className="primary" disabled={busy || enableCode.length !== 6} onClick={enable}>Enable MFA</button>
+          </div>
+        </div>
+      )}
+
+      {backupCodes && (
+        <div className="msg ok" style={{ marginTop: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Save your backup codes — these won't be shown again</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 13, marginBottom: 8 }}>
+            {backupCodes.map(c => <div key={c}>{c}</div>)}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => navigator.clipboard.writeText(backupCodes.join("\n"))}>Copy all</button>
+            <button onClick={() => setBackupCodes(null)}>I've saved them</button>
+          </div>
+        </div>
+      )}
+
+      {status.enabled && !setup && !backupCodes && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <span className="badge" style={{ background: "var(--brand)", color: "white" }}>Enabled</span>
+            {status.enabled_at && (
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>since {new Date(status.enabled_at).toLocaleDateString()}</span>
+            )}
+          </div>
+          <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>
+            {status.backup_codes_remaining} backup code{status.backup_codes_remaining === 1 ? "" : "s"} remaining
+          </div>
+
+          {!showDisable && !showRegen && (
+            <div className="settings-actions" style={{ justifyContent: "flex-start" }}>
+              <button onClick={() => { setShowRegen(true); setError("") }}>Regenerate backup codes</button>
+              <button className="danger" onClick={() => { setShowDisable(true); setError("") }}>Disable MFA</button>
+            </div>
+          )}
+
+          {showRegen && (
+            <div className="dev-create">
+              <label>Confirm with your password</label>
+              <input type="password" value={regenPw} onChange={e => setRegenPw(e.target.value)} />
+              {error && <div className="msg err" style={{ marginTop: 8 }}>{error}</div>}
+              <div className="settings-actions">
+                <button onClick={() => { setShowRegen(false); setRegenPw(""); setError("") }}>Cancel</button>
+                <button className="primary" disabled={busy || !regenPw} onClick={regen}>Regenerate</button>
+              </div>
+            </div>
+          )}
+
+          {showDisable && (
+            <div className="dev-create">
+              <label>Password</label>
+              <input type="password" value={disablePw} onChange={e => setDisablePw(e.target.value)} />
+              <label style={{ marginTop: 10 }}>6-digit code from your app</label>
+              <input
+                inputMode="numeric"
+                maxLength={6}
+                value={disableCode}
+                onChange={e => setDisableCode(e.target.value.replace(/\D/g, ""))}
+              />
+              {error && <div className="msg err" style={{ marginTop: 8 }}>{error}</div>}
+              <div className="settings-actions">
+                <button onClick={() => { setShowDisable(false); setDisablePw(""); setDisableCode(""); setError("") }}>Cancel</button>
+                <button className="danger" disabled={busy || !disablePw || disableCode.length !== 6} onClick={disable}>Disable MFA</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      <SessionsSection />
+    </section>
+  )
+}
+
+type SessionRow = {
+  id: string
+  ip: string | null
+  user_agent: string | null
+  expires_at: string
+  last_used_at: string
+  created_at: string
+  current: boolean
+}
+
+const SessionsSection: React.FC = () => {
+  const [rows, setRows] = useState<SessionRow[]>([])
+  const [busy, setBusy] = useState(false)
+
+  const load = async () => {
+    const data = await api.listSessions()
+    setRows(Array.isArray(data) ? data : [])
+  }
+  useEffect(() => { load() }, [])
+
+  const revoke = async (id: string) => {
+    if (!confirm("Sign this session out?")) return
+    setBusy(true)
+    await api.revokeSession(id)
+    setBusy(false)
+    await load()
+  }
+
+  const revokeOthers = async () => {
+    if (!confirm("Sign out everywhere else? Other browsers/devices will be logged out immediately.")) return
+    setBusy(true)
+    await api.revokeOtherSessions()
+    setBusy(false)
+    await load()
+  }
+
+  const summarize = (ua: string | null): string => {
+    if (!ua) return "Unknown device"
+    if (/iPhone|iPad/.test(ua)) return "iOS"
+    if (/Android/.test(ua)) return "Android"
+    if (/Macintosh/.test(ua)) return "macOS"
+    if (/Windows/.test(ua)) return "Windows"
+    if (/Linux/.test(ua)) return "Linux"
+    if (/Dart\//.test(ua)) return "Mobile app"
+    return ua.slice(0, 60)
+  }
+
+  return (
+    <div className="dev-section">
+      <h4>Active sessions</h4>
+      <div className="dev-section-desc">
+        Where you're currently signed in. Revoke any session to force a fresh sign-in.
+      </div>
+      {rows.length === 0 ? (
+        <div className="dev-empty">No active sessions</div>
+      ) : (
+        <>
+          <div className="dev-list">
+            {rows.map(s => (
+              <div key={s.id} className="dev-row">
+                <div className="dev-row-main">
+                  <div className="dev-row-line">
+                    <span className="dev-row-name">{summarize(s.user_agent)}</span>
+                    {s.current && <span className="badge" style={{ background: "var(--brand)", color: "white" }}>this session</span>}
+                  </div>
+                  <div className="dev-row-meta">
+                    {s.ip ?? "Unknown IP"} · last used {new Date(s.last_used_at).toLocaleString()}
+                  </div>
+                </div>
+                {!s.current && (
+                  <button className="danger" disabled={busy} onClick={() => revoke(s.id)}>Sign out</button>
+                )}
+              </div>
+            ))}
+          </div>
+          {rows.some(s => !s.current) && (
+            <div className="settings-actions" style={{ justifyContent: "flex-start", marginTop: 12 }}>
+              <button className="danger" disabled={busy} onClick={revokeOthers}>Sign out all other sessions</button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 type Invite = { id: number; token: string; email: string | null; used_at: string | null; used_by: number | null; created_at: string }
 
 const InvitesPanel: React.FC = () => {
@@ -2503,6 +3058,8 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
 
           <DeveloperPanel />
 
+          <SecurityPanel />
+
           <InvitesPanel />
 
           <section className="settings-card">
@@ -2556,7 +3113,7 @@ type AdminInviteRequest = {
 
 const AdminView: React.FC = () => {
   const me = api.getUser()
-  const [section, setSection] = useState<"requests" | "users" | "invites" | "payments" | "stats">("requests")
+  const [section, setSection] = useState<"requests" | "users" | "invites" | "payments" | "stats" | "audit">("requests")
 
   if (!me?.is_owner) {
     return (
@@ -2579,12 +3136,14 @@ const AdminView: React.FC = () => {
           <button className={section === "invites" ? "active" : ""} onClick={() => setSection("invites")}>Invites</button>
           <button className={section === "payments" ? "active" : ""} onClick={() => setSection("payments")}>Payments</button>
           <button className={section === "stats" ? "active" : ""} onClick={() => setSection("stats")}>Stats</button>
+          <button className={section === "audit" ? "active" : ""} onClick={() => setSection("audit")}>Audit</button>
         </div>
         {section === "requests" && <AdminRequests />}
         {section === "users" && <AdminUsers meId={me.id} />}
         {section === "invites" && <AdminInvites />}
         {section === "payments" && <AdminPayments />}
         {section === "stats" && <AdminStats />}
+        {section === "audit" && <AdminAudit />}
       </div>
     </div>
   )
@@ -3313,6 +3872,84 @@ type AdminStatsData = {
   invites_used: number
   invites_unused: number
   requests_pending: number
+}
+
+type AuditEvent = {
+  id: number
+  user_id: number | null
+  event: string
+  metadata: string | null
+  ip: string | null
+  user_agent: string | null
+  created_at: string
+  username?: string | null
+  user_email?: string | null
+}
+
+const AdminAudit: React.FC = () => {
+  const [events, setEvents] = useState<AuditEvent[]>([])
+  const [eventFilter, setEventFilter] = useState("")
+  const [loading, setLoading] = useState(true)
+
+  const load = async () => {
+    setLoading(true)
+    const data = await api.adminListAuditEvents({ event: eventFilter || undefined, limit: 200 })
+    setEvents(Array.isArray(data) ? data : [])
+    setLoading(false)
+  }
+  useEffect(() => { load() }, [])
+
+  const tone = (event: string): string => {
+    if (event.includes("fail") || event.includes("rate_limited") || event.includes("locked") || event.includes("disabled")) return "warn"
+    if (event.startsWith("login.ok") || event.includes("enabled") || event.endsWith(".created") || event === "signup.ok") return "ok"
+    return "info"
+  }
+
+  const presets = ["", "login.ok", "login.fail", "login.rate_limited", "login.mfa_required", "mfa.enabled", "mfa.disabled", "signup.ok"]
+
+  return (
+    <section className="settings-card">
+      <h3>Audit log</h3>
+      <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 12 }}>
+        Most recent 200 security-relevant events.
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+        <select value={eventFilter} onChange={e => setEventFilter(e.target.value)} style={{ minWidth: 220 }}>
+          {presets.map(p => <option key={p} value={p}>{p === "" ? "All events" : p}</option>)}
+        </select>
+        <input
+          placeholder="Or type a custom event…"
+          value={eventFilter}
+          onChange={e => setEventFilter(e.target.value)}
+          style={{ flex: 1, minWidth: 180 }}
+        />
+        <button onClick={load}>Refresh</button>
+      </div>
+      {loading && <div style={{ color: "var(--muted)" }}>Loading…</div>}
+      {!loading && events.length === 0 && <div style={{ color: "var(--muted)" }}>No events</div>}
+      {!loading && events.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {events.map(ev => (
+            <div key={ev.id} className={`audit-row audit-${tone(ev.event)}`}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                <code style={{ fontSize: 12, fontWeight: 600 }}>{ev.event}</code>
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {new Date(ev.created_at).toLocaleString()}
+                </span>
+              </div>
+              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {ev.username && <span>@{ev.username}</span>}
+                {!ev.username && ev.user_email && <span>{ev.user_email}</span>}
+                {!ev.username && !ev.user_email && ev.user_id === null && <span>anonymous</span>}
+                {ev.ip && <span>· {ev.ip}</span>}
+                {ev.metadata && <span>· {ev.metadata}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
 }
 
 const AdminStats: React.FC = () => {

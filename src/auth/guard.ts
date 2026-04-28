@@ -4,6 +4,7 @@ import { from, raw } from "@atlas/db"
 import { token } from "@atlas/auth"
 import { assign, halt } from "@atlas/server"
 import type { PipeFn } from "@atlas/server"
+import { isSessionActive, touchSession } from "../security/sessions.ts"
 
 export const APP_TOKEN_PREFIX = "stohr_pat_"
 
@@ -50,7 +51,6 @@ export const requireAuth = (opts: RequireAuthOptions): PipeFn =>
       if (!user) {
         return halt(conn, 401, { error: "App token references a missing user" })
       }
-      // fire-and-forget last_used_at update
       void opts.db.execute(
         from("apps").where(q => q("id").equals(app.id)).update({ last_used_at: raw("NOW()") }),
       ).catch(() => {})
@@ -67,12 +67,26 @@ export const requireAuth = (opts: RequireAuthOptions): PipeFn =>
       })
     }
 
+    let payload: any
     try {
-      const payload = await token.verify(t, opts.secret)
-      return assign(conn, { auth: payload })
+      payload = await token.verify(t, opts.secret)
     } catch {
       return halt(conn, 401, {
         error: "Invalid or expired token. Re-authenticate to get a fresh token.",
       })
     }
+
+    // JWTs without a jti predate the sessions feature — accept them but mark
+    // them as legacy so callers can encourage a re-login. JWTs with a jti must
+    // match an active session row.
+    const jti = typeof payload?.jti === "string" ? payload.jti : null
+    if (jti) {
+      const sess = await isSessionActive(opts.db, jti)
+      if (!sess.active) {
+        return halt(conn, 401, { error: "Session revoked. Sign in again." })
+      }
+      touchSession(opts.db, jti)
+    }
+
+    return assign(conn, { auth: { ...payload, jti } })
   }

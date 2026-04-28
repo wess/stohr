@@ -7,6 +7,7 @@ import '../widgets/items.dart';
 import '../viewer/index.dart';
 import '../upload/index.dart';
 import '../settings/index.dart';
+import '../share/index.dart';
 
 class BrowserScreen extends StatefulWidget {
   final int? folderId;
@@ -148,23 +149,32 @@ class _BrowserScreenState extends State<BrowserScreen> {
         if (mounted) _showSnack(e.message);
       }
     } else if (action == 'share') {
-      try {
-        final share = await api.createShare(f.id);
-        final url = '${api.baseUrl.replaceAll('/api', '')}/s/${share.token}';
-        if (!mounted) return;
-        showDialog<void>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Share link'),
-            content: SelectableText(url),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Done')),
+      final share = await showCreateShareSheet(context, f);
+      if (share == null || !mounted) return;
+      final url = '${api.baseUrl.replaceAll('/api', '')}/s/${share.token}';
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Share link'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SelectableText(url),
+              const SizedBox(height: 12),
+              if (share.passwordRequired)
+                const Text('· Recipient needs the password you set',
+                    style: TextStyle(fontSize: 12)),
+              if (share.burnOnView)
+                const Text('· Self-destructs after the first non-owner view',
+                    style: TextStyle(fontSize: 12)),
             ],
           ),
-        );
-      } on StohrError catch (e) {
-        if (mounted) _showSnack(e.message);
-      }
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Done')),
+          ],
+        ),
+      );
     } else if (action == 'delete') {
       if (!mounted) return;
       final ok = await _confirm(context, 'Delete "${f.name}"?');

@@ -1,20 +1,17 @@
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
-import { hash, token, verify } from "@atlas/auth"
+import { hash, verify } from "@atlas/auth"
 import { requireAuth } from "../auth/guard.ts"
 import { drop } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { isEmail, isValidUsername, normalizeUsername } from "../util/username.ts"
+import { issueSession, revokeAllSessions } from "../security/sessions.ts"
+import { logEvent } from "../security/audit.ts"
+import { clientIp, userAgent } from "../security/ratelimit.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
-
-const issueToken = (secret: string, user: { id: number; email: string; username: string; name: string; is_owner: boolean }) =>
-  token.sign(
-    { id: user.id, email: user.email, username: user.username, name: user.name, is_owner: user.is_owner },
-    secret,
-    { expiresIn: 86400 * 7 },
-  )
+const authJti = (c: any): string | null => (c.assigns.auth as { jti?: string | null }).jti ?? null
 
 export const userRoutes = (db: Connection, secret: string, store: StorageHandle) => {
   const guard = pipeline(requireAuth({ secret, db }))
@@ -69,6 +66,12 @@ export const userRoutes = (db: Connection, secret: string, store: StorageHandle)
         from("users").where(q => q("id").equals(userId)).select("id", "email", "username", "name", "is_owner", "created_at"),
       ) as { id: number; email: string; username: string; name: string; is_owner: boolean; created_at: string }
 
+      const sess = await issueSession(db, fresh, secret, {
+        ip: clientIp(c.request),
+        userAgent: userAgent(c.request),
+      })
+      // Revoke prior sessions so identity changes invalidate them.
+      await revokeAllSessions(db, userId, sess.jti)
       return json(c, 200, {
         id: fresh.id,
         email: fresh.email,
@@ -76,7 +79,7 @@ export const userRoutes = (db: Connection, secret: string, store: StorageHandle)
         name: fresh.name,
         is_owner: fresh.is_owner,
         created_at: fresh.created_at,
-        token: await issueToken(secret, fresh),
+        token: sess.token,
       })
     })),
 
@@ -102,7 +105,16 @@ export const userRoutes = (db: Connection, secret: string, store: StorageHandle)
         from("users").where(q => q("id").equals(userId)).update({ password: hashed }),
       )
 
-      return json(c, 200, { ok: true })
+      const currentJti = authJti(c)
+      const revoked = await revokeAllSessions(db, userId, currentJti ?? undefined)
+      logEvent(db, {
+        userId,
+        event: "password.changed",
+        metadata: { revoked_other_sessions: revoked },
+        ip: clientIp(c.request),
+        userAgent: userAgent(c.request),
+      })
+      return json(c, 200, { ok: true, revoked_other_sessions: revoked })
     })),
 
     del("/me", authed(async (c) => {

@@ -55,8 +55,27 @@ class StohrClient {
 
   // ── auth ──────────────────────────────────────────────
 
-  Future<AuthResult> login(String identity, String password) async {
-    final j = await _json('POST', '/login', body: {'identity': identity, 'password': password});
+  /// Returns either an [AuthResult] (success) or [MfaChallenge] (TOTP needed).
+  Future<Object> login(String identity, String password) async {
+    final j = await _json('POST', '/login', body: {'identity': identity, 'password': password}) as Map<String, dynamic>;
+    if (j['mfa_required'] == true) {
+      return MfaChallenge(j['mfa_token'] as String);
+    }
+    final res = AuthResult.fromJson(j);
+    _token = res.token;
+    return res;
+  }
+
+  Future<AuthResult> loginMfa({
+    required String mfaToken,
+    String? code,
+    String? backupCode,
+  }) async {
+    final j = await _json('POST', '/login/mfa', body: {
+      'mfa_token': mfaToken,
+      if (code != null) 'code': code,
+      if (backupCode != null) 'backup_code': backupCode,
+    });
     final res = AuthResult.fromJson(j as Map<String, dynamic>);
     _token = res.token;
     return res;
@@ -162,10 +181,17 @@ class StohrClient {
 
   // ── shares ─────────────────────────────────────────
 
-  Future<Share> createShare(int fileId, {int? expiresInSeconds}) async {
+  Future<Share> createShare(
+    int fileId, {
+    required int expiresInSeconds,
+    String? password,
+    bool burnOnView = false,
+  }) async {
     final j = await _json('POST', '/shares', body: {
       'file_id': fileId,
-      if (expiresInSeconds != null) 'expires_in': expiresInSeconds,
+      'expires_in': expiresInSeconds,
+      if (password != null && password.isNotEmpty) 'password': password,
+      if (burnOnView) 'burn_on_view': true,
     });
     return Share.fromJson(j as Map<String, dynamic>);
   }

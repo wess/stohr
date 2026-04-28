@@ -13,6 +13,37 @@ export const users = defineSchema("users", {
   ls_subscription_id: column.text().nullable(),
   subscription_status: column.text().nullable(),
   subscription_renews_at: column.timestamp().nullable(),
+  totp_secret: column.text().nullable(),
+  totp_enabled: column.boolean().default(false),
+  totp_backup_codes: column.text().nullable(),
+  totp_enabled_at: column.timestamp().nullable(),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const rateLimits = defineSchema("rate_limits", {
+  bucket: column.text().primaryKey(),
+  count: column.integer().default(0),
+  window_started_at: column.timestamp().default("now()"),
+})
+
+export const auditEvents = defineSchema("audit_events", {
+  id: column.serial().primaryKey(),
+  user_id: column.integer().nullable().ref("users", "id"),
+  event: column.text(),
+  metadata: column.text().nullable(),
+  ip: column.text().nullable(),
+  user_agent: column.text().nullable(),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const sessions = defineSchema("sessions", {
+  id: column.text().primaryKey(),
+  user_id: column.integer().ref("users", "id"),
+  ip: column.text().nullable(),
+  user_agent: column.text().nullable(),
+  expires_at: column.timestamp(),
+  revoked_at: column.timestamp().nullable(),
+  last_used_at: column.timestamp().default("now()"),
   created_at: column.timestamp().default("now()"),
 })
 
@@ -150,5 +181,7 @@ export const shares = defineSchema("shares", {
   user_id: column.integer().ref("users", "id"),
   token: column.text().unique(),
   expires_at: column.timestamp().nullable(),
+  password_hash: column.text().nullable(),
+  burn_on_view: column.boolean().default(false),
   created_at: column.timestamp().default("now()"),
 })

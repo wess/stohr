@@ -34,6 +34,11 @@ class AuthResult {
       AuthResult(user: User.fromJson(j), token: j['token'] as String);
 }
 
+class MfaChallenge {
+  final String mfaToken;
+  MfaChallenge(this.mfaToken);
+}
+
 class Folder {
   final int id;
   final String name;
@@ -95,8 +100,10 @@ class Share {
   final int id;
   final String token;
   final String? expiresAt;
-  final String createdAt;
-  final int fileId;
+  final String? createdAt;
+  final int? fileId;
+  final bool burnOnView;
+  final bool passwordRequired;
 
   Share({
     required this.id,
@@ -104,14 +111,18 @@ class Share {
     required this.expiresAt,
     required this.createdAt,
     required this.fileId,
+    required this.burnOnView,
+    required this.passwordRequired,
   });
 
   factory Share.fromJson(Map<String, dynamic> j) => Share(
         id: j['id'] as int,
         token: j['token'] as String,
         expiresAt: j['expires_at'] as String?,
-        createdAt: j['created_at'] as String,
-        fileId: j['file_id'] as int,
+        createdAt: j['created_at'] as String?,
+        fileId: j['file_id'] as int?,
+        burnOnView: (j['burn_on_view'] as bool?) ?? false,
+        passwordRequired: (j['password_required'] as bool?) ?? false,
       );
 }
 

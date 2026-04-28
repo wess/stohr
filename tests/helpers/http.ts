@@ -1,0 +1,90 @@
+import type { Connection } from "@atlas/db"
+import { router } from "@atlas/server"
+import { authRoutes } from "../../src/auth/index.ts"
+import { mfaRoutes } from "../../src/auth/mfa.ts"
+import { sessionRoutes } from "../../src/auth/sessions.ts"
+import { userRoutes } from "../../src/users/index.ts"
+import { folderRoutes } from "../../src/folders/index.ts"
+import { fileRoutes } from "../../src/files/index.ts"
+import { shareRoutes } from "../../src/shares/index.ts"
+import { trashRoutes } from "../../src/trash/index.ts"
+import { searchRoutes } from "../../src/search/index.ts"
+import { inviteRoutes } from "../../src/invites/index.ts"
+import { collabRoutes } from "../../src/collabs/index.ts"
+import { publicRoutes } from "../../src/public/index.ts"
+import { waitlistRoutes } from "../../src/waitlist/index.ts"
+import { adminRoutes } from "../../src/admin/index.ts"
+import { paymentsRoutes } from "../../src/payments/index.ts"
+import { s3KeyRoutes } from "../../src/s3keys/index.ts"
+import { appRoutes } from "../../src/apps/index.ts"
+import type { StorageHandle } from "../../src/storage/index.ts"
+
+export const fakeStore: StorageHandle = {
+  endpoint: "http://localhost",
+  bucket: "test",
+  region: "us-east-1",
+  accessKey: "x",
+  secretKey: "x",
+} as unknown as StorageHandle
+
+export const buildApp = (db: Connection, secret: string) => {
+  return router(
+    ...authRoutes(db, secret),
+    ...mfaRoutes(db, secret),
+    ...sessionRoutes(db, secret),
+    ...userRoutes(db, secret, fakeStore),
+    ...folderRoutes(db, secret, fakeStore),
+    ...fileRoutes(db, secret, fakeStore),
+    ...shareRoutes(db, secret, fakeStore),
+    ...trashRoutes(db, secret, fakeStore),
+    ...searchRoutes(db, secret),
+    ...inviteRoutes(db, secret),
+    ...collabRoutes(db, secret),
+    ...publicRoutes(db, secret, fakeStore),
+    ...waitlistRoutes(db),
+    ...adminRoutes(db, secret),
+    ...paymentsRoutes(db, secret),
+    ...s3KeyRoutes(db, secret),
+    ...appRoutes(db, secret),
+  )
+}
+
+type Method = "GET" | "POST" | "PATCH" | "DELETE" | "PUT"
+
+export type App = (req: Request) => Response | Promise<Response>
+
+export type ReqOptions = {
+  method?: Method
+  body?: unknown
+  token?: string
+  headers?: Record<string, string>
+  ip?: string
+}
+
+export const callJson = async <T = any>(
+  app: App,
+  path: string,
+  opts: ReqOptions = {},
+): Promise<{ status: number; body: T }> => {
+  const headers: Record<string, string> = {
+    "x-forwarded-for": opts.ip ?? "127.0.0.1",
+    ...(opts.headers ?? {}),
+  }
+  if (opts.body !== undefined && !headers["content-type"]) {
+    headers["content-type"] = "application/json"
+  }
+  if (opts.token) headers.authorization = `Bearer ${opts.token}`
+
+  const req = new Request(`http://test.local${path}`, {
+    method: opts.method ?? "GET",
+    headers,
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+  })
+  const res = await app(req)
+  let body: any = null
+  const text = await res.text()
+  if (text) {
+    try { body = JSON.parse(text) } catch { body = text }
+  }
+  return { status: res.status, body: body as T }
+}

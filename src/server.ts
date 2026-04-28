@@ -3,6 +3,8 @@ import { connect } from "@atlas/db"
 import { migrate } from "@atlas/migrate"
 import { router } from "@atlas/server"
 import { authRoutes } from "./auth/index.ts"
+import { mfaRoutes } from "./auth/mfa.ts"
+import { sessionRoutes } from "./auth/sessions.ts"
 import { folderRoutes } from "./folders/index.ts"
 import { fileRoutes } from "./files/index.ts"
 import { shareRoutes } from "./shares/index.ts"
@@ -19,6 +21,7 @@ import { s3KeyRoutes } from "./s3keys/index.ts"
 import { s3Routes } from "./s3/index.ts"
 import { appRoutes } from "./apps/index.ts"
 import { createStorage } from "./storage/index.ts"
+import { withSecurityHeaders } from "./security/headers.ts"
 
 const config = defineConfig({
   port: env("PORT", { parse: Number, default: "3000" }),
@@ -44,6 +47,8 @@ await migrate.up(db, "./migrations")
 
 const fetch = router(
   ...authRoutes(db, config.secret),
+  ...mfaRoutes(db, config.secret),
+  ...sessionRoutes(db, config.secret),
   ...userRoutes(db, config.secret, store),
   ...folderRoutes(db, config.secret, store),
   ...fileRoutes(db, config.secret, store),
@@ -61,12 +66,17 @@ const fetch = router(
   ...appRoutes(db, config.secret),
 )
 
+if (config.secret === "dev-secret-change-me") {
+  console.warn("[stohr] WARNING: running with the default SECRET. Set a strong SECRET in .env before production.")
+}
+
 Bun.serve({
   port: config.port,
   hostname: "0.0.0.0",
-  fetch,
+  fetch: withSecurityHeaders(fetch),
   maxRequestBodySize: Number.MAX_SAFE_INTEGER,
   idleTimeout: 0,
 })
 
 console.log(`[stohr] api on http://localhost:${config.port}`)
+console.log(`[stohr] storage endpoint: ${config.s3Endpoint} (encryption-at-rest is the provider's responsibility — see SECURITY.md)`)

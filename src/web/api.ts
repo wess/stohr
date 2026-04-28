@@ -56,8 +56,32 @@ export const signup = async (input: {
 export const login = async (identity: string, password: string) => {
   const data = await jsonReq("POST", "/login", { identity, password })
   if (data.token) setToken(data.token, { id: data.id, email: data.email, username: data.username, name: data.name, is_owner: !!data.is_owner })
+  return data as {
+    id?: number; email?: string; username?: string; name?: string; is_owner?: boolean
+    token?: string
+    mfa_required?: boolean; mfa_token?: string
+    error?: string; retry_after?: number
+  }
+}
+
+export const loginMfa = async (mfaToken: string, opts: { code?: string; backupCode?: string }) => {
+  const data = await jsonReq("POST", "/login/mfa", {
+    mfa_token: mfaToken,
+    ...(opts.code ? { code: opts.code } : {}),
+    ...(opts.backupCode ? { backup_code: opts.backupCode } : {}),
+  })
+  if (data.token) setToken(data.token, { id: data.id, email: data.email, username: data.username, name: data.name, is_owner: !!data.is_owner })
   return data
 }
+
+export const getMfaStatus = () => jsonReq("GET", "/me/mfa")
+export const listSessions = () => jsonReq("GET", "/me/sessions")
+export const revokeSession = (id: string) => jsonReq("DELETE", `/me/sessions/${encodeURIComponent(id)}`)
+export const revokeOtherSessions = () => jsonReq("POST", "/me/sessions/revoke-others", {})
+export const startMfaSetup = () => jsonReq("POST", "/me/mfa/setup", {})
+export const enableMfa = (code: string) => jsonReq("POST", "/me/mfa/enable", { code })
+export const disableMfa = (password: string, code: string) => jsonReq("POST", "/me/mfa/disable", { password, code })
+export const regenerateBackupCodes = (password: string) => jsonReq("POST", "/me/mfa/backup-codes", { password })
 
 export const checkInvite = async (token: string) => {
   const res = await fetch(`${BASE}/invites/${encodeURIComponent(token)}/check`)
@@ -96,7 +120,7 @@ export const moveFolder = (id: number, parentId: number | null) =>
 export const updateFolder = (id: number, patch: { kind?: "standard" | "photos"; is_public?: boolean }) =>
   jsonReq("PATCH", `/folders/${id}`, patch)
 
-export const createFolderTyped = (name: string, parentId: number | null, opts?: { kind?: "standard" | "photos"; is_public?: boolean }) =>
+export const createFolderTyped = (name: string, parentId: number | null, opts?: { kind?: "standard" | "photos" | "screenshots"; is_public?: boolean }) =>
   jsonReq("POST", "/folders", { name, parent_id: parentId, ...opts })
 
 export const deleteFolder = (id: number) =>
@@ -171,19 +195,43 @@ export const downloadUrl = (id: number) =>
 export const listShares = () =>
   jsonReq("GET", "/shares")
 
-export const createShare = (fileId: number, expiresIn?: number) =>
-  jsonReq("POST", "/shares", { file_id: fileId, expires_in: expiresIn })
+export const createShare = (
+  fileId: number,
+  opts: { expiresIn: number; password?: string; burnOnView?: boolean },
+) =>
+  jsonReq("POST", "/shares", {
+    file_id: fileId,
+    expires_in: opts.expiresIn,
+    ...(opts.password ? { password: opts.password } : {}),
+    ...(opts.burnOnView ? { burn_on_view: true } : {}),
+  })
 
 export const deleteShare = (id: number) =>
   jsonReq("DELETE", `/shares/${id}`)
 
 export const shareMeta = async (token: string) => {
   const res = await fetch(`${BASE}/s/${token}?meta=1`)
-  return res.json()
+  return res.json() as Promise<{
+    name?: string
+    size?: number
+    mime?: string
+    created_at?: string
+    expires_at?: string | null
+    password_required?: boolean
+    burn_on_view?: boolean
+    error?: string
+  }>
 }
 
 export const shareDownloadUrl = (token: string) => `${BASE}/s/${token}`
 export const shareInlineUrl = (token: string) => `${BASE}/s/${token}?inline=1`
+
+export const fetchShare = async (token: string, password?: string, inline = false) => {
+  const url = `${BASE}/s/${token}${inline ? "?inline=1" : ""}`
+  const headers: Record<string, string> = {}
+  if (password) headers["x-share-password"] = password
+  return fetch(url, { headers })
+}
 
 export const getMe = () =>
   jsonReq("GET", "/me")
@@ -305,6 +353,15 @@ export const adminDeleteInvite = (id: number) =>
 
 export const adminGetStats = () =>
   jsonReq("GET", "/admin/stats")
+
+export const adminListAuditEvents = (filters: { event?: string; userId?: number; limit?: number } = {}) => {
+  const qs = new URLSearchParams()
+  if (filters.event) qs.set("event", filters.event)
+  if (filters.userId !== undefined) qs.set("user_id", String(filters.userId))
+  if (filters.limit !== undefined) qs.set("limit", String(filters.limit))
+  const tail = qs.toString()
+  return jsonReq("GET", `/admin/audit${tail ? `?${tail}` : ""}`)
+}
 
 export const getMySubscription = () =>
   jsonReq("GET", "/me/subscription")

@@ -46,8 +46,23 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<User> login(String identity, String password) async {
+  /// Returns [User] on full sign-in or [MfaChallenge] if TOTP is required.
+  Future<Object> login(String identity, String password) async {
     final res = await _client.login(identity, password);
+    if (res is MfaChallenge) return res;
+    final auth = res as AuthResult;
+    user = auth.user;
+    await _storage.write(key: _tokenKey, value: auth.token);
+    notifyListeners();
+    return auth.user;
+  }
+
+  Future<User> completeMfa({
+    required String mfaToken,
+    String? code,
+    String? backupCode,
+  }) async {
+    final res = await _client.loginMfa(mfaToken: mfaToken, code: code, backupCode: backupCode);
     user = res.user;
     await _storage.write(key: _tokenKey, value: res.token);
     notifyListeners();
