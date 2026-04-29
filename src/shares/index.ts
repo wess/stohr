@@ -12,9 +12,31 @@ const MAX_EXPIRES_SECONDS = 30 * 24 * 60 * 60
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
-const randomToken = () => {
-  const bytes = crypto.getRandomValues(new Uint8Array(24))
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("")
+/* Base58 alphabet — drops the visually-ambiguous 0/O/I/l so shared URLs
+ * can be read aloud or copied from a screen without errors. */
+const SHORT_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+const SHORT_LEN = 7
+
+const shortToken = (): string => {
+  const bytes = crypto.getRandomValues(new Uint8Array(SHORT_LEN))
+  let out = ""
+  for (let i = 0; i < SHORT_LEN; i++) {
+    out += SHORT_ALPHABET[bytes[i]! % SHORT_ALPHABET.length]
+  }
+  return out
+}
+
+const allocShareToken = async (db: Connection): Promise<string> => {
+  // 58^7 ≈ 2.2 trillion possibilities — collisions effectively never happen,
+  // but we retry once on the unique-constraint race just in case.
+  for (let i = 0; i < 8; i++) {
+    const candidate = shortToken()
+    const taken = await db.one(
+      from("shares").where(q => q("token").equals(candidate)).select("id"),
+    )
+    if (!taken) return candidate
+  }
+  throw new Error("Could not allocate a unique share token after 8 tries")
 }
 
 const sweepExpired = async (db: Connection) => {
@@ -55,9 +77,16 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
   const authed = pipeline(requireAuth({ secret, db }), parseJson)
 
   // Periodic sweep — runs every hour for the lifetime of the API process.
-  setInterval(() => { void sweepExpired(db) }, 60 * 60 * 1000)
+  // Guarded so a slow run can't stack onto itself.
+  let sweeping = false
+  const guardedSweep = async () => {
+    if (sweeping) return
+    sweeping = true
+    try { await sweepExpired(db) } finally { sweeping = false }
+  }
+  setInterval(() => { void guardedSweep() }, 60 * 60 * 1000)
   // Initial sweep so the first request after boot doesn't see stale rows.
-  void sweepExpired(db)
+  void guardedSweep()
 
   return [
     get("/shares", guard(async (c) => {
@@ -117,7 +146,7 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
       )
       if (!file) return json(c, 404, { error: "File not found" })
 
-      const tok = randomToken()
+      const tok = await allocShareToken(db)
       const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString()
       const passwordHash = password ? await hash(password) : null
 

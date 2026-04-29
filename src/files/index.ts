@@ -448,12 +448,34 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       if (!access) return json(c, 404, { error: "File not found" })
       const file = access.file
 
-      const prior = await db.all(
-        from("file_versions")
-          .where(q => q("file_id").equals(id))
-          .select("version", "mime", "size", "uploaded_by", "uploaded_at")
-          .orderBy("version", "DESC"),
-      ) as Array<{ version: number; mime: string; size: number; uploaded_by: number | null; uploaded_at: string }>
+      const url = new URL(c.request.url)
+      const rawLimit = Number(url.searchParams.get("limit") ?? 50)
+      const limit = Math.max(1, Math.min(Number.isFinite(rawLimit) ? rawLimit : 50, 200))
+      const rawOffset = Number(url.searchParams.get("offset") ?? 0)
+      const offset = Math.max(0, Number.isFinite(rawOffset) ? rawOffset : 0)
+
+      // Current version isn't in file_versions — surface it as the first
+      // page item only.
+      const includeCurrent = offset === 0
+      const priorLimit = includeCurrent ? Math.max(0, limit - 1) : limit
+      const priorOffset = includeCurrent ? 0 : offset - 1
+
+      const prior = priorLimit > 0
+        ? await db.all(
+            from("file_versions")
+              .where(q => q("file_id").equals(id))
+              .select("version", "mime", "size", "uploaded_by", "uploaded_at")
+              .orderBy("version", "DESC")
+              .limit(priorLimit)
+              .offset(priorOffset),
+          ) as Array<{ version: number; mime: string; size: number; uploaded_by: number | null; uploaded_at: string }>
+        : []
+
+      const totalRow = await db.execute({
+        text: "SELECT COUNT(*)::int AS n FROM file_versions WHERE file_id = $1",
+        values: [id],
+      }) as Array<{ n: number }>
+      const total = (totalRow[0]?.n ?? 0) + 1
 
       const current = {
         version: file.version,
@@ -462,8 +484,11 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         uploaded_at: file.created_at,
         is_current: true,
       }
+      const items = includeCurrent
+        ? [current, ...prior.map(p => ({ ...p, is_current: false }))]
+        : prior.map(p => ({ ...p, is_current: false }))
 
-      return json(c, 200, [current, ...prior.map(p => ({ ...p, is_current: false }))])
+      return json(c, 200, { items, total, limit, offset })
     })),
 
     get("/files/:id/versions/:version/download", guard(async (c) => {
@@ -517,11 +542,14 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
 
       const oldThumb = file.thumb_key
 
-      const restoredRes = await fetchObject(store, target.storage_key)
-      const bytes = new Uint8Array(await restoredRes.arrayBuffer())
-
+      // Only fetch + buffer the restored bytes when we actually need to
+      // re-generate a thumbnail. For non-thumbable mimes (PDFs, archives,
+      // video, etc.) restoring a multi-GB version no longer round-trips
+      // the whole payload through API memory.
       let newThumbKey: string | null = null
       if (isThumbable(target.mime)) {
+        const restoredRes = await fetchObject(store, target.storage_key)
+        const bytes = new Uint8Array(await restoredRes.arrayBuffer())
         const thumb = await generateImageThumb(bytes, target.mime)
         if (thumb) {
           newThumbKey = thumbKeyFor(target.storage_key)

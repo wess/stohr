@@ -31,15 +31,6 @@ export type FileRow = {
 export const canWrite = (role: Role) => role === "owner" || role === "editor"
 export const isOwner = (role: Role) => role === "owner"
 
-const folderCollab = async (db: Connection, userId: number, folderId: number) =>
-  await db.one(
-    from("collaborations")
-      .where(q => q("resource_type").equals("folder"))
-      .where(q => q("resource_id").equals(folderId))
-      .where(q => q("user_id").equals(userId))
-      .select("role"),
-  ) as { role: Role } | null
-
 const fileCollab = async (db: Connection, userId: number, fileId: number) =>
   await db.one(
     from("collaborations")
@@ -49,25 +40,37 @@ const fileCollab = async (db: Connection, userId: number, fileId: number) =>
       .select("role"),
   ) as { role: Role } | null
 
+// Walks the folder ancestry in a single recursive CTE and returns the role
+// of the nearest collaboration grant. One round-trip regardless of depth.
 const inheritedFolderRole = async (
   db: Connection,
   userId: number,
   startFolderId: number,
 ): Promise<Role | null> => {
-  let id: number | null = startFolderId
-  const seen = new Set<number>()
-  while (id != null && !seen.has(id)) {
-    seen.add(id)
-    const direct = await folderCollab(db, userId, id)
-    if (direct) return direct.role
-    const parent = await db.one(
-      from("folders")
-        .where(q => q("id").equals(id))
-        .select("parent_id"),
-    ) as { parent_id: number | null } | null
-    id = parent?.parent_id ?? null
-  }
-  return null
+  const rows = await db.execute({
+    text: `
+      WITH RECURSIVE chain AS (
+        SELECT id, parent_id, 0 AS depth
+          FROM folders
+         WHERE id = $1
+        UNION ALL
+        SELECT f.id, f.parent_id, c.depth + 1
+          FROM folders f
+          JOIN chain c ON f.id = c.parent_id
+         WHERE c.depth < 64
+      )
+      SELECT col.role
+        FROM chain c
+        JOIN collaborations col
+          ON col.resource_type = 'folder'
+         AND col.resource_id = c.id
+         AND col.user_id = $2
+        ORDER BY c.depth ASC
+        LIMIT 1
+    `,
+    values: [startFolderId, userId],
+  }) as Array<{ role: Role }>
+  return rows[0]?.role ?? null
 }
 
 export const folderAccess = async (

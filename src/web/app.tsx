@@ -769,9 +769,11 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
       return
     }
     setPaletteLoading(true)
+    const ctrl = new AbortController()
     const t = setTimeout(async () => {
       try {
-        const res = await api.search(paletteQuery) as PaletteResults
+        const res = await api.search(paletteQuery, undefined, ctrl.signal) as PaletteResults
+        if (ctrl.signal.aborted) return
         const results: PaletteResults = {
           folders: Array.isArray(res?.folders) ? res.folders : [],
           files: Array.isArray(res?.files) ? res.files : [],
@@ -781,14 +783,18 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
           const total = results.folders.length + results.files.length
           return total === 0 ? 0 : Math.min(prev, total - 1)
         })
-      } catch {
+      } catch (err) {
+        if ((err as { name?: string })?.name === "AbortError") return
         setPaletteResults({ files: [], folders: [] })
         setPaletteActive(0)
       } finally {
-        setPaletteLoading(false)
+        if (!ctrl.signal.aborted) setPaletteLoading(false)
       }
     }, 150)
-    return () => clearTimeout(t)
+    return () => {
+      clearTimeout(t)
+      ctrl.abort()
+    }
   }, [paletteOpen, paletteQuery])
 
   const orderedKeys = useMemo(
@@ -1446,7 +1452,8 @@ const VersionsModal: React.FC<{ file: FileItem; onClose: () => void; onRestored:
   const load = async () => {
     const data = await api.listVersions(file.id)
     if (Array.isArray(data)) setVersions(data)
-    else setErr(data.error ?? "Failed to load versions")
+    else if (data && Array.isArray((data as { items?: FileVersion[] }).items)) setVersions((data as { items: FileVersion[] }).items)
+    else setErr((data as { error?: string }).error ?? "Failed to load versions")
   }
   useEffect(() => { load() }, [file.id])
 
@@ -1984,25 +1991,34 @@ const AuthedImage: React.FC<{ src: string; alt: string; useAuth: boolean }> = ({
     return () => obs.disconnect()
   }, [useAuth])
 
+  // Fetch the auth-protected image once `src`/`useAuth`/visibility settles.
+  // Cleanup revokes the object URL on src change OR unmount — never on the
+  // resolved-state transition itself, which would revoke the URL we just put
+  // into the <img>.
   useEffect(() => {
-    if (!useAuth || !visible || resolved) return
-    let url: string | null = null
+    if (!useAuth || !visible) {
+      if (!useAuth) setResolved(src)
+      return
+    }
     let aborted = false
+    let createdUrl: string | null = null
+    setResolved(null)
+    setLoaded(false)
     ;(async () => {
       try {
         const res = await fetch(src, { headers: { authorization: `Bearer ${api.getToken()}` } })
-        if (!res.ok) return
+        if (!res.ok || aborted) return
         const blob = await res.blob()
         if (aborted) return
-        url = URL.createObjectURL(blob)
-        setResolved(url)
+        createdUrl = URL.createObjectURL(blob)
+        setResolved(createdUrl)
       } catch {}
     })()
     return () => {
       aborted = true
-      if (url) URL.revokeObjectURL(url)
+      if (createdUrl) URL.revokeObjectURL(createdUrl)
     }
-  }, [src, useAuth, visible, resolved])
+  }, [src, useAuth, visible])
 
   return (
     <div ref={ref} className="thumb-wrap">
@@ -2052,8 +2068,8 @@ const PhotosGallery: React.FC<{
   return (
     <>
       <div className="gallery">
-        {photos.map(p => (
-          <div key={p.id} className="tile" onClick={() => setActive(photos.indexOf(p))}>
+        {photos.map((p, i) => (
+          <div key={p.id} className="tile" onClick={() => setActive(i)}>
             <AuthedImage
               src={thumbUrl(p.id, p.version)}
               alt={p.name}

@@ -11,30 +11,27 @@ export type UsageBreakdown = {
   total: number
 }
 
-const sumSize = async (db: Connection, sql: string, values: any[]): Promise<number> => {
-  const rows = await db.execute({ text: sql, values }) as Array<{ total: string | number | null }>
-  return Number(rows[0]?.total ?? 0)
-}
-
+// Computes active / trash / versions in one round-trip. Each sum is
+// served by a partial / covering index added in 00000031_perf_indexes.
 export const computeUsage = async (db: Connection, userId: number): Promise<UsageBreakdown> => {
-  const active = await sumSize(
-    db,
-    "SELECT COALESCE(SUM(size), 0) AS total FROM files WHERE user_id = $1 AND deleted_at IS NULL",
-    [userId],
-  )
-  const trash = await sumSize(
-    db,
-    "SELECT COALESCE(SUM(size), 0) AS total FROM files WHERE user_id = $1 AND deleted_at IS NOT NULL",
-    [userId],
-  )
-  const versions = await sumSize(
-    db,
-    `SELECT COALESCE(SUM(fv.size), 0) AS total
-     FROM file_versions fv
-     JOIN files f ON f.id = fv.file_id
-     WHERE f.user_id = $1`,
-    [userId],
-  )
+  const rows = await db.execute({
+    text: `
+      SELECT
+        COALESCE((SELECT SUM(size) FROM files
+                   WHERE user_id = $1 AND deleted_at IS NULL), 0)     AS active,
+        COALESCE((SELECT SUM(size) FROM files
+                   WHERE user_id = $1 AND deleted_at IS NOT NULL), 0) AS trash,
+        COALESCE((SELECT SUM(fv.size)
+                    FROM file_versions fv
+                    JOIN files f ON f.id = fv.file_id
+                   WHERE f.user_id = $1), 0)                          AS versions
+    `,
+    values: [userId],
+  }) as Array<{ active: string | number | null; trash: string | number | null; versions: string | number | null }>
+  const r = rows[0]
+  const active = Number(r?.active ?? 0)
+  const trash = Number(r?.trash ?? 0)
+  const versions = Number(r?.versions ?? 0)
   return { active, trash, versions, total: active + trash + versions }
 }
 

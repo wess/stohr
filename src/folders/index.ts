@@ -11,22 +11,21 @@ import type { RunSummary } from "../actions/dispatch.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
+// All ids in the subtree rooted at rootId (inclusive). One recursive CTE
+// regardless of depth or fan-out.
 const collectSubtreeAll = async (db: Connection, rootId: number): Promise<number[]> => {
-  const ids = [rootId]
-  const queue = [rootId]
-  while (queue.length) {
-    const pid = queue.shift()!
-    const children = await db.all(
-      from("folders")
-        .where(q => q("parent_id").equals(pid))
-        .select("id"),
-    ) as Array<{ id: number }>
-    for (const c of children) {
-      ids.push(c.id)
-      queue.push(c.id)
-    }
-  }
-  return ids
+  const rows = await db.execute({
+    text: `
+      WITH RECURSIVE sub AS (
+        SELECT id FROM folders WHERE id = $1
+        UNION ALL
+        SELECT f.id FROM folders f JOIN sub s ON f.parent_id = s.id
+      )
+      SELECT id FROM sub
+    `,
+    values: [rootId],
+  }) as Array<{ id: number }>
+  return rows.map(r => r.id)
 }
 
 const buildTrail = async (
@@ -199,14 +198,16 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
         if (parentId === null) {
           if (!isOwner(access.role)) return json(c, 403, { error: "Only the owner can move a folder to the root" })
         } else {
-          const subtree = await collectSubtreeAll(db, id)
-          if (subtree.includes(parentId)) return json(c, 422, { error: "Cannot move folder into its own subtree" })
           const targetAccess = await folderAccess(db, userId, parentId)
           if (!targetAccess) return json(c, 404, { error: "Target folder not found" })
           if (!canWrite(targetAccess.role)) return json(c, 403, { error: "No write access on target" })
           if (targetAccess.folder.user_id !== access.folder.user_id) {
             return json(c, 422, { error: "Cannot move folder across owners" })
           }
+          // Cycle check is the expensive part — only walk the subtree once
+          // every cheap rejection above has cleared.
+          const subtree = await collectSubtreeAll(db, id)
+          if (subtree.includes(parentId)) return json(c, 422, { error: "Cannot move folder into its own subtree" })
           newParentFolder = targetAccess.folder
         }
         patchData.parent_id = parentId
@@ -273,17 +274,17 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       const folder = access.folder
       const ids = await collectSubtreeAll(db, id)
 
-      for (const fid of ids) {
-        await db.execute(
-          from("folders").where(q => q("id").equals(fid)).update({ deleted_at: raw("NOW()") }),
-        )
-        await db.execute(
-          from("files")
-            .where(q => q("folder_id").equals(fid))
-            .where(q => q("deleted_at").isNull())
-            .update({ deleted_at: raw("NOW()") }),
-        )
-      }
+      await db.execute(
+        from("folders")
+          .where(q => q("id").inList(ids))
+          .update({ deleted_at: raw("NOW()") }),
+      )
+      await db.execute(
+        from("files")
+          .where(q => q("folder_id").inList(ids))
+          .where(q => q("deleted_at").isNull())
+          .update({ deleted_at: raw("NOW()") }),
+      )
 
       const summaries: RunSummary[] = []
       if (folder.parent_id != null) {

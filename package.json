@@ -10,7 +10,14 @@
     "dev": "bun src/dev.ts",
     "api": "bun --hot src/server.ts",
     "web": "bun --hot src/web/serve.ts",
-    "test": "bun test --concurrency=1 tests/"
+    "test": "bun test --concurrency=1 tests/",
+    "lint": "bunx biome lint packages/",
+    "format": "bunx biome format packages/",
+    "check": "bunx biome check packages/",
+    "lint:fix": "bunx biome lint --write packages/",
+    "format:fix": "bunx biome format --write packages/",
+    "check:fix": "bunx biome check --write packages/",
+    "tidy": "bun run format:fix && bun run lint:fix"
   },
   "devDependencies": {
     "@types/react": "latest",

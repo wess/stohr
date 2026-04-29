@@ -14,11 +14,12 @@ const headers = (extra: Record<string, string> = {}) => {
   return h
 }
 
-const jsonReq = async (method: string, path: string, body?: unknown) => {
+const jsonReq = async (method: string, path: string, body?: unknown, signal?: AbortSignal) => {
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: headers({ "content-type": "application/json" }),
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal,
   })
   return res.json()
 }
@@ -272,11 +273,11 @@ export const purgeFile = (id: number) =>
 export const purgeFolder = (id: number) =>
   jsonReq("DELETE", `/folders/${id}/purge`)
 
-export const search = (q: string, limit?: number) => {
+export const search = (q: string, limit?: number, signal?: AbortSignal) => {
   const qs = limit !== undefined
     ? `q=${encodeURIComponent(q)}&limit=${limit}`
     : `q=${encodeURIComponent(q)}`
-  return jsonReq("GET", `/search?${qs}`)
+  return jsonReq("GET", `/search?${qs}`, undefined, signal)
 }
 
 export const listVersions = (fileId: number) =>

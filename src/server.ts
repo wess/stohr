@@ -48,6 +48,12 @@ const config = defineConfig({
   rpId: env("RP_ID", { default: "localhost" }),
   rpName: env("RP_NAME", { default: "Stohr" }),
   rpOrigin: env("RP_ORIGIN", { default: "http://localhost:3001" }),
+  // @atlas/storage buffers the upload body in API memory to compute the
+  // AWS SigV4 payload hash, so this cap is *also* a memory ceiling per
+  // concurrent upload. Plan a future migration to presigned-PUT direct-to-S3
+  // uploads (presign helper already exists in @atlas/storage) to remove the
+  // buffering and raise this cap safely.
+  maxUploadBytes: env("MAX_UPLOAD_BYTES", { parse: Number, default: String(1024 * 1024 * 1024) }),
 })
 
 const db = connect({ driver: "postgres", url: config.databaseUrl })
@@ -98,17 +104,32 @@ const fetch = router(
 
 // OAuth cleanup: expired auth codes (60s TTL) every 5 min, expired device
 // codes (10 min TTL) every 5 min, expired refresh tokens (30 day TTL) every
-// hour. Survives the lifetime of the API process.
-setInterval(() => { void sweepExpiredAuthCodes(db) }, 5 * 60 * 1000)
-setInterval(() => { void sweepExpiredDeviceCodes(db) }, 5 * 60 * 1000)
-setInterval(() => { void sweepExpiredRefreshTokens(db) }, 60 * 60 * 1000)
-setInterval(() => { void sweepExpiredPasswordResets(db) }, 60 * 60 * 1000)
-setInterval(() => { void sweepExpiredWebauthnChallenges(db) }, 5 * 60 * 1000)
-void sweepExpiredAuthCodes(db)
-void sweepExpiredDeviceCodes(db)
-void sweepExpiredRefreshTokens(db)
-void sweepExpiredPasswordResets(db)
-void sweepExpiredWebauthnChallenges(db)
+// hour. Survives the lifetime of the API process. Each sweep is guarded so
+// a slow run cannot stack onto itself and chew through the connection pool.
+const guardedSweep = (label: string, fn: () => Promise<unknown>) => {
+  let running = false
+  return async () => {
+    if (running) return
+    running = true
+    try { await fn() } catch (err) { console.error(`[stohr] sweep ${label} failed:`, err) }
+    finally { running = false }
+  }
+}
+const sweepAuthCodes = guardedSweep("auth_codes", () => sweepExpiredAuthCodes(db))
+const sweepDeviceCodes = guardedSweep("device_codes", () => sweepExpiredDeviceCodes(db))
+const sweepRefreshTokens = guardedSweep("refresh_tokens", () => sweepExpiredRefreshTokens(db))
+const sweepPasswordResets = guardedSweep("password_resets", () => sweepExpiredPasswordResets(db))
+const sweepWebauthn = guardedSweep("webauthn_challenges", () => sweepExpiredWebauthnChallenges(db))
+setInterval(() => { void sweepAuthCodes() }, 5 * 60 * 1000)
+setInterval(() => { void sweepDeviceCodes() }, 5 * 60 * 1000)
+setInterval(() => { void sweepRefreshTokens() }, 60 * 60 * 1000)
+setInterval(() => { void sweepPasswordResets() }, 60 * 60 * 1000)
+setInterval(() => { void sweepWebauthn() }, 5 * 60 * 1000)
+void sweepAuthCodes()
+void sweepDeviceCodes()
+void sweepRefreshTokens()
+void sweepPasswordResets()
+void sweepWebauthn()
 
 if (config.secret === "dev-secret-change-me") {
   console.warn("[stohr] WARNING: running with the default SECRET. Set a strong SECRET in .env before production.")
@@ -118,7 +139,7 @@ Bun.serve({
   port: config.port,
   hostname: "0.0.0.0",
   fetch: withSecurityHeaders(fetch),
-  maxRequestBodySize: Number.MAX_SAFE_INTEGER,
+  maxRequestBodySize: config.maxUploadBytes,
   idleTimeout: 0,
 })
 
