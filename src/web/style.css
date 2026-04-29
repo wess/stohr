@@ -3943,21 +3943,22 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
   border-top: 1px solid var(--border);
 }
 .devp-section:first-of-type { border-top: none; padding-top: 16px; }
+/* Match the landing page's heading system — Inter, tight tracking, no
+ * Fraunces. The .lp parent rule (font-family: Inter, weight 700,
+ * letter-spacing: -0.035em) cascades; only size + spacing differ here. */
 .devp-section h2 {
-  font-family: "Fraunces", serif;
-  font-size: 36px;
-  font-weight: 600;
+  font-size: 32px;
   margin: 0 0 14px;
-  letter-spacing: -0.02em;
 }
 .devp-section h3 {
   font-size: 18px;
   font-weight: 600;
+  letter-spacing: -0.02em;
   margin: 28px 0 10px;
 }
 .devp-section p { line-height: 1.65; color: var(--text-soft); }
 .devp-section code {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 12.5px;
   padding: 1px 6px;
   background: var(--panel);
@@ -4064,10 +4065,11 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
   padding: 14px 16px;
   margin: 12px 0;
   overflow-x: auto;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 12.5px;
   line-height: 1.65;
   color: var(--text);
+  font-feature-settings: normal;
 }
 .devp-code code {
   background: transparent !important;
@@ -4113,4 +4115,44 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
 .devp-table td:first-child { width: 30%; white-space: nowrap; }
 .devp-table a { color: var(--brand); text-decoration: none; }
 .devp-table a:hover { text-decoration: underline; }
+
+/* Syntax-highlight token colors — Nord palette, light theme. The defaults
+ * above are paired with these so the developer-page code blocks read as
+ * part of the same design system as the rest of the app. */
+:root {
+  --tk-comment:     #738699;  /* nord3-ish, muted */
+  --tk-string:      #A0552B;  /* nord12 darkened — orange */
+  --tk-number:      #8B5E96;  /* nord15 darkened — magenta */
+  --tk-keyword:     #5E81AC;  /* nord10 — frost blue */
+  --tk-builtin:     #4F7E91;  /* nord9-ish — frost teal */
+  --tk-variable:    #4F7E91;
+  --tk-flag:        #8B5E96;
+  --tk-key:         #5E81AC;
+  --tk-punctuation: #4C566A;  /* nord3 muted */
+  --tk-operator:    #4C566A;
+}
+
+[data-theme="dark"] {
+  --tk-comment:     #6B7686;
+  --tk-string:      #D08770;  /* nord12 — orange */
+  --tk-number:      #B48EAD;  /* nord15 — magenta */
+  --tk-keyword:     #88C0D0;  /* nord8 — frost */
+  --tk-builtin:     #8FBCBB;  /* nord7 — frost teal */
+  --tk-variable:    #8FBCBB;
+  --tk-flag:        #B48EAD;
+  --tk-key:         #88C0D0;
+  --tk-punctuation: #D8DEE9;  /* nord4 */
+  --tk-operator:    #D8DEE9;
+}
+
+.devp-code .tk-comment     { color: var(--tk-comment); font-style: italic; }
+.devp-code .tk-string      { color: var(--tk-string); }
+.devp-code .tk-number      { color: var(--tk-number); }
+.devp-code .tk-keyword     { color: var(--tk-keyword); font-weight: 500; }
+.devp-code .tk-builtin     { color: var(--tk-builtin); }
+.devp-code .tk-variable    { color: var(--tk-variable); }
+.devp-code .tk-flag        { color: var(--tk-flag); }
+.devp-code .tk-key         { color: var(--tk-key); }
+.devp-code .tk-punctuation { color: var(--tk-punctuation); }
+.devp-code .tk-operator    { color: var(--tk-operator); }
 
