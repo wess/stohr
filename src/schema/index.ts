@@ -75,6 +75,19 @@ export const oauthAuthorizationCodes = defineSchema("oauth_authorization_codes",
   created_at: column.timestamp().default("now()"),
 })
 
+export const oauthDeviceCodes = defineSchema("oauth_device_codes", {
+  device_code: column.text().primaryKey(),
+  user_code: column.text().unique(),
+  client_id: column.text(),
+  scope: column.text(),
+  user_id: column.integer().nullable().ref("users", "id"),
+  approved_at: column.timestamp().nullable(),
+  denied_at: column.timestamp().nullable(),
+  last_polled_at: column.timestamp().nullable(),
+  expires_at: column.timestamp(),
+  created_at: column.timestamp().default("now()"),
+})
+
 export const oauthRefreshTokens = defineSchema("oauth_refresh_tokens", {
   token_hash: column.text().primaryKey(),
   client_id: column.text(),

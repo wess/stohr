@@ -6,6 +6,7 @@ import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
 import {
   ACCESS_TOKEN_TTL_SECONDS,
+  DEVICE_POLL_INTERVAL_SECONDS,
   REFRESH_TOKEN_TTL_SECONDS,
   formatScope,
   parseScope,
@@ -13,6 +14,8 @@ import {
   sha256,
   verifyPkceS256,
 } from "./helpers.ts"
+
+const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 
 type ClientRow = {
   id: number
@@ -270,6 +273,86 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
         userId: user.id,
         event: "oauth.token_refreshed",
         metadata: { client_id: clientId, scope },
+        ip,
+        userAgent: ua,
+      })
+      return json(c, 200, tokens)
+    }
+
+    if (grantType === DEVICE_CODE_GRANT) {
+      const clientId = body.client_id
+      const deviceCode = body.device_code
+      const clientSecret = body.client_secret
+      if (!clientId || !deviceCode) {
+        return oauthError(c, 400, "invalid_request", "client_id and device_code are required")
+      }
+      const client = await findClient(db, clientId)
+      if (!client || client.revoked_at) {
+        return oauthError(c, 400, "invalid_client", "Unknown or revoked client")
+      }
+      if (!(await verifyClientCredentials(client, clientSecret))) {
+        return oauthError(c, 401, "invalid_client", "Bad client credentials")
+      }
+
+      const row = await db.one(
+        from("oauth_device_codes").where(q => q("device_code").equals(deviceCode)),
+      ) as {
+        device_code: string
+        user_code: string
+        client_id: string
+        scope: string
+        user_id: number | null
+        approved_at: string | null
+        denied_at: string | null
+        last_polled_at: string | null
+        expires_at: string
+      } | null
+
+      if (!row) return oauthError(c, 400, "invalid_grant", "Unknown device_code")
+      if (row.client_id !== clientId) return oauthError(c, 400, "invalid_grant", "Code was issued for a different client")
+
+      const expiredAt = new Date(row.expires_at).getTime()
+      if (expiredAt < Date.now()) return oauthError(c, 400, "expired_token", "Device code expired")
+
+      // Per RFC 8628: enforce slow_down if the client polls faster than the
+      // advertised interval.
+      const now = Date.now()
+      const last = row.last_polled_at ? new Date(row.last_polled_at).getTime() : 0
+      if (last && now - last < (DEVICE_POLL_INTERVAL_SECONDS - 1) * 1000) {
+        await db.execute(
+          from("oauth_device_codes").where(q => q("device_code").equals(deviceCode))
+            .update({ last_polled_at: raw("NOW()") }),
+        )
+        return oauthError(c, 400, "slow_down", "Polling too fast — wait at least the advertised interval")
+      }
+      await db.execute(
+        from("oauth_device_codes").where(q => q("device_code").equals(deviceCode))
+          .update({ last_polled_at: raw("NOW()") }),
+      )
+
+      if (row.denied_at) {
+        return oauthError(c, 400, "access_denied", "User denied the authorization request")
+      }
+      if (!row.approved_at || !row.user_id) {
+        return oauthError(c, 400, "authorization_pending", "Waiting for user approval")
+      }
+
+      // Approved — burn the code (single use) and issue tokens.
+      await db.execute(
+        from("oauth_device_codes").where(q => q("device_code").equals(deviceCode)).del(),
+      )
+
+      const user = await db.one(
+        from("users").where(q => q("id").equals(row.user_id))
+          .select("id", "email", "username", "name", "is_owner"),
+      ) as UserRow | null
+      if (!user) return oauthError(c, 400, "invalid_grant", "User no longer exists")
+
+      const tokens = await issueTokens(db, secret, user, clientId, row.scope)
+      logEvent(db, {
+        userId: user.id,
+        event: "oauth.token_issued",
+        metadata: { client_id: clientId, grant: "device_code", scope: row.scope },
         ip,
         userAgent: ua,
       })

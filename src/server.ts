@@ -24,6 +24,7 @@ import { oauthClientRoutes } from "./oauth/clients.ts"
 import { oauthAuthorizeRoutes, sweepExpiredAuthCodes } from "./oauth/authorize.ts"
 import { oauthTokenRoutes, oauthRevokeRoutes, sweepExpiredRefreshTokens } from "./oauth/token.ts"
 import { oauthDiscoveryRoutes } from "./oauth/discovery.ts"
+import { deviceAuthorizeRoutes, sweepExpiredDeviceCodes } from "./oauth/device.ts"
 import { createStorage } from "./storage/index.ts"
 import { withSecurityHeaders } from "./security/headers.ts"
 
@@ -73,13 +74,17 @@ const fetch = router(
   ...oauthTokenRoutes(db, config.secret),
   ...oauthRevokeRoutes(db),
   ...oauthDiscoveryRoutes(),
+  ...deviceAuthorizeRoutes(db, config.secret),
 )
 
-// OAuth cleanup: expired auth codes (60s TTL) every 5 min, expired refresh
-// tokens (30 day TTL) every hour. Survives the lifetime of the API process.
+// OAuth cleanup: expired auth codes (60s TTL) every 5 min, expired device
+// codes (10 min TTL) every 5 min, expired refresh tokens (30 day TTL) every
+// hour. Survives the lifetime of the API process.
 setInterval(() => { void sweepExpiredAuthCodes(db) }, 5 * 60 * 1000)
+setInterval(() => { void sweepExpiredDeviceCodes(db) }, 5 * 60 * 1000)
 setInterval(() => { void sweepExpiredRefreshTokens(db) }, 60 * 60 * 1000)
 void sweepExpiredAuthCodes(db)
+void sweepExpiredDeviceCodes(db)
 void sweepExpiredRefreshTokens(db)
 
 if (config.secret === "dev-secret-change-me") {

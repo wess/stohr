@@ -49,10 +49,12 @@ type Route =
   | { kind: "share"; token: string }
   | { kind: "publicFolder"; username: string; folderId: number }
   | { kind: "oauthAuthorize"; query: string }
+  | { kind: "pair"; query: string }
 
 const parseRoute = (loc: { pathname: string; search: string }): Route => {
   const path = loc.pathname
   if (path === "/oauth/authorize") return { kind: "oauthAuthorize", query: loc.search }
+  if (path === "/pair") return { kind: "pair", query: loc.search }
   const share = path.match(/^\/s\/(.+)$/)
   if (share) return { kind: "share", token: share[1]! }
   const pub = path.match(/^\/p\/([^/]+)\/(\d+)/)
@@ -2071,6 +2073,143 @@ const OAuthConsent: React.FC<{ query: string }> = ({ query }) => {
   )
 }
 
+type DeviceInfo = {
+  client?: { client_id: string; name: string; description: string | null; icon_url: string | null; is_official: boolean }
+  scopes?: string[]
+  user_code?: string
+  error?: string
+  error_description?: string
+}
+
+const DevicePair: React.FC<{ query: string }> = ({ query }) => {
+  const initialCode = useMemo(() => {
+    const params = new URLSearchParams(query)
+    return params.get("code") ?? ""
+  }, [query])
+
+  const [code, setCode] = useState(initialCode)
+  const [info, setInfo] = useState<DeviceInfo | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [decided, setDecided] = useState<"approved" | "denied" | null>(null)
+  const [lookupErr, setLookupErr] = useState<string | null>(null)
+
+  const fetchInfo = async (raw: string) => {
+    const trimmed = raw.trim()
+    if (!trimmed) return
+    setBusy(true); setLookupErr(null)
+    const res = await api.oauthDeviceInfo(trimmed) as DeviceInfo
+    setBusy(false)
+    if (res.error) {
+      setInfo(null)
+      setLookupErr(res.error_description ?? res.error)
+      return
+    }
+    setInfo(res)
+  }
+
+  useEffect(() => {
+    if (initialCode) void fetchInfo(initialCode)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialCode])
+
+  const decide = async (approve: boolean) => {
+    if (!info?.user_code) return
+    setBusy(true); setLookupErr(null)
+    const res = approve
+      ? await api.oauthDeviceApprove(info.user_code)
+      : await api.oauthDeviceDeny(info.user_code)
+    setBusy(false)
+    if (res.error) {
+      setLookupErr(res.error_description ?? res.error)
+      return
+    }
+    setDecided(approve ? "approved" : "denied")
+  }
+
+  const me = api.getUser()
+
+  if (decided) {
+    const ok = decided === "approved"
+    return (
+      <div className="oauth-consent">
+        <div className="oauth-card">
+          <Logo className="oauth-logo" size={96} />
+          <h2 className="oauth-title">{ok ? "Device connected" : "Request denied"}</h2>
+          <div className="oauth-desc">
+            {ok
+              ? "Head back to your app — it should be signed in within a few seconds."
+              : "The app won't get access. You can close this window."}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="oauth-consent">
+      <div className="oauth-card">
+        <Logo className="oauth-logo" size={96} />
+        <h2 className="oauth-title">Pair a device</h2>
+
+        {!info && (
+          <>
+            <div className="oauth-desc">
+              Enter the code shown by the app you're trying to sign in.
+            </div>
+            <input
+              autoFocus
+              placeholder="ABCD-1234"
+              value={code}
+              onChange={e => setCode(e.target.value.toUpperCase())}
+              onKeyDown={e => { if (e.key === "Enter") void fetchInfo(code) }}
+              style={{ marginTop: 12, textAlign: "center", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 18, letterSpacing: 2 }}
+            />
+            {lookupErr && <div className="msg err" style={{ marginTop: 10 }}>{lookupErr}</div>}
+            <div className="oauth-actions">
+              <button className="primary" disabled={busy || code.trim().length === 0} onClick={() => fetchInfo(code)}>
+                {busy ? "Looking up…" : "Continue"}
+              </button>
+            </div>
+          </>
+        )}
+
+        {info && info.client && (
+          <>
+            <div className="oauth-title" style={{ marginTop: 12 }}>
+              <strong>{info.client.name}</strong> wants access
+            </div>
+            {info.client.is_official && <div className="oauth-official">Official Stohr application</div>}
+            <div className="oauth-scopes">
+              <div className="oauth-scopes-title">It will be able to:</div>
+              {(info.scopes ?? []).map(s => (
+                <div key={s} className="oauth-scope-row">
+                  <code>{s}</code>
+                  <span>{SCOPE_DESCRIPTIONS[s] ?? "Access your account"}</span>
+                </div>
+              ))}
+            </div>
+            {me && (
+              <div className="oauth-account">
+                Signing in as <strong>@{me.username}</strong>
+              </div>
+            )}
+            {lookupErr && <div className="msg err">{lookupErr}</div>}
+            <div className="oauth-actions">
+              <button onClick={() => decide(false)} disabled={busy}>Deny</button>
+              <button className="primary" onClick={() => decide(true)} disabled={busy}>
+                {busy ? "Working…" : "Authorize"}
+              </button>
+            </div>
+            <div className="oauth-redirect-note">
+              Pairing code: <code>{info.user_code}</code>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 const PublicFolderPage: React.FC<{ username: string; folderId: number }> = ({ username, folderId }) => {
   const [data, setData] = useState<
     | { folder: { id: number; name: string; kind: string }; owner: { username: string; name: string }; files: GalleryFile[] }
@@ -2813,6 +2952,18 @@ const OAuthClientsSection: React.FC = () => {
     await load()
   }
 
+  const rotateSecret = async (id: number, name: string) => {
+    if (!confirm(`Rotate the client_secret for "${name}"? Every existing refresh token for this client will be invalidated and connected apps will need to re-authenticate.`)) return
+    const res = await api.adminRotateOAuthClientSecret(id) as { client_id?: string; client_secret?: string; error?: string }
+    if (res.error) return alert(res.error)
+    if (!res.client_secret) return alert("Rotation succeeded but no secret was returned")
+    setJustCreated({
+      ...(clients.find(c => c.id === id) as OAuthClient),
+      client_secret: res.client_secret,
+    })
+    await load()
+  }
+
   return (
     <div className="dev-section">
       <h4>OAuth applications</h4>
@@ -2853,27 +3004,54 @@ const OAuthClientsSection: React.FC = () => {
           <textarea
             value={redirectsRaw}
             onChange={e => setRedirectsRaw(e.target.value)}
-            placeholder="butter://oauth/callback&#10;http://localhost:5173/callback"
+            placeholder={"stohrshot://oauth/callback\nhttp://localhost:5173/callback"}
             rows={3}
             style={{ width: "100%", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12 }}
           />
-          <label style={{ marginTop: 10 }}>Scopes</label>
-          <div style={{ display: "flex", gap: 12, fontSize: 13 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <input type="checkbox" checked={scopeRead} onChange={e => setScopeRead(e.target.checked)} /> read
+          <div style={{ marginTop: 6, fontSize: 11, color: "var(--muted)", lineHeight: 1.5 }}>
+            <strong>Common values:</strong>
+            <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+              <li>
+                Stohrshot desktop app: <code>stohrshot://oauth/callback</code>
+                {" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const uri = "stohrshot://oauth/callback"
+                    setRedirectsRaw(prev => {
+                      const lines = prev.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+                      return lines.includes(uri) ? prev : [...lines, uri].join("\n")
+                    })
+                  }}
+                  style={{ marginLeft: 4, padding: "1px 8px", fontSize: 11 }}
+                >
+                  Use this
+                </button>
+              </li>
+              <li>iOS/Android mobile app: a custom scheme like <code>stohrapp://oauth/callback</code></li>
+              <li>SPA / web app: <code>https://yourapp.example.com/callback</code></li>
+            </ul>
+          </div>
+          <label style={{ marginTop: 14 }}>Scopes</label>
+          <div className="scope-grid">
+            <label className="scope-check">
+              <input type="checkbox" checked={scopeRead} onChange={e => setScopeRead(e.target.checked)} />
+              <span>read</span>
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <input type="checkbox" checked={scopeWrite} onChange={e => setScopeWrite(e.target.checked)} /> write
+            <label className="scope-check">
+              <input type="checkbox" checked={scopeWrite} onChange={e => setScopeWrite(e.target.checked)} />
+              <span>write</span>
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <input type="checkbox" checked={scopeShare} onChange={e => setScopeShare(e.target.checked)} /> share
+            <label className="scope-check">
+              <input type="checkbox" checked={scopeShare} onChange={e => setScopeShare(e.target.checked)} />
+              <span>share</span>
             </label>
           </div>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12, fontSize: 13 }}>
+          <label className="scope-check" style={{ marginTop: 12 }}>
             <input type="checkbox" checked={isOfficial} onChange={e => setIsOfficial(e.target.checked)} />
             <span>First-party app (skips consent screen)</span>
           </label>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 13 }}>
+          <label className="scope-check" style={{ marginTop: 4 }}>
             <input type="checkbox" checked={confidential} onChange={e => setConfidential(e.target.checked)} />
             <span>Confidential client (issues a client_secret — for server-side apps only; native apps must stay public)</span>
           </label>
@@ -2900,18 +3078,33 @@ const OAuthClientsSection: React.FC = () => {
               <div className="dev-row-main">
                 <div className="dev-row-line">
                   <span className="dev-row-name">{c.name}</span>
-                  <code>{c.client_id}</code>
                   {c.is_official && <span className="badge" style={{ background: "var(--brand)", color: "white" }}>official</span>}
                   {c.revoked_at && <span className="badge" style={{ background: "var(--muted)" }}>revoked</span>}
                 </div>
                 {c.description && <div className="dev-row-desc">{c.description}</div>}
+                <div className="dev-row-meta" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                  <span style={{ color: "var(--muted)" }}>client_id</span>
+                  <code style={{ background: "var(--bg)", padding: "2px 6px", borderRadius: 4, border: "1px solid var(--border)", fontSize: 11 }}>{c.client_id}</code>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(c.client_id)}
+                    style={{ padding: "2px 8px", fontSize: 11 }}
+                  >
+                    Copy
+                  </button>
+                  {!c.is_public_client && <span className="badge" style={{ background: "var(--muted)", marginLeft: 4 }}>has secret</span>}
+                </div>
                 <div className="dev-row-meta">
                   Scopes: {c.allowed_scopes.join(", ")} · Redirects: {c.redirect_uris.length}
                   {c.is_public_client ? " · public (PKCE)" : " · confidential"}
                 </div>
               </div>
               {!c.revoked_at && (
-                <button className="danger" onClick={() => revoke(c.id)}>Revoke</button>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {!c.is_public_client && (
+                    <button onClick={() => rotateSecret(c.id, c.name)}>Rotate secret</button>
+                  )}
+                  <button className="danger" onClick={() => revoke(c.id)}>Revoke</button>
+                </div>
               )}
             </div>
           ))}
@@ -3270,8 +3463,11 @@ const InvitesPanel: React.FC = () => {
   )
 }
 
+type SettingsTab = "profile" | "subscription" | "security" | "developer" | "invites" | "account"
+
 const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => void }> = ({ onProfileUpdate, onAccountDeleted }) => {
   const current = api.getUser()
+  const [tab, setTab] = useState<SettingsTab>("profile")
   const [name, setName] = useState(current?.name ?? "")
   const [username, setUsername] = useState(current?.username ?? "")
   const [email, setEmail] = useState(current?.email ?? "")
@@ -3327,6 +3523,15 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
     onAccountDeleted()
   }
 
+  const tabs: Array<{ id: SettingsTab; label: string }> = [
+    { id: "profile", label: "Profile" },
+    { id: "subscription", label: "Subscription" },
+    { id: "security", label: "Security" },
+    { id: "developer", label: "Developer" },
+    { id: "invites", label: "Invites" },
+    { id: "account", label: "Account" },
+  ]
+
   return (
     <div className="main">
       <div className="toolbar">
@@ -3334,82 +3539,105 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
       </div>
       <div className="content">
         <div className="settings">
-          <section className="settings-card">
-            <h3>Appearance</h3>
-            <label>Theme</label>
-            <div className="theme-group">
-              <button className={theme === "light" ? "active" : ""} onClick={() => chooseTheme("light")}>
-                <Sun size={14} /> <span>Light</span>
+          <nav className="settings-tabs" role="tablist">
+            {tabs.map(t => (
+              <button
+                key={t.id}
+                role="tab"
+                aria-selected={tab === t.id}
+                className={tab === t.id ? "active" : ""}
+                onClick={() => setTab(t.id)}
+              >
+                {t.label}
               </button>
-              <button className={theme === "dark" ? "active" : ""} onClick={() => chooseTheme("dark")}>
-                <Moon size={14} /> <span>Dark</span>
-              </button>
-              <button className={theme === "system" ? "active" : ""} onClick={() => chooseTheme("system")}>
-                <Monitor size={14} /> <span>System</span>
-              </button>
-            </div>
-          </section>
+            ))}
+          </nav>
 
-          <section className="settings-card">
-            <h3>Profile</h3>
-            <label>Name</label>
-            <input value={name} onChange={e => setName(e.target.value)} />
-            <label>Username</label>
-            <input
-              value={username}
-              onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
-              autoCapitalize="off"
-              autoCorrect="off"
-            />
-            <label>Email</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} />
-            {profileMsg && <div className={`msg ${profileMsg.kind}`}>{profileMsg.text}</div>}
-            <div className="settings-actions">
-              <button className="primary" onClick={saveProfile}>Save changes</button>
-            </div>
-          </section>
-
-          <SubscriptionPanel />
-
-          <DeveloperPanel />
-
-          <SecurityPanel />
-
-          <InvitesPanel />
-
-          <section className="settings-card">
-            <h3>Change password</h3>
-            <label>Current password</label>
-            <input type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)} />
-            <label>New password</label>
-            <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} />
-            <label>Confirm new password</label>
-            <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} />
-            {pwMsg && <div className={`msg ${pwMsg.kind}`}>{pwMsg.text}</div>}
-            <div className="settings-actions">
-              <button className="primary" onClick={savePassword}>Update password</button>
-            </div>
-          </section>
-
-          <section className="settings-card danger-zone">
-            <h3>Danger zone</h3>
-            <div className="danger-desc">Permanently delete your account and all files. This cannot be undone.</div>
-            {!confirmingDelete ? (
-              <div className="settings-actions">
-                <button className="danger" onClick={() => setConfirmingDelete(true)}>Delete account</button>
-              </div>
-            ) : (
-              <>
-                <label>Enter your password to confirm</label>
-                <input type="password" value={deletePw} onChange={e => setDeletePw(e.target.value)} />
-                {deleteErr && <div className="msg err">{deleteErr}</div>}
+          {tab === "profile" && (
+            <>
+              <section className="settings-card">
+                <h3>Profile</h3>
+                <label>Name</label>
+                <input value={name} onChange={e => setName(e.target.value)} />
+                <label>Username</label>
+                <input
+                  value={username}
+                  onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                />
+                <label>Email</label>
+                <input type="email" value={email} onChange={e => setEmail(e.target.value)} />
+                {profileMsg && <div className={`msg ${profileMsg.kind}`}>{profileMsg.text}</div>}
                 <div className="settings-actions">
-                  <button onClick={() => { setConfirmingDelete(false); setDeletePw(""); setDeleteErr("") }}>Cancel</button>
-                  <button className="danger" onClick={deleteAccount}>Permanently delete</button>
+                  <button className="primary" onClick={saveProfile}>Save changes</button>
                 </div>
-              </>
-            )}
-          </section>
+              </section>
+
+              <section className="settings-card">
+                <h3>Appearance</h3>
+                <label>Theme</label>
+                <div className="theme-group">
+                  <button className={theme === "light" ? "active" : ""} onClick={() => chooseTheme("light")}>
+                    <Sun size={14} /> <span>Light</span>
+                  </button>
+                  <button className={theme === "dark" ? "active" : ""} onClick={() => chooseTheme("dark")}>
+                    <Moon size={14} /> <span>Dark</span>
+                  </button>
+                  <button className={theme === "system" ? "active" : ""} onClick={() => chooseTheme("system")}>
+                    <Monitor size={14} /> <span>System</span>
+                  </button>
+                </div>
+              </section>
+            </>
+          )}
+
+          {tab === "subscription" && <SubscriptionPanel />}
+
+          {tab === "security" && (
+            <>
+              <SecurityPanel />
+              <section className="settings-card">
+                <h3>Change password</h3>
+                <label>Current password</label>
+                <input type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)} />
+                <label>New password</label>
+                <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} />
+                <label>Confirm new password</label>
+                <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} />
+                {pwMsg && <div className={`msg ${pwMsg.kind}`}>{pwMsg.text}</div>}
+                <div className="settings-actions">
+                  <button className="primary" onClick={savePassword}>Update password</button>
+                </div>
+              </section>
+            </>
+          )}
+
+          {tab === "developer" && <DeveloperPanel />}
+
+          {tab === "invites" && <InvitesPanel />}
+
+          {tab === "account" && (
+            <section className="settings-card danger-zone">
+              <h3>Danger zone</h3>
+              <div className="danger-desc">Permanently delete your account and all files. This cannot be undone.</div>
+              {!confirmingDelete ? (
+                <div className="settings-actions">
+                  <button className="danger" onClick={() => setConfirmingDelete(true)}>Delete account</button>
+                </div>
+              ) : (
+                <>
+                  <label>Enter your password to confirm</label>
+                  <input type="password" value={deletePw} onChange={e => setDeletePw(e.target.value)} />
+                  {deleteErr && <div className="msg err">{deleteErr}</div>}
+                  <div className="settings-actions">
+                    <button onClick={() => { setConfirmingDelete(false); setDeletePw(""); setDeleteErr("") }}>Cancel</button>
+                    <button className="danger" onClick={deleteAccount}>Permanently delete</button>
+                  </div>
+                </>
+              )}
+            </section>
+          )}
         </div>
       </div>
     </div>
@@ -4589,10 +4817,15 @@ const App: React.FC = () => {
   if (route.kind === "publicFolder") return <PublicFolderPage username={route.username} folderId={route.folderId} />
   if (route.kind === "oauthAuthorize") {
     if (!loggedIn) {
-      const next = encodeURIComponent("/oauth/authorize" + route.query)
       return <Auth onLogin={() => setLoggedIn(true)} initialInvite={null} needsSetup={false} initialMode="login" oauthNext={`/oauth/authorize${route.query}`} />
     }
     return <OAuthConsent query={route.query} />
+  }
+  if (route.kind === "pair") {
+    if (!loggedIn) {
+      return <Auth onLogin={() => setLoggedIn(true)} initialInvite={null} needsSetup={false} initialMode="login" oauthNext={`/pair${route.query}`} />
+    }
+    return <DevicePair query={route.query} />
   }
 
   const logout = () => {

@@ -196,6 +196,43 @@ export const oauthClientRoutes = (db: Connection, secret: string) => {
       return json(c, 200, toPublicClient(fresh))
     })),
 
+    post("/admin/oauth/clients/:id/rotate-secret", guard(async (c) => {
+      const id = Number(c.params.id)
+      const row = await db.one(
+        from("oauth_clients").where(q => q("id").equals(id)).select(
+          "client_id", "client_secret_hash", "revoked_at",
+        ),
+      ) as { client_id: string; client_secret_hash: string | null; revoked_at: string | null } | null
+      if (!row) return json(c, 404, { error: "Client not found" })
+      if (row.revoked_at) return json(c, 409, { error: "Client is revoked" })
+      if (!row.client_secret_hash) {
+        return json(c, 409, { error: "Public clients have no secret to rotate" })
+      }
+
+      const secret = `cs_${randomId(32)}`
+      const hash = sha256(secret)
+      await db.execute(
+        from("oauth_clients").where(q => q("id").equals(id)).update({ client_secret_hash: hash }),
+      )
+      // Force re-auth: every existing refresh token for this client is now stale.
+      await db.execute(
+        from("oauth_refresh_tokens")
+          .where(q => q("client_id").equals(row.client_id))
+          .where(q => q("revoked_at").isNull())
+          .update({ revoked_at: raw("NOW()") }),
+      )
+
+      logEvent(db, {
+        userId: authId(c),
+        event: "oauth.client_secret_rotated",
+        metadata: { client_id: row.client_id },
+        ip: clientIp(c.request),
+        userAgent: userAgent(c.request),
+      })
+
+      return json(c, 200, { client_id: row.client_id, client_secret: secret })
+    })),
+
     del("/admin/oauth/clients/:id", guard(async (c) => {
       const id = Number(c.params.id)
       const row = await db.one(

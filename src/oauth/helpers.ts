@@ -57,3 +57,29 @@ export const isAllowedRedirect = (requested: string, allowed: readonly string[])
 export const ACCESS_TOKEN_TTL_SECONDS = 60 * 60          // 1 hour
 export const REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30  // 30 days
 export const AUTH_CODE_TTL_SECONDS = 60                  // 1 minute
+export const DEVICE_CODE_TTL_SECONDS = 60 * 10           // 10 minutes
+export const DEVICE_POLL_INTERVAL_SECONDS = 5
+
+// User-friendly alphabet for device-flow user_codes — no I/L/O/0/1 to avoid
+// confusables on a hand-typed code. 31 chars × 8 positions = ~9.5e11, plenty.
+const USER_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+export const newUserCode = (): string => {
+  const bytes = randomBytes(8)
+  let out = ""
+  for (let i = 0; i < 8; i++) {
+    out += USER_CODE_ALPHABET[bytes[i]! % USER_CODE_ALPHABET.length]
+    if (i === 3) out += "-"
+  }
+  return out
+}
+
+/**
+ * Normalize what the user typed before lookup: strip whitespace + dashes,
+ * uppercase, then re-insert the dash.
+ */
+export const normalizeUserCode = (input: string): string => {
+  const stripped = input.toUpperCase().replace(/[^A-Z0-9]/g, "")
+  if (stripped.length !== 8) return stripped
+  return `${stripped.slice(0, 4)}-${stripped.slice(4)}`
+}

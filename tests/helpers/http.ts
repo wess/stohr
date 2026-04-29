@@ -21,6 +21,7 @@ import { oauthClientRoutes } from "../../src/oauth/clients.ts"
 import { oauthAuthorizeRoutes } from "../../src/oauth/authorize.ts"
 import { oauthTokenRoutes, oauthRevokeRoutes } from "../../src/oauth/token.ts"
 import { oauthDiscoveryRoutes } from "../../src/oauth/discovery.ts"
+import { deviceAuthorizeRoutes } from "../../src/oauth/device.ts"
 import type { StorageHandle } from "../../src/storage/index.ts"
 
 export const fakeStore: StorageHandle = {
@@ -55,6 +56,7 @@ export const buildApp = (db: Connection, secret: string) => {
     ...oauthTokenRoutes(db, secret),
     ...oauthRevokeRoutes(db),
     ...oauthDiscoveryRoutes(),
+    ...deviceAuthorizeRoutes(db, secret),
   )
 }
 

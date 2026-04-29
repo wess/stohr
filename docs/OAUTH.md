@@ -8,11 +8,13 @@ Stohr is an OAuth 2.0 provider supporting the **Authorization Code flow with PKC
 
 Discoverable at `/.well-known/oauth-authorization-server` (RFC 8414):
 
-| Endpoint                  | Purpose                                       |
-|---------------------------|-----------------------------------------------|
-| `GET /oauth/authorize`    | Redirect users here to start the flow.        |
-| `POST /oauth/token`       | Exchange auth code for tokens, refresh later. |
-| `POST /oauth/revoke`      | Revoke a refresh token.                       |
+| Endpoint                              | Purpose                                       |
+|---------------------------------------|-----------------------------------------------|
+| `GET /oauth/authorize`                | Browser redirect-based code flow (PKCE).      |
+| `POST /oauth/device/authorize`        | Device-flow start (RFC 8628). **Recommended for native apps.** |
+| `POST /oauth/token`                   | Exchange auth code or device code → tokens, refresh later. |
+| `POST /oauth/revoke`                  | Revoke a refresh token.                       |
+| `GET /pair`                           | Web page where users type their device code (browser-rendered SPA). |
 
 ## Scopes
 
@@ -37,7 +39,39 @@ The Stohr operator (the owner) registers your app under **Settings → Developer
 
 Save the `client_id` (and `client_secret` if you registered confidential — it's only shown once at creation).
 
-## The flow
+## Two flows: pick the right one
+
+### **Device Authorization Grant (RFC 8628) — recommended for native apps**
+
+This is the cleanest path for desktop, CLI, and embedded clients. **No redirect URI registration required**, no custom URL scheme, no browser → native handoff. The user types an 8-character code into a web page on any device.
+
+1. App calls `POST /oauth/device/authorize` with `client_id` (and optional `scope`).
+2. Server returns:
+   ```json
+   {
+     "device_code": "long-opaque-string",
+     "user_code": "ABCD-1234",
+     "verification_uri": "https://stohr.example.com/pair",
+     "verification_uri_complete": "https://stohr.example.com/pair?code=ABCD-1234",
+     "expires_in": 600,
+     "interval": 5
+   }
+   ```
+3. App displays `user_code` to the user and opens `verification_uri_complete` in their browser (any device — phone, work computer, doesn't matter).
+4. User signs in to Stohr if needed, sees the consent screen with the code prefilled, clicks **Authorize**.
+5. App polls `POST /oauth/token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code` until it gets either tokens or a terminal error.
+
+**Polling rules** (per RFC 8628):
+- Wait `interval` seconds (default 5) between polls. The server returns `slow_down` if you go faster.
+- `authorization_pending` — keep polling.
+- `slow_down` — increase interval by 5 seconds, keep polling.
+- `access_denied` — user denied; stop and inform them.
+- `expired_token` — code expired (10-minute window); restart the flow.
+- `200 OK` with `access_token` + `refresh_token` — done.
+
+### **Authorization Code with PKCE — for browser apps and SPAs**
+
+When the app already has a browser context (web app, embedded webview), the authorization code flow with PKCE (RFC 7636) is more direct.
 
 ### 1. Send the user to /oauth/authorize
 

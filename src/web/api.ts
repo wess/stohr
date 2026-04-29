@@ -363,6 +363,15 @@ export const oauthAuthorizeApprove = (params: Record<string, string>) =>
 export const oauthAuthorizeDeny = (params: Record<string, string>) =>
   jsonReq("POST", "/oauth/authorize/deny", params)
 
+export const oauthDeviceInfo = (userCode: string) =>
+  jsonReq("GET", `/oauth/device/info?user_code=${encodeURIComponent(userCode)}`)
+
+export const oauthDeviceApprove = (userCode: string) =>
+  jsonReq("POST", "/oauth/device/approve", { user_code: userCode })
+
+export const oauthDeviceDeny = (userCode: string) =>
+  jsonReq("POST", "/oauth/device/deny", { user_code: userCode })
+
 export const adminListOAuthClients = () =>
   jsonReq("GET", "/admin/oauth/clients")
 
@@ -379,6 +388,9 @@ export const adminCreateOAuthClient = (input: {
 
 export const adminRevokeOAuthClient = (id: number) =>
   jsonReq("DELETE", `/admin/oauth/clients/${id}`)
+
+export const adminRotateOAuthClientSecret = (id: number) =>
+  jsonReq("POST", `/admin/oauth/clients/${id}/rotate-secret`, {})
 
 export const adminListAuditEvents = (filters: { event?: string; userId?: number; limit?: number } = {}) => {
   const qs = new URLSearchParams()

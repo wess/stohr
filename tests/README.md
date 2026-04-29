@@ -45,4 +45,4 @@ bun test tests/auth.test.ts
 - File upload route (multipart parsing + storage I/O — needs a real or mock S3)
 - Public folder + public file routes (some go through storage)
 - Web UI (no React testing wired up)
-- Mobile (`flutter test` lives separately under `mobile/`)
+- Mobile (`flutter test` lives separately under `apps/mobile/`)

@@ -85,7 +85,7 @@ button.primary:hover { filter: brightness(0.9); }
 button.danger { color: var(--danger); }
 button.danger:hover { background: var(--err-bg); border-color: var(--err-border); }
 
-input, textarea {
+input:not([type="checkbox"]):not([type="radio"]), textarea {
   font-family: inherit;
   font-size: 13px;
   padding: 8px 10px;
@@ -97,7 +97,7 @@ input, textarea {
   width: 100%;
 }
 
-input:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent); }
+input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent); }
 
 /* Auth */
 .auth {
@@ -434,10 +434,69 @@ input:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px 
 
 /* Settings */
 .settings {
-  max-width: 620px;
+  max-width: 720px;
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+.settings-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.settings-tabs button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  border-radius: 0;
+}
+.settings-tabs button:hover {
+  color: var(--text);
+  background: transparent;
+}
+.settings-tabs button.active {
+  color: var(--brand);
+  border-bottom-color: var(--brand);
+}
+
+/* Inline checkbox rows inside .settings-card / .dev-create — override the
+   card's section-header label styling so checkbox labels render normally. */
+.scope-grid {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.settings-card label.scope-check,
+.dev-create label.scope-check,
+.settings-card .scope-grid label,
+.dev-create .scope-grid label {
+  /* Block-level flex so each row gets its own line. Inside .scope-grid the
+     parent is also flex (row), so siblings still lay out side-by-side; outside
+     the grid (e.g. the First-party / Confidential checkboxes) the labels stack. */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+}
+.scope-check input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--brand);
 }
 .settings-card {
   background: var(--panel);
