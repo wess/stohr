@@ -1,0 +1,15 @@
+# Caddy auto-provisions Let's Encrypt certs when DOMAIN is a real hostname.
+# For localhost (or any *.localhost), Caddy issues an internal cert.
+# Set DOMAIN in your environment (or .env) before running compose up.
+
+{$DOMAIN} {
+	encode gzip zstd
+
+	# Forward everything to the SPA-serving web container, which proxies
+	# /api/* to the API container internally. Caddy automatically appends
+	# the real client IP to X-Forwarded-For; the API only honors that
+	# header for peers in TRUSTED_PROXIES (the docker bridge).
+	reverse_proxy web:3001 {
+		header_up X-Real-IP {remote_host}
+	}
+}

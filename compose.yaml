@@ -21,6 +21,7 @@ services:
     command: bun src/server.ts
     environment:
       PORT: "3000"
+      NODE_ENV: production
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/stohr
       SECRET: ${SECRET}
       S3_ENDPOINT: ${S3_ENDPOINT}
@@ -34,6 +35,13 @@ services:
       RP_ID: ${RP_ID:-localhost}
       RP_NAME: ${RP_NAME:-Stohr}
       RP_ORIGIN: ${RP_ORIGIN:-http://localhost:3001}
+      # Trust X-Forwarded-For only when the request enters from the docker
+      # bridge — i.e. from the `web` service. Anything outside this range
+      # cannot pin or spoof rate-limit buckets. Compose default networks live
+      # in 172.16.0.0/12.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-172.16.0.0/12}
+      # RAM ceiling per concurrent upload (Bun + SigV4 hashing both buffer).
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-1073741824}
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,6 +64,8 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
     volumes:
       - ./caddyfile:/etc/caddy/Caddyfile:ro
       - caddydata:/data
