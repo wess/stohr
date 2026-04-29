@@ -3828,3 +3828,106 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
   font-weight: 500;
 }
 [data-theme="dark"] .msg.warn { color: #EBCB8B; }
+
+/* Passkeys (Settings → Security) */
+.passkey-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel-elev);
+}
+.passkey-form {
+  padding: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+.passkey-form input { margin: 0; }
+
+/* MFA chooser on login */
+.mfa-chooser {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0;
+}
+.mfa-chooser-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--panel-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text);
+  transition: border-color 0.15s, background 0.15s;
+  box-shadow: none;
+}
+.mfa-chooser-option:hover {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+.mfa-chooser-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.mfa-chooser-text { display: flex; flex-direction: column; gap: 2px; }
+.mfa-chooser-title { font-weight: 600; font-size: 14px; }
+.mfa-chooser-sub { font-size: 12px; color: var(--muted); }
+
+/* Passkey CTA on the login screen */
+.passkey-cta {
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--brand);
+  color: var(--brand-fg);
+  border: 1px solid var(--brand);
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    0 1px 2px rgba(46, 52, 64, 0.10);
+  transition: filter 0.15s, transform 0.05s;
+  margin-bottom: 8px;
+}
+.passkey-cta:hover:not(:disabled) { filter: brightness(0.94); }
+.passkey-cta:active:not(:disabled) { transform: translateY(0.5px); }
+.passkey-cta:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}

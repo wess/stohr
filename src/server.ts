@@ -28,6 +28,7 @@ import { deviceAuthorizeRoutes, sweepExpiredDeviceCodes } from "./oauth/device.t
 import { actionRoutes } from "./actions/index.ts"
 import { userActionRoutes } from "./actions/user/index.ts"
 import { passwordRoutes, sweepExpiredPasswordResets } from "./auth/password.ts"
+import { passkeyRoutes, sweepExpiredWebauthnChallenges } from "./auth/passkeys.ts"
 import { createStorage } from "./storage/index.ts"
 import { createEmailer } from "./email/index.ts"
 import { withSecurityHeaders } from "./security/headers.ts"
@@ -44,6 +45,9 @@ const config = defineConfig({
   appUrl: env("APP_URL", { default: "http://localhost:3001" }),
   resendApiKey: env("RESEND_API_KEY", { default: "" }),
   resendFrom: env("RESEND_FROM", { default: "Stohr <onboarding@resend.dev>" }),
+  rpId: env("RP_ID", { default: "localhost" }),
+  rpName: env("RP_NAME", { default: "Stohr" }),
+  rpOrigin: env("RP_ORIGIN", { default: "http://localhost:3001" }),
 })
 
 const db = connect({ driver: "postgres", url: config.databaseUrl })
@@ -65,6 +69,7 @@ const fetch = router(
   ...authRoutes(db, config.secret),
   ...passwordRoutes(db, emailer, config.appUrl),
   ...mfaRoutes(db, config.secret),
+  ...passkeyRoutes(db, config.secret, { rpId: config.rpId, rpName: config.rpName, rpOrigin: config.rpOrigin }),
   ...sessionRoutes(db, config.secret),
   ...userRoutes(db, config.secret, store),
   ...folderRoutes(db, config.secret, store),
@@ -98,10 +103,12 @@ setInterval(() => { void sweepExpiredAuthCodes(db) }, 5 * 60 * 1000)
 setInterval(() => { void sweepExpiredDeviceCodes(db) }, 5 * 60 * 1000)
 setInterval(() => { void sweepExpiredRefreshTokens(db) }, 60 * 60 * 1000)
 setInterval(() => { void sweepExpiredPasswordResets(db) }, 60 * 60 * 1000)
+setInterval(() => { void sweepExpiredWebauthnChallenges(db) }, 5 * 60 * 1000)
 void sweepExpiredAuthCodes(db)
 void sweepExpiredDeviceCodes(db)
 void sweepExpiredRefreshTokens(db)
 void sweepExpiredPasswordResets(db)
+void sweepExpiredWebauthnChallenges(db)
 
 if (config.secret === "dev-secret-change-me") {
   console.warn("[stohr] WARNING: running with the default SECRET. Set a strong SECRET in .env before production.")

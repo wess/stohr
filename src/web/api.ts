@@ -587,3 +587,42 @@ export const requestPasswordReset = (email: string) =>
 
 export const resetPassword = (token: string, newPassword: string) =>
   jsonReq("POST", "/password/reset", { token, new_password: newPassword }) as Promise<{ ok?: boolean; error?: string }>
+
+/* Passkeys (WebAuthn) */
+export type Passkey = {
+  id: number
+  name: string | null
+  transports: string[]
+  last_used_at: string | null
+  created_at: string
+}
+
+export const listPasskeys = () =>
+  jsonReq("GET", "/me/passkeys") as Promise<Passkey[]>
+
+export const beginPasskeyRegistration = () =>
+  jsonReq("POST", "/me/passkeys/register/start", {}) as Promise<any>
+
+export const finishPasskeyRegistration = (input: { name?: string; response: any }) =>
+  jsonReq("POST", "/me/passkeys/register/finish", input) as Promise<Passkey & { error?: string }>
+
+export const renamePasskey = (id: number, name: string | null) =>
+  jsonReq("PATCH", `/me/passkeys/${id}`, { name }) as Promise<{ ok?: boolean; error?: string }>
+
+export const deletePasskey = (id: number) =>
+  jsonReq("DELETE", `/me/passkeys/${id}`) as Promise<{ deleted?: number; error?: string }>
+
+export const beginPasskeyDiscoverableLogin = () =>
+  jsonReq("POST", "/login/passkey/discover/start", {}) as Promise<any>
+
+export const finishPasskeyDiscoverableLogin = async (response: any) => {
+  const data = await jsonReq("POST", "/login/passkey/discover/finish", { response })
+  if (data.token) {
+    setToken(data.token, { id: data.id, email: data.email, username: data.username, name: data.name, is_owner: !!data.is_owner })
+  }
+  return data as {
+    id?: number; email?: string; username?: string; name?: string; is_owner?: boolean
+    token?: string; error?: string
+  }
+}
+

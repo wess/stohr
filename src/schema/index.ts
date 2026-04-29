@@ -263,6 +263,26 @@ export const folderActionRuns = defineSchema("folder_action_runs", {
   result: column.text().nullable(),
 })
 
+export const webauthnCredentials = defineSchema("webauthn_credentials", {
+  id: column.serial().primaryKey(),
+  user_id: column.integer().ref("users", "id"),
+  credential_id: column.text().unique(),
+  public_key: column.text(),
+  counter: column.bigint().default(0),
+  transports: column.text().default("[]"),
+  name: column.text().nullable(),
+  last_used_at: column.timestamp().nullable(),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const webauthnChallenges = defineSchema("webauthn_challenges", {
+  challenge: column.text().primaryKey(),
+  user_id: column.integer().nullable().ref("users", "id"),
+  kind: column.text(),
+  expires_at: column.timestamp(),
+  created_at: column.timestamp().default("now()"),
+})
+
 export const passwordResets = defineSchema("password_resets", {
   id: column.serial().primaryKey(),
   user_id: column.integer().ref("users", "id"),

@@ -198,6 +198,7 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
   const [mfaCode, setMfaCode] = useState("")
   const [mfaUseBackup, setMfaUseBackup] = useState(false)
   const [mfaBackup, setMfaBackup] = useState("")
+  const [passkeyBusy, setPasskeyBusy] = useState(false)
 
   useEffect(() => {
     if (needsSetup) return
@@ -257,6 +258,35 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
       window.dispatchEvent(new PopStateEvent("popstate"))
     }
     onLogin()
+  }
+
+  const signInWithPasskey = async () => {
+    setError("")
+    setPasskeyBusy(true)
+    try {
+      const SWB: typeof import("@simplewebauthn/browser") = await import("@simplewebauthn/browser")
+      const options = await api.beginPasskeyDiscoverableLogin()
+      if ((options as any)?.error) { setError((options as any).error); return }
+      let assertion: any
+      try {
+        assertion = await SWB.startAuthentication({ optionsJSON: options })
+      } catch (e: any) {
+        if (e?.name === "NotAllowedError") setError("Cancelled, or no matching passkey on this device.")
+        else setError(e?.message ?? "Passkey sign-in failed.")
+        return
+      }
+      const res = await api.finishPasskeyDiscoverableLogin(assertion)
+      if ((res as any).error) { setError((res as any).error); return }
+      if (!res.token) { setError("Authentication failed"); return }
+      if (window.location.pathname === "/signup") history.replaceState(null, "", "/")
+      if (oauthNext) {
+        history.replaceState(null, "", oauthNext)
+        window.dispatchEvent(new PopStateEvent("popstate"))
+      }
+      onLogin()
+    } finally {
+      setPasskeyBusy(false)
+    }
   }
 
   const heading = needsSetup
@@ -335,6 +365,19 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
         </>
       ) : (
         <>
+          {!needsSetup && (
+            <>
+              <button
+                type="button"
+                className="passkey-cta"
+                onClick={signInWithPasskey}
+                disabled={passkeyBusy}
+              >
+                🔑 {passkeyBusy ? "Waiting for passkey…" : "Sign in with a passkey"}
+              </button>
+              <div className="auth-divider"><span>or</span></div>
+            </>
+          )}
           <input placeholder="Email or username" value={identity}
             onChange={e => setIdentity(e.target.value)}
             autoCapitalize="off"
@@ -4527,8 +4570,161 @@ const SecurityPanel: React.FC = () => {
         </>
       )}
 
+      <PasskeysSection />
+
       <SessionsSection />
     </section>
+  )
+}
+
+const PasskeysSection: React.FC = () => {
+  const [rows, setRows] = useState<api.Passkey[]>([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+  const [naming, setNaming] = useState(false)
+  const [draftName, setDraftName] = useState("")
+  const [renamingId, setRenamingId] = useState<number | null>(null)
+  const [renameValue, setRenameValue] = useState("")
+
+  const load = async () => {
+    const list = await api.listPasskeys()
+    setRows(Array.isArray(list) ? list : [])
+  }
+  useEffect(() => { void load() }, [])
+
+  const beginAdd = () => {
+    setDraftName("")
+    setError("")
+    setNaming(true)
+  }
+
+  const addPasskey = async () => {
+    setBusy(true); setError("")
+    try {
+      const SWB: typeof import("@simplewebauthn/browser") = await import("@simplewebauthn/browser")
+      const options = await api.beginPasskeyRegistration()
+      if (options?.error) { setError(options.error); return }
+      let regResponse: any
+      try {
+        regResponse = await SWB.startRegistration({ optionsJSON: options })
+      } catch (e: any) {
+        // User cancelled or device unsupported
+        if (e?.name === "InvalidStateError") {
+          setError("This device already has a passkey for your account.")
+        } else if (e?.name === "NotAllowedError") {
+          setError("Passkey registration was cancelled.")
+        } else {
+          setError(e?.message ?? "Couldn't add passkey.")
+        }
+        return
+      }
+      const finalName = draftName.trim() || null
+      const finishRes = await api.finishPasskeyRegistration({ name: finalName ?? undefined, response: regResponse })
+      if ((finishRes as any).error) { setError((finishRes as any).error); return }
+      setNaming(false)
+      setDraftName("")
+      await load()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remove = async (p: api.Passkey) => {
+    if (!confirm(`Remove "${p.name || "this passkey"}"? You'll need to set up a new one to use it again.`)) return
+    setBusy(true)
+    await api.deletePasskey(p.id)
+    setBusy(false)
+    await load()
+  }
+
+  const startRename = (p: api.Passkey) => {
+    setRenamingId(p.id)
+    setRenameValue(p.name ?? "")
+  }
+  const saveRename = async () => {
+    if (renamingId === null) return
+    setBusy(true)
+    await api.renamePasskey(renamingId, renameValue.trim() || null)
+    setBusy(false)
+    setRenamingId(null)
+    setRenameValue("")
+    await load()
+  }
+
+  return (
+    <>
+      <h4 style={{ margin: "20px 0 6px", fontSize: 14 }}>Passkeys</h4>
+      <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 12 }}>
+        Use your phone, laptop, or hardware key to sign in. Works with Apple Face ID/Touch ID and Android biometrics.
+      </div>
+
+      {error && <div className="msg err" style={{ marginBottom: 8 }}>{error}</div>}
+
+      {rows.length === 0 ? (
+        <div style={{ fontSize: 13, color: "var(--muted)", padding: "10px 0" }}>
+          No passkeys yet.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+          {rows.map(p => (
+            <div key={p.id} className="passkey-row">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {renamingId === p.id ? (
+                  <input
+                    autoFocus
+                    value={renameValue}
+                    onChange={e => setRenameValue(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && saveRename()}
+                  />
+                ) : (
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name || "Untitled passkey"}</div>
+                )}
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                  Added {new Date(p.created_at).toLocaleDateString()}
+                  {p.last_used_at && ` · last used ${new Date(p.last_used_at).toLocaleDateString()}`}
+                </div>
+              </div>
+              {renamingId === p.id ? (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => { setRenamingId(null); setRenameValue("") }}>Cancel</button>
+                  <button className="primary" onClick={saveRename} disabled={busy}>Save</button>
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => startRename(p)} disabled={busy}>Rename</button>
+                  <button className="danger" onClick={() => remove(p)} disabled={busy}>Remove</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {naming ? (
+        <div className="passkey-form">
+          <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8 }}>
+            Give this passkey a name so you can tell it apart from others later (e.g. "iPhone", "Work laptop").
+          </div>
+          <input
+            autoFocus
+            placeholder="Passkey name"
+            value={draftName}
+            onChange={e => setDraftName(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && addPasskey()}
+          />
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 10 }}>
+            <button onClick={() => { setNaming(false); setDraftName("") }} disabled={busy}>Cancel</button>
+            <button className="primary" onClick={addPasskey} disabled={busy}>
+              {busy ? "Waiting…" : "Continue"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={beginAdd} disabled={busy}>
+          <Plus size={14} /> <span>Add a passkey</span>
+        </button>
+      )}
+    </>
   )
 }
 
