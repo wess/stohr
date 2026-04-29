@@ -28,6 +28,12 @@ services:
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
+      APP_URL: ${APP_URL:-http://localhost:3001}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: ${RESEND_FROM:-Stohr <onboarding@resend.dev>}
+      RP_ID: ${RP_ID:-localhost}
+      RP_NAME: ${RP_NAME:-Stohr}
+      RP_ORIGIN: ${RP_ORIGIN:-http://localhost:3001}
     depends_on:
       postgres:
         condition: service_healthy
