@@ -306,3 +306,17 @@ export const userActions = defineSchema("user_actions", {
   created_at: column.timestamp().default("now()"),
   updated_at: column.timestamp().default("now()"),
 })
+
+export const contactMessages = defineSchema("contact_messages", {
+  id: column.serial().primaryKey(),
+  name: column.text(),
+  email: column.text(),
+  subject: column.text(),
+  message: column.text(),
+  status: column.text().default("new"),
+  ip: column.text().nullable(),
+  user_agent: column.text().nullable(),
+  handled_by: column.integer().nullable().ref("users", "id"),
+  handled_at: column.timestamp().nullable(),
+  created_at: column.timestamp().default("now()"),
+})

@@ -20,9 +20,14 @@ import {
   FolderOpen,
   FolderPlus,
   Github,
+  HelpCircle,
   Inbox,
   Link2,
   Mail,
+  MessageSquare,
+  ExternalLink,
+  BookOpen,
+  Code2,
   Monitor,
   Moon,
   MoreVertical,
@@ -65,6 +70,7 @@ type Route =
   | { kind: "passwordForgot" }
   | { kind: "passwordReset"; token: string }
   | { kind: "developers" }
+  | { kind: "contact" }
 
 const parseRoute = (loc: { pathname: string; search: string }): Route => {
   const path = loc.pathname
@@ -76,6 +82,7 @@ const parseRoute = (loc: { pathname: string; search: string }): Route => {
     return { kind: "passwordReset", token }
   }
   if (path === "/developers") return { kind: "developers" }
+  if (path === "/contact") return { kind: "contact" }
   const share = path.match(/^\/s\/(.+)$/)
   if (share) return { kind: "share", token: share[1]! }
   const pub = path.match(/^\/p\/([^/]+)\/(\d+)/)
@@ -524,6 +531,158 @@ const ResetPasswordPage: React.FC<{ token: string }> = ({ token }) => {
     </div>
   )
 }
+
+// Shared form body — used by both the standalone /contact page and the
+// modal that opens from the landing / developer pages. The honeypot input
+// is invisible to humans (CSS hides it offscreen) and silently absorbs
+// most form-spam bots.
+const ContactForm: React.FC<{
+  variant: "page" | "modal"
+  onSent?: () => void
+}> = ({ variant, onSent }) => {
+  const [name, setName] = useState("")
+  const [email, setEmail] = useState("")
+  const [subject, setSubject] = useState("")
+  const [message, setMessage] = useState("")
+  const [hp, setHp] = useState("")
+  const [status, setStatus] = useState<"idle" | "submitting" | "sent">("idle")
+  const [error, setError] = useState("")
+
+  const submit = async () => {
+    if (status === "submitting") return
+    if (!name.trim() || !email.trim() || !subject.trim() || !message.trim()) {
+      setError("All fields are required")
+      return
+    }
+    setStatus("submitting"); setError("")
+    const res = await api.submitContact({
+      name: name.trim(), email: email.trim(), subject: subject.trim(), message: message.trim(), hp,
+    })
+    if (res.error) {
+      setError(res.error)
+      setStatus("idle")
+      return
+    }
+    setStatus("sent")
+    onSent?.()
+  }
+
+  if (status === "sent") {
+    return (
+      <div className="contact-sent">
+        <div className="contact-sent-icon"><Check size={28} strokeWidth={2} /></div>
+        <h3>Message sent</h3>
+        <p>Thanks — we read every one. We'll get back to you at <strong>{email}</strong>.</p>
+        {variant === "page" && (
+          <button className="primary" onClick={() => navigate("/")}>Back home</button>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="contact-form">
+      {error && <div className="error">{error}</div>}
+      <div className="contact-row">
+        <label>
+          <span>Your name</span>
+          <input
+            type="text"
+            value={name}
+            autoFocus={variant === "modal"}
+            onChange={e => setName(e.target.value)}
+            maxLength={200}
+          />
+        </label>
+        <label>
+          <span>Email</span>
+          <input
+            type="email"
+            value={email}
+            autoCapitalize="off"
+            autoCorrect="off"
+            onChange={e => setEmail(e.target.value)}
+          />
+        </label>
+      </div>
+      <label>
+        <span>Subject</span>
+        <input
+          type="text"
+          value={subject}
+          onChange={e => setSubject(e.target.value)}
+          maxLength={200}
+        />
+      </label>
+      <label>
+        <span>Message</span>
+        <textarea
+          value={message}
+          onChange={e => setMessage(e.target.value)}
+          rows={6}
+          maxLength={10000}
+        />
+      </label>
+      {/* Honeypot: real users never see or fill this. */}
+      <input
+        className="contact-hp"
+        type="text"
+        name="hp"
+        tabIndex={-1}
+        autoComplete="off"
+        value={hp}
+        onChange={e => setHp(e.target.value)}
+        aria-hidden="true"
+      />
+      <button
+        className="primary"
+        onClick={submit}
+        disabled={status === "submitting"}
+      >
+        {status === "submitting" ? "Sending…" : "Send message"}
+      </button>
+    </div>
+  )
+}
+
+const ContactPage: React.FC = () => {
+  useEffect(() => { document.title = "Stohr — Contact" }, [])
+  return (
+    <div className="lp">
+      <header className="lp-nav">
+        <a href="/" className="lp-brand"><Logo /></a>
+        <nav className="lp-nav-links">
+          <a href="/#features">Features</a>
+          <a href="/developers">Developers</a>
+          <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+        <div className="lp-nav-cta">
+          <a href="/login" className="lp-link">Sign in</a>
+          <a href="/" className="lp-btn lp-btn-ghost">Home</a>
+        </div>
+      </header>
+
+      <section className="contact-page">
+        <div className="contact-page-head">
+          <p className="lp-eyebrow">Get in touch</p>
+          <h1>Contact us.</h1>
+          <p className="lp-lede">
+            Bug report, feature request, billing question, or just a hello — we read every message.
+          </p>
+        </div>
+        <div className="contact-page-card">
+          <ContactForm variant="page" />
+        </div>
+      </section>
+    </div>
+  )
+}
+
+const ContactModal: React.FC<{ onClose: () => void }> = ({ onClose }) => (
+  <Modal title="Contact us" onClose={onClose}>
+    <ContactForm variant="modal" />
+  </Modal>
+)
 
 const UploadPanel: React.FC<{
   uploads: Uploading[]
@@ -3698,6 +3857,22 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1" } catch { return false }
   })
+  const [helpOpen, setHelpOpen] = useState(false)
+  const helpRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!helpOpen) return
+    const onDocClick = (e: MouseEvent) => {
+      if (!helpRef.current) return
+      if (!helpRef.current.contains(e.target as Node)) setHelpOpen(false)
+    }
+    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setHelpOpen(false) }
+    document.addEventListener("mousedown", onDocClick)
+    document.addEventListener("keydown", onEsc)
+    return () => {
+      document.removeEventListener("mousedown", onDocClick)
+      document.removeEventListener("keydown", onEsc)
+    }
+  }, [helpOpen])
 
   const toggleCollapsed = () => {
     setCollapsed(v => {
@@ -3757,6 +3932,53 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
             <AlertTriangle size={18} strokeWidth={1.75} /> <span className="nav-label">Admin</span>
           </div>
         )}
+        <div className="help-wrap" ref={helpRef}>
+          <div
+            className={`nav${helpOpen ? " active" : ""}`}
+            onClick={() => setHelpOpen(v => !v)}
+            title="Help & resources"
+            aria-haspopup="menu"
+            aria-expanded={helpOpen}
+          >
+            <HelpCircle size={18} strokeWidth={1.75} /> <span className="nav-label">Help</span>
+          </div>
+          {helpOpen && (
+            <div className="help-menu" role="menu">
+              <a href="/developers" target="_blank" rel="noreferrer" role="menuitem">
+                <Code2 size={14} strokeWidth={1.75} />
+                <div className="help-menu-text">
+                  <div className="help-menu-title">Developer guide</div>
+                  <div className="help-menu-sub">Self-host, API, SDKs</div>
+                </div>
+                <ExternalLink size={12} strokeWidth={1.75} className="help-menu-ext" />
+              </a>
+              <a href="https://github.com/wess/stohr/tree/main/docs" target="_blank" rel="noreferrer" role="menuitem">
+                <BookOpen size={14} strokeWidth={1.75} />
+                <div className="help-menu-text">
+                  <div className="help-menu-title">Documentation</div>
+                  <div className="help-menu-sub">Architecture, deploy, OAuth, payments</div>
+                </div>
+                <ExternalLink size={12} strokeWidth={1.75} className="help-menu-ext" />
+              </a>
+              <a href="/contact" target="_blank" rel="noreferrer" role="menuitem">
+                <MessageSquare size={14} strokeWidth={1.75} />
+                <div className="help-menu-text">
+                  <div className="help-menu-title">Contact us</div>
+                  <div className="help-menu-sub">Bugs, feature requests, billing</div>
+                </div>
+                <ExternalLink size={12} strokeWidth={1.75} className="help-menu-ext" />
+              </a>
+              <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer" role="menuitem">
+                <Github size={14} strokeWidth={1.75} />
+                <div className="help-menu-text">
+                  <div className="help-menu-title">GitHub</div>
+                  <div className="help-menu-sub">Source, issues, releases</div>
+                </div>
+                <ExternalLink size={12} strokeWidth={1.75} className="help-menu-ext" />
+              </a>
+            </div>
+          )}
+        </div>
         <div className="user-footer">
           <div className="user-avatar" aria-hidden="true">{initial}</div>
           <div className="user-meta">
@@ -5111,9 +5333,11 @@ type AdminInviteRequest = {
   created_at: string
 }
 
+type AdminSection = "requests" | "users" | "invites" | "payments" | "stats" | "audit" | "contact"
+
 const AdminView: React.FC = () => {
   const me = api.getUser()
-  const [section, setSection] = useState<"requests" | "users" | "invites" | "payments" | "stats" | "audit">("requests")
+  const [section, setSection] = useState<AdminSection>("requests")
 
   if (!me?.is_owner) {
     return (
@@ -5134,6 +5358,7 @@ const AdminView: React.FC = () => {
           <button className={section === "requests" ? "active" : ""} onClick={() => setSection("requests")}>Requests</button>
           <button className={section === "users" ? "active" : ""} onClick={() => setSection("users")}>Users</button>
           <button className={section === "invites" ? "active" : ""} onClick={() => setSection("invites")}>Invites</button>
+          <button className={section === "contact" ? "active" : ""} onClick={() => setSection("contact")}>Contact</button>
           <button className={section === "payments" ? "active" : ""} onClick={() => setSection("payments")}>Payments</button>
           <button className={section === "stats" ? "active" : ""} onClick={() => setSection("stats")}>Stats</button>
           <button className={section === "audit" ? "active" : ""} onClick={() => setSection("audit")}>Audit</button>
@@ -5141,6 +5366,7 @@ const AdminView: React.FC = () => {
         {section === "requests" && <AdminRequests />}
         {section === "users" && <AdminUsers meId={me.id} />}
         {section === "invites" && <AdminInvites />}
+        {section === "contact" && <AdminContact />}
         {section === "payments" && <AdminPayments />}
         {section === "stats" && <AdminStats />}
         {section === "audit" && <AdminAudit />}
@@ -5878,6 +6104,162 @@ type AuditEvent = {
   user_email?: string | null
 }
 
+const AdminContact: React.FC = () => {
+  const [filter, setFilter] = useState<"new" | "read" | "handled" | "spam" | "all">("new")
+  const [items, setItems] = useState<api.ContactMessage[]>([])
+  const [counts, setCounts] = useState<Record<api.ContactMessageStatus, number>>({ new: 0, read: 0, handled: 0, spam: 0 })
+  const [busy, setBusy] = useState<number | null>(null)
+  const [expanded, setExpanded] = useState<Set<number>>(new Set())
+
+  const load = async () => {
+    const res = await api.adminListContact(filter)
+    setItems(Array.isArray(res?.items) ? res.items : [])
+    setCounts(res?.counts ?? { new: 0, read: 0, handled: 0, spam: 0 })
+  }
+  useEffect(() => { load() }, [filter])
+
+  const setStatus = async (id: number, status: api.ContactMessageStatus) => {
+    setBusy(id)
+    const res = await api.adminUpdateContact(id, status)
+    setBusy(null)
+    if (res.error) return alert(res.error)
+    await load()
+  }
+  const remove = async (id: number) => {
+    if (!confirm("Delete this message? This cannot be undone.")) return
+    setBusy(id)
+    const res = await api.adminDeleteContact(id)
+    setBusy(null)
+    if (res.error) return alert(res.error)
+    await load()
+  }
+  const toggle = (id: number) => {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  // Mark as "read" when opening a card.
+  const open = async (m: api.ContactMessage) => {
+    toggle(m.id)
+    if (!expanded.has(m.id) && m.status === "new") {
+      await api.adminUpdateContact(m.id, "read")
+      await load()
+    }
+  }
+
+  const tabs: Array<{ key: typeof filter; label: string; count?: number }> = [
+    { key: "new", label: "New", count: counts.new },
+    { key: "read", label: "Read", count: counts.read },
+    { key: "handled", label: "Handled", count: counts.handled },
+    { key: "spam", label: "Spam", count: counts.spam },
+    { key: "all", label: "All" },
+  ]
+
+  return (
+    <section className="settings-card">
+      <h3>Contact submissions <span className="admin-count">({items.length})</span></h3>
+      <div className="admin-tabs">
+        {tabs.map(t => (
+          <button
+            key={t.key}
+            className={filter === t.key ? "active" : ""}
+            onClick={() => setFilter(t.key)}
+          >
+            {t.label}
+            {typeof t.count === "number" && t.count > 0 && (
+              <span className="admin-tab-count">{t.count}</span>
+            )}
+          </button>
+        ))}
+      </div>
+      {items.length === 0 && (
+        <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 14 }}>
+          No {filter === "all" ? "" : filter} messages.
+        </div>
+      )}
+      <div className="contact-cards">
+        {items.map(m => {
+          const isOpen = expanded.has(m.id)
+          return (
+            <article
+              key={m.id}
+              className={`contact-card status-${m.status}${isOpen ? " open" : ""}`}
+            >
+              <header className="contact-card-head" onClick={() => open(m)}>
+                <div className="contact-card-meta">
+                  <span className={`contact-status-pill status-${m.status}`}>{m.status}</span>
+                  <span className="contact-card-time">{new Date(m.created_at).toLocaleString()}</span>
+                </div>
+                <h4 className="contact-card-subject">{m.subject}</h4>
+                <div className="contact-card-from">
+                  <strong>{m.name}</strong>
+                  <span className="muted"> · </span>
+                  <a href={`mailto:${m.email}?subject=${encodeURIComponent("Re: " + m.subject)}`}>{m.email}</a>
+                </div>
+                {!isOpen && (
+                  <p className="contact-card-preview">
+                    {m.message.length > 180 ? m.message.slice(0, 180) + "…" : m.message}
+                  </p>
+                )}
+              </header>
+              {isOpen && (
+                <>
+                  <div className="contact-card-body">
+                    <pre className="contact-card-message">{m.message}</pre>
+                  </div>
+                  <footer className="contact-card-foot">
+                    <div className="contact-card-trace">
+                      {m.ip && <span title="Origin IP">IP {m.ip}</span>}
+                      {m.handled_by_user && (
+                        <span>
+                          handled by <strong>@{m.handled_by_user.username}</strong>
+                          {m.handled_at && <> · {new Date(m.handled_at).toLocaleDateString()}</>}
+                        </span>
+                      )}
+                    </div>
+                    <div className="contact-card-actions">
+                      {m.status !== "handled" && (
+                        <button
+                          className="primary"
+                          onClick={() => setStatus(m.id, "handled")}
+                          disabled={busy === m.id}
+                        >
+                          Mark handled
+                        </button>
+                      )}
+                      {m.status === "handled" && (
+                        <button onClick={() => setStatus(m.id, "new")} disabled={busy === m.id}>
+                          Reopen
+                        </button>
+                      )}
+                      {m.status !== "spam" && (
+                        <button onClick={() => setStatus(m.id, "spam")} disabled={busy === m.id}>
+                          Mark spam
+                        </button>
+                      )}
+                      <button
+                        className="danger"
+                        onClick={() => remove(m.id)}
+                        disabled={busy === m.id}
+                        style={{ marginLeft: "auto" }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </footer>
+                </>
+              )}
+            </article>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 const AdminAudit: React.FC = () => {
   const [events, setEvents] = useState<AuditEvent[]>([])
   const [eventFilter, setEventFilter] = useState("")
@@ -6278,12 +6660,18 @@ const FEATURES: Feature[] = [
 ]
 
 const LandingPage: React.FC = () => {
+  const [contactOpen, setContactOpen] = useState(false)
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       const t = e.target as HTMLElement
       const a = t.closest("a")
       if (!a) return
       const href = a.getAttribute("href") ?? ""
+      if (href === "#contact") {
+        e.preventDefault()
+        setContactOpen(true)
+        return
+      }
       if (href.startsWith("#")) {
         e.preventDefault()
         const el = document.querySelector(href)
@@ -6307,6 +6695,7 @@ const LandingPage: React.FC = () => {
           <a href="#pricing">Pricing</a>
           <a href="#beta">Beta</a>
           <a href="/developers">Developers</a>
+          <a href="#contact">Contact</a>
           <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer">GitHub</a>
         </nav>
         <div className="lp-nav-cta">
@@ -6479,10 +6868,12 @@ const LandingPage: React.FC = () => {
             <h4>Account</h4>
             <a href="/login">Sign in</a>
             <a href="#beta">Request invite</a>
+            <a href="#contact">Contact us</a>
           </div>
         </div>
         <div className="lp-footer-foot">stohr · 2026 · Built with Bun.</div>
       </footer>
+      {contactOpen && <ContactModal onClose={() => setContactOpen(false)} />}
     </div>
   )
 }
@@ -6576,12 +6967,18 @@ const CodeBlock: React.FC<{ children: string; lang?: string }> = ({ children, la
 }
 
 const DevelopersPage: React.FC = () => {
+  const [contactOpen, setContactOpen] = useState(false)
   useEffect(() => {
     document.title = "Stohr — Developers"
     const onClick = (e: MouseEvent) => {
       const a = (e.target as HTMLElement).closest("a")
       if (!a) return
       const href = a.getAttribute("href") ?? ""
+      if (href === "#contact") {
+        e.preventDefault()
+        setContactOpen(true)
+        return
+      }
       if (href.startsWith("#")) {
         e.preventDefault()
         const el = document.querySelector(href)
@@ -6601,6 +6998,7 @@ const DevelopersPage: React.FC = () => {
           <a href="#api">API</a>
           <a href="#auth">Auth</a>
           <a href="#sdks">SDKs</a>
+          <a href="#contact">Contact</a>
           <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer">GitHub</a>
         </nav>
         <div className="lp-nav-cta">
@@ -6867,10 +7265,12 @@ const folders = await r.json()`}</CodeBlock>
             <h4>Account</h4>
             <a href="/login">Sign in</a>
             <a href="/">Home</a>
+            <a href="#contact">Contact us</a>
           </div>
         </div>
         <div className="lp-footer-foot">stohr · 2026 · Built with Bun.</div>
       </footer>
+      {contactOpen && <ContactModal onClose={() => setContactOpen(false)} />}
     </div>
   )
 }
@@ -6902,6 +7302,7 @@ const App: React.FC = () => {
   if (route.kind === "passwordForgot") return <ForgotPasswordPage />
   if (route.kind === "passwordReset") return <ResetPasswordPage token={route.token} />
   if (route.kind === "developers") return <DevelopersPage />
+  if (route.kind === "contact") return <ContactPage />
   if (route.kind === "oauthAuthorize") {
     if (!loggedIn) {
       return <Auth onLogin={() => setLoggedIn(true)} initialInvite={null} needsSetup={false} initialMode="login" oauthNext={`/oauth/authorize${route.query}`} />

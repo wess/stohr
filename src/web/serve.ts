@@ -20,6 +20,7 @@ Bun.serve({
     "/signup": index,
     "/login": index,
     "/developers": index,
+    "/contact": index,
     "/app/*": index,
     "/p/:username/:folderId": index,
     "/oauth/authorize": index,

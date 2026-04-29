@@ -29,6 +29,7 @@ import { actionRoutes } from "./actions/index.ts"
 import { userActionRoutes } from "./actions/user/index.ts"
 import { passwordRoutes, sweepExpiredPasswordResets } from "./auth/password.ts"
 import { passkeyRoutes, sweepExpiredWebauthnChallenges } from "./auth/passkeys.ts"
+import { contactRoutes } from "./contact/index.ts"
 import { createStorage } from "./storage/index.ts"
 import { createEmailer } from "./email/index.ts"
 import { withSecurityHeaders } from "./security/headers.ts"
@@ -87,6 +88,7 @@ const fetch = router(
   ...collabRoutes(db, config.secret, emailer, config.appUrl),
   ...publicRoutes(db, config.secret, store),
   ...waitlistRoutes(db),
+  ...contactRoutes(db, config.secret),
   ...adminRoutes(db, config.secret, emailer, config.appUrl),
   ...paymentsRoutes(db, config.secret),
   ...s3KeyRoutes(db, config.secret),

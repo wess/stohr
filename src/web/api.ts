@@ -98,6 +98,55 @@ export const requestInvite = async (input: { email: string; name?: string; reaso
   return res.json() as Promise<{ ok?: boolean; error?: string }>
 }
 
+export type ContactMessageStatus = "new" | "read" | "handled" | "spam"
+
+export type ContactMessage = {
+  id: number
+  name: string
+  email: string
+  subject: string
+  message: string
+  status: ContactMessageStatus
+  ip: string | null
+  user_agent: string | null
+  handled_by: number | null
+  handled_by_user: { id: number; username: string; name: string } | null
+  handled_at: string | null
+  created_at: string
+}
+
+export const submitContact = async (input: {
+  name: string
+  email: string
+  subject: string
+  message: string
+  hp?: string
+}) => {
+  // Public endpoint — no auth header. The server treats a non-empty `hp`
+  // (honeypot) as a silent success without storing the message.
+  const res = await fetch(`${BASE}/contact`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  return res.json() as Promise<{ ok?: boolean; error?: string; retry_after?: number }>
+}
+
+export const adminListContact = (status: ContactMessageStatus | "all" = "all") =>
+  jsonReq("GET", `/admin/contact?status=${status}`) as Promise<{
+    items: ContactMessage[]
+    counts: Record<ContactMessageStatus, number>
+    limit: number
+    offset: number
+  }>
+
+export const adminUpdateContact = (id: number, status: ContactMessageStatus) =>
+  jsonReq("PATCH", `/admin/contact/${id}`, { status }) as Promise<{ id: number; status: ContactMessageStatus; error?: string }>
+
+export const adminDeleteContact = (id: number) =>
+  jsonReq("DELETE", `/admin/contact/${id}`) as Promise<{ deleted?: number; error?: string }>
+
+
 export const getSetupStatus = async () => {
   const res = await fetch(`${BASE}/setup`)
   return res.json() as Promise<{ needsSetup: boolean }>
