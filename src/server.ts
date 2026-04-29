@@ -27,7 +27,9 @@ import { oauthDiscoveryRoutes } from "./oauth/discovery.ts"
 import { deviceAuthorizeRoutes, sweepExpiredDeviceCodes } from "./oauth/device.ts"
 import { actionRoutes } from "./actions/index.ts"
 import { userActionRoutes } from "./actions/user/index.ts"
+import { passwordRoutes, sweepExpiredPasswordResets } from "./auth/password.ts"
 import { createStorage } from "./storage/index.ts"
+import { createEmailer } from "./email/index.ts"
 import { withSecurityHeaders } from "./security/headers.ts"
 
 const config = defineConfig({
@@ -39,6 +41,9 @@ const config = defineConfig({
   s3Region: env("S3_REGION", { default: "us-east-1" }),
   s3AccessKey: env("S3_ACCESS_KEY", { default: "rustfsadmin" }),
   s3SecretKey: env("S3_SECRET_KEY", { default: "rustfsadmin" }),
+  appUrl: env("APP_URL", { default: "http://localhost:3001" }),
+  resendApiKey: env("RESEND_API_KEY", { default: "" }),
+  resendFrom: env("RESEND_FROM", { default: "Stohr <onboarding@resend.dev>" }),
 })
 
 const db = connect({ driver: "postgres", url: config.databaseUrl })
@@ -49,11 +54,16 @@ const store = createStorage({
   accessKey: config.s3AccessKey,
   secretKey: config.s3SecretKey,
 })
+const emailer = createEmailer({
+  apiKey: config.resendApiKey,
+  from: config.resendFrom,
+})
 
 await migrate.up(db, "./migrations")
 
 const fetch = router(
   ...authRoutes(db, config.secret),
+  ...passwordRoutes(db, emailer, config.appUrl),
   ...mfaRoutes(db, config.secret),
   ...sessionRoutes(db, config.secret),
   ...userRoutes(db, config.secret, store),
@@ -63,10 +73,10 @@ const fetch = router(
   ...trashRoutes(db, config.secret, store),
   ...searchRoutes(db, config.secret),
   ...inviteRoutes(db, config.secret),
-  ...collabRoutes(db, config.secret),
+  ...collabRoutes(db, config.secret, emailer, config.appUrl),
   ...publicRoutes(db, config.secret, store),
   ...waitlistRoutes(db),
-  ...adminRoutes(db, config.secret),
+  ...adminRoutes(db, config.secret, emailer, config.appUrl),
   ...paymentsRoutes(db, config.secret),
   ...s3KeyRoutes(db, config.secret),
   ...s3Routes(db, store),
@@ -87,9 +97,11 @@ const fetch = router(
 setInterval(() => { void sweepExpiredAuthCodes(db) }, 5 * 60 * 1000)
 setInterval(() => { void sweepExpiredDeviceCodes(db) }, 5 * 60 * 1000)
 setInterval(() => { void sweepExpiredRefreshTokens(db) }, 60 * 60 * 1000)
+setInterval(() => { void sweepExpiredPasswordResets(db) }, 60 * 60 * 1000)
 void sweepExpiredAuthCodes(db)
 void sweepExpiredDeviceCodes(db)
 void sweepExpiredRefreshTokens(db)
+void sweepExpiredPasswordResets(db)
 
 if (config.secret === "dev-secret-change-me") {
   console.warn("[stohr] WARNING: running with the default SECRET. Set a strong SECRET in .env before production.")

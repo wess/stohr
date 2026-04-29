@@ -5,6 +5,8 @@ import { requireAuth } from "../auth/guard.ts"
 import { fileAccess, folderAccess, isOwner } from "../permissions/index.ts"
 import { isEmail, normalizeUsername } from "../util/username.ts"
 import { randomToken } from "../util/token.ts"
+import type { Emailer } from "../email/index.ts"
+import { inviteEmail } from "../email/templates/invite.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -66,7 +68,7 @@ const listCollabs = (db: Connection, kind: ResourceKind) => async (c: any) => {
   return json(c, 200, enriched)
 }
 
-const addCollab = (db: Connection, kind: ResourceKind) => async (c: any) => {
+const addCollab = (db: Connection, kind: ResourceKind, emailer: Emailer, appUrl: string) => async (c: any) => {
   const userId = authId(c)
   const id = Number(c.params.id)
   const access = await accessFor(db, userId, kind, id)
@@ -158,6 +160,22 @@ const addCollab = (db: Connection, kind: ResourceKind) => async (c: any) => {
     inviteRow = { token: out[0]!.token }
   }
 
+  const inviter = await db.one(
+    from("users").where(q => q("id").equals(userId)).select("name", "username"),
+  ) as { name: string; username: string } | null
+  const signupUrl = `${appUrl.replace(/\/$/, "")}/signup?invite=${encodeURIComponent(inviteRow.token)}`
+  const tpl = inviteEmail({
+    inviterName: inviter?.name ?? inviter?.username ?? null,
+    email,
+    signupUrl,
+  })
+  const sendRes = await emailer.send({
+    to: email,
+    subject: tpl.subject,
+    html: tpl.html,
+    text: tpl.text,
+  })
+
   return json(c, existing ? 200 : 201, {
     id: collabId,
     user_id: null,
@@ -165,6 +183,8 @@ const addCollab = (db: Connection, kind: ResourceKind) => async (c: any) => {
     role,
     user: null,
     invite_token: inviteRow.token,
+    email_sent: sendRes.ok,
+    email_error: sendRes.ok ? undefined : sendRes.error,
   })
 }
 
@@ -237,7 +257,7 @@ const sharedWithMe = (db: Connection) => async (c: any) => {
   })
 }
 
-export const collabRoutes = (db: Connection, secret: string) => {
+export const collabRoutes = (db: Connection, secret: string, emailer: Emailer, appUrl: string) => {
   const guard = pipeline(requireAuth({ secret, db }))
   const authed = pipeline(requireAuth({ secret, db }), parseJson)
 
@@ -245,11 +265,11 @@ export const collabRoutes = (db: Connection, secret: string) => {
     get("/shared", guard(sharedWithMe(db))),
 
     get("/folders/:id/collaborators", guard(listCollabs(db, "folder"))),
-    post("/folders/:id/collaborators", authed(addCollab(db, "folder"))),
+    post("/folders/:id/collaborators", authed(addCollab(db, "folder", emailer, appUrl))),
     del("/folders/:id/collaborators/:collabId", guard(removeCollab(db, "folder"))),
 
     get("/files/:id/collaborators", guard(listCollabs(db, "file"))),
-    post("/files/:id/collaborators", authed(addCollab(db, "file"))),
+    post("/files/:id/collaborators", authed(addCollab(db, "file", emailer, appUrl))),
     del("/files/:id/collaborators/:collabId", guard(removeCollab(db, "file"))),
   ]
 }

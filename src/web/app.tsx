@@ -62,11 +62,18 @@ type Route =
   | { kind: "publicFolder"; username: string; folderId: number }
   | { kind: "oauthAuthorize"; query: string }
   | { kind: "pair"; query: string }
+  | { kind: "passwordForgot" }
+  | { kind: "passwordReset"; token: string }
 
 const parseRoute = (loc: { pathname: string; search: string }): Route => {
   const path = loc.pathname
   if (path === "/oauth/authorize") return { kind: "oauthAuthorize", query: loc.search }
   if (path === "/pair") return { kind: "pair", query: loc.search }
+  if (path === "/password/forgot") return { kind: "passwordForgot" }
+  if (path === "/password/reset") {
+    const token = new URLSearchParams(loc.search).get("token") ?? ""
+    return { kind: "passwordReset", token }
+  }
   const share = path.match(/^\/s\/(.+)$/)
   if (share) return { kind: "share", token: share[1]! }
   const pub = path.match(/^\/p\/([^/]+)\/(\d+)/)
@@ -349,6 +356,124 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
               {mode === "login" ? "Have an invite? Create your account" : "Already have an account? Sign in"}
             </div>
           )}
+          {!needsSetup && mode === "login" && (
+            <div className="toggle" onClick={() => navigate("/password/forgot")} style={{ marginTop: 4 }}>
+              Forgot your password?
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+const ForgotPasswordPage: React.FC = () => {
+  const [email, setEmail] = useState("")
+  const [status, setStatus] = useState<"idle" | "submitting" | "sent">("idle")
+  const [error, setError] = useState("")
+
+  const submit = async () => {
+    if (status === "submitting") return
+    if (!email.trim()) { setError("Email is required"); return }
+    setStatus("submitting"); setError("")
+    const res = await api.requestPasswordReset(email.trim())
+    if (res.error) {
+      setError(res.error)
+      setStatus("idle")
+      return
+    }
+    setStatus("sent")
+  }
+
+  return (
+    <div className="auth">
+      <Logo className="auth-logo" />
+      <h2>Reset your password</h2>
+      {status === "sent" ? (
+        <>
+          <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.5, margin: "0 0 16px" }}>
+            If an account exists for <strong style={{ color: "var(--text)" }}>{email}</strong>, we've sent a link to reset your password.
+            The link expires in one hour.
+          </p>
+          <div className="toggle" onClick={() => navigate("/login")}>Back to sign in</div>
+        </>
+      ) : (
+        <>
+          {error && <div className="error">{error}</div>}
+          <input
+            type="email"
+            placeholder="Your email"
+            value={email}
+            autoFocus
+            autoCapitalize="off"
+            autoCorrect="off"
+            onChange={e => setEmail(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && submit()}
+          />
+          <button className="primary" onClick={submit} disabled={status === "submitting"}>
+            {status === "submitting" ? "Sending…" : "Send reset link"}
+          </button>
+          <div className="toggle" onClick={() => navigate("/login")}>Back to sign in</div>
+        </>
+      )}
+    </div>
+  )
+}
+
+const ResetPasswordPage: React.FC<{ token: string }> = ({ token }) => {
+  const [password, setPassword] = useState("")
+  const [confirm, setConfirm] = useState("")
+  const [status, setStatus] = useState<"idle" | "submitting" | "done">("idle")
+  const [error, setError] = useState("")
+
+  const submit = async () => {
+    if (status === "submitting") return
+    setError("")
+    if (!token) { setError("Missing reset token"); return }
+    if (password.length < 8) { setError("Password must be at least 8 characters"); return }
+    if (password !== confirm) { setError("Passwords don't match"); return }
+    setStatus("submitting")
+    const res = await api.resetPassword(token, password)
+    if (res.error) {
+      setError(res.error)
+      setStatus("idle")
+      return
+    }
+    setStatus("done")
+  }
+
+  return (
+    <div className="auth">
+      <Logo className="auth-logo" />
+      <h2>Choose a new password</h2>
+      {status === "done" ? (
+        <>
+          <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.5, margin: "0 0 16px" }}>
+            Your password has been updated. All your other sessions have been signed out.
+          </p>
+          <button className="primary" onClick={() => navigate("/login")}>Sign in</button>
+        </>
+      ) : (
+        <>
+          {error && <div className="error">{error}</div>}
+          <input
+            type="password"
+            placeholder="New password (min 8 chars)"
+            value={password}
+            autoFocus
+            onChange={e => setPassword(e.target.value)}
+          />
+          <input
+            type="password"
+            placeholder="Confirm new password"
+            value={confirm}
+            onChange={e => setConfirm(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && submit()}
+          />
+          <button className="primary" onClick={submit} disabled={status === "submitting"}>
+            {status === "submitting" ? "Updating…" : "Update password"}
+          </button>
+          <div className="toggle" onClick={() => navigate("/login")}>Cancel</div>
         </>
       )}
     </div>
@@ -6166,6 +6291,8 @@ const App: React.FC = () => {
 
   if (route.kind === "share") return <SharePage token={route.token} />
   if (route.kind === "publicFolder") return <PublicFolderPage username={route.username} folderId={route.folderId} />
+  if (route.kind === "passwordForgot") return <ForgotPasswordPage />
+  if (route.kind === "passwordReset") return <ResetPasswordPage token={route.token} />
   if (route.kind === "oauthAuthorize") {
     if (!loggedIn) {
       return <Auth onLogin={() => setLoggedIn(true)} initialInvite={null} needsSetup={false} initialMode="login" oauthNext={`/oauth/authorize${route.query}`} />

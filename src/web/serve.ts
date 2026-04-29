@@ -17,6 +17,8 @@ Bun.serve({
     "/p/:username/:folderId": index,
     "/oauth/authorize": index,
     "/pair": index,
+    "/password/forgot": index,
+    "/password/reset": index,
   },
   async fetch(req) {
     const url = new URL(req.url)

@@ -263,6 +263,16 @@ export const folderActionRuns = defineSchema("folder_action_runs", {
   result: column.text().nullable(),
 })
 
+export const passwordResets = defineSchema("password_resets", {
+  id: column.serial().primaryKey(),
+  user_id: column.integer().ref("users", "id"),
+  token_hash: column.text().unique(),
+  expires_at: column.timestamp(),
+  used_at: column.timestamp().nullable(),
+  ip: column.text().nullable(),
+  created_at: column.timestamp().default("now()"),
+})
+
 export const userActions = defineSchema("user_actions", {
   id: column.serial().primaryKey(),
   user_id: column.integer().ref("users", "id"),

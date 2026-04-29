@@ -3,6 +3,8 @@ import { from, raw } from "@atlas/db"
 import { del, get, halt, json, parseJson, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { randomToken } from "../util/token.ts"
+import type { Emailer } from "../email/index.ts"
+import { inviteEmail } from "../email/templates/invite.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -24,7 +26,7 @@ type InviteRequest = {
   created_at: string
 }
 
-export const adminRoutes = (db: Connection, secret: string) => {
+export const adminRoutes = (db: Connection, secret: string, emailer: Emailer, appUrl: string) => {
   const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerOnly)
   const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerOnly, parseJson)
 
@@ -76,10 +78,29 @@ export const adminRoutes = (db: Connection, secret: string) => {
         }),
       )
 
+      const inviter = await db.one(
+        from("users").where(q => q("id").equals(userId)).select("name", "username"),
+      ) as { name: string; username: string } | null
+      const signupUrl = `${appUrl.replace(/\/$/, "")}/signup?invite=${encodeURIComponent(inviteToken!)}`
+      const tpl = inviteEmail({
+        inviterName: inviter?.name ?? inviter?.username ?? null,
+        email: row.email,
+        signupUrl,
+        note: row.reason,
+      })
+      const sendRes = await emailer.send({
+        to: row.email,
+        subject: tpl.subject,
+        html: tpl.html,
+        text: tpl.text,
+      })
+
       return json(c, 200, {
         id,
         invite_token: inviteToken,
         email: row.email,
+        email_sent: sendRes.ok,
+        email_error: sendRes.ok ? undefined : sendRes.error,
       })
     })),
 

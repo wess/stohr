@@ -580,3 +580,10 @@ export const deleteUserAction = (id: number) =>
 
 export const cloneBuiltin = (slug: string) =>
   jsonReq("POST", `/me/actions/from-builtin/${slug.replace(/^stohr\//, "")}`, {}) as Promise<UserAction & { error?: string }>
+
+/* Password reset */
+export const requestPasswordReset = (email: string) =>
+  jsonReq("POST", "/password/forgot", { email }) as Promise<{ ok?: boolean; message?: string; error?: string }>
+
+export const resetPassword = (token: string, newPassword: string) =>
+  jsonReq("POST", "/password/reset", { token, new_password: newPassword }) as Promise<{ ok?: boolean; error?: string }>
