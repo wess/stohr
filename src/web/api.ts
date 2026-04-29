@@ -117,7 +117,7 @@ export const renameFolder = (id: number, name: string) =>
 export const moveFolder = (id: number, parentId: number | null) =>
   jsonReq("PATCH", `/folders/${id}`, { parent_id: parentId })
 
-export const updateFolder = (id: number, patch: { kind?: "standard" | "photos"; is_public?: boolean }) =>
+export const updateFolder = (id: number, patch: { kind?: "standard" | "photos" | "screenshots"; is_public?: boolean }) =>
   jsonReq("PATCH", `/folders/${id}`, patch)
 
 export const createFolderTyped = (name: string, parentId: number | null, opts?: { kind?: "standard" | "photos" | "screenshots"; is_public?: boolean }) =>
@@ -451,3 +451,132 @@ export const getPublicFolder = async (username: string, folderId: number) => {
 export const publicFileUrl = (id: number) => `${BASE}/p/files/${id}`
 export const publicFileInlineUrl = (id: number) => `${BASE}/p/files/${id}?inline=1`
 export const publicThumbUrl = (id: number) => `${BASE}/p/files/${id}/thumb`
+
+/* Action folders */
+export type ActionEventName =
+  | "file.created" | "file.updated" | "file.deleted"
+  | "file.moved.in" | "file.moved.out"
+  | "folder.created" | "folder.updated" | "folder.deleted"
+  | "folder.moved.in" | "folder.moved.out"
+
+export type ActionRegistryEntry = {
+  slug: string
+  name: string
+  description: string
+  version: string
+  author: { name: string; url?: string | null }
+  homepage?: string | null
+  icon?: string | null
+  permissions: string[]
+  events: ActionEventName[]
+  subjects: ("file" | "folder")[]
+  config_schema: Record<string, unknown>
+}
+
+export type FolderActionRow = {
+  id: number
+  folder_id: number
+  event: ActionEventName
+  slug: string
+  config: Record<string, unknown>
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type FolderActionRun = {
+  id: number
+  folder_action_id: number
+  triggered_event: string
+  subject_kind: string
+  subject_id: number
+  status: "succeeded" | "failed" | "skipped"
+  started_at: string
+  finished_at: string | null
+  error: string | null
+  result: Record<string, unknown> | null
+}
+
+export const listActionRegistry = () =>
+  jsonReq("GET", "/actions/registry") as Promise<{ actions: ActionRegistryEntry[]; total: number }>
+
+export const listFolderActions = (folderId: number) =>
+  jsonReq("GET", `/folders/${folderId}/actions`) as Promise<FolderActionRow[]>
+
+export const createFolderAction = (folderId: number, input: { event: ActionEventName; slug: string; config?: Record<string, unknown>; enabled?: boolean }) =>
+  jsonReq("POST", `/folders/${folderId}/actions`, input) as Promise<FolderActionRow & { error?: string }>
+
+export const updateFolderAction = (folderId: number, actionId: number, patch: { event?: ActionEventName; config?: Record<string, unknown>; enabled?: boolean }) =>
+  jsonReq("PATCH", `/folders/${folderId}/actions/${actionId}`, patch) as Promise<FolderActionRow & { error?: string }>
+
+export const deleteFolderAction = (folderId: number, actionId: number) =>
+  jsonReq("DELETE", `/folders/${folderId}/actions/${actionId}`) as Promise<{ deleted?: number; error?: string }>
+
+export const listFolderActionRuns = (folderId: number, limit = 50) =>
+  jsonReq("GET", `/folders/${folderId}/actions/runs?limit=${limit}`) as Promise<FolderActionRun[]>
+
+/* User-built Actions (Action Builder) */
+
+export type PrimitiveCategory = "filter" | "transform" | "route"
+export type PrimitiveDescriptor = {
+  kind: string
+  name: string
+  category: PrimitiveCategory
+  description: string
+  icon: string
+  subjects: ("file" | "folder")[]
+  config_schema: Record<string, unknown>
+}
+
+export type Step = { kind: string; config: Record<string, unknown> }
+
+export type UserAction = {
+  id: number
+  slug: string
+  name: string
+  description: string | null
+  icon: string | null
+  triggers: ActionEventName[]
+  steps: Step[]
+  enabled: boolean
+  forked_from: string | null
+  is_builtin: false
+  editable: true
+  created_at: string
+  updated_at: string
+}
+
+export const listPrimitives = () =>
+  jsonReq("GET", "/actions/primitives") as Promise<{ primitives: PrimitiveDescriptor[]; total: number }>
+
+export const listUserActions = () =>
+  jsonReq("GET", "/me/actions") as Promise<UserAction[]>
+
+export const getUserAction = (id: number) =>
+  jsonReq("GET", `/me/actions/${id}`) as Promise<UserAction & { error?: string }>
+
+export const createUserAction = (input: {
+  name: string
+  description?: string
+  icon?: string
+  triggers: ActionEventName[]
+  steps: Step[]
+  enabled?: boolean
+}) =>
+  jsonReq("POST", "/me/actions", input) as Promise<UserAction & { error?: string }>
+
+export const updateUserAction = (id: number, patch: {
+  name?: string
+  description?: string | null
+  icon?: string | null
+  triggers?: ActionEventName[]
+  steps?: Step[]
+  enabled?: boolean
+}) =>
+  jsonReq("PATCH", `/me/actions/${id}`, patch) as Promise<UserAction & { error?: string }>
+
+export const deleteUserAction = (id: number) =>
+  jsonReq("DELETE", `/me/actions/${id}`) as Promise<{ deleted?: number; error?: string }>
+
+export const cloneBuiltin = (slug: string) =>
+  jsonReq("POST", `/me/actions/from-builtin/${slug.replace(/^stohr\//, "")}`, {}) as Promise<UserAction & { error?: string }>

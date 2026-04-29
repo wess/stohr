@@ -238,3 +238,41 @@ export const shares = defineSchema("shares", {
   burn_on_view: column.boolean().default(false),
   created_at: column.timestamp().default("now()"),
 })
+
+export const folderActions = defineSchema("folder_actions", {
+  id: column.serial().primaryKey(),
+  folder_id: column.integer().ref("folders", "id"),
+  event: column.text(),
+  slug: column.text(),
+  config: column.text().default("{}"),
+  enabled: column.boolean().default(true),
+  created_at: column.timestamp().default("now()"),
+  updated_at: column.timestamp().default("now()"),
+})
+
+export const folderActionRuns = defineSchema("folder_action_runs", {
+  id: column.serial().primaryKey(),
+  folder_action_id: column.integer().ref("folder_actions", "id"),
+  triggered_event: column.text(),
+  subject_kind: column.text(),
+  subject_id: column.integer(),
+  status: column.text(),
+  started_at: column.timestamp().default("now()"),
+  finished_at: column.timestamp().nullable(),
+  error: column.text().nullable(),
+  result: column.text().nullable(),
+})
+
+export const userActions = defineSchema("user_actions", {
+  id: column.serial().primaryKey(),
+  user_id: column.integer().ref("users", "id"),
+  name: column.text(),
+  description: column.text().nullable(),
+  icon: column.text().nullable(),
+  triggers: column.text().default("[]"),
+  steps: column.text().default("[]"),
+  enabled: column.boolean().default(true),
+  forked_from: column.text().nullable(),
+  created_at: column.timestamp().default("now()"),
+  updated_at: column.timestamp().default("now()"),
+})

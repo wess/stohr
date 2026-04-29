@@ -6,6 +6,8 @@ import { drop } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { canWrite, folderAccess, isOwner } from "../permissions/index.ts"
 import type { FolderRow } from "../permissions/index.ts"
+import { fireEvent } from "../actions/dispatch.ts"
+import type { RunSummary } from "../actions/dispatch.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -120,11 +122,13 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       if (!name || !name.trim()) return json(c, 422, { error: "Name required" })
 
       let ownerId = userId
+      let parentFolder: FolderRow | null = null
       if (parentId != null) {
         const access = await folderAccess(db, userId, parentId)
         if (!access) return json(c, 404, { error: "Parent folder not found" })
         if (!canWrite(access.role)) return json(c, 403, { error: "You don't have permission to add to this folder" })
         ownerId = access.folder.user_id
+        parentFolder = access.folder
       }
 
       const rows = await db.execute(
@@ -133,7 +137,23 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
           .returning("id", "name", "parent_id", "kind", "is_public", "created_at"),
       )
 
-      return json(c, 201, rows[0])
+      const summaries: RunSummary[] = []
+      if (parentFolder) {
+        const fresh = await db.one(
+          from("folders").where(q => q("id").equals(rows[0].id)),
+        ) as FolderRow | null
+        if (fresh) {
+          summaries.push(...await fireEvent({
+            db, store, event: "folder.created",
+            folder: parentFolder, subject: { kind: "folder", row: fresh },
+            actor: { id: userId },
+          }))
+        }
+      }
+
+      const out: Record<string, unknown> = { ...rows[0] }
+      if (summaries.length > 0) out.action_results = summaries
+      return json(c, 201, out)
     })),
 
     patch("/folders/:id", authed(async (c) => {
@@ -152,6 +172,10 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       if ((hasKind || hasPublic) && !isOwner(access.role)) {
         return json(c, 403, { error: "Only the owner can change folder type or public access" })
       }
+
+      const oldParentId = access.folder.parent_id
+      let newParentId: number | null = oldParentId
+      let newParentFolder: FolderRow | null = null
 
       const patchData: Record<string, unknown> = {}
       if (hasName) {
@@ -183,15 +207,60 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
           if (targetAccess.folder.user_id !== access.folder.user_id) {
             return json(c, 422, { error: "Cannot move folder across owners" })
           }
+          newParentFolder = targetAccess.folder
         }
         patchData.parent_id = parentId
+        newParentId = parentId
       }
 
       await db.execute(
         from("folders").where(q => q("id").equals(id)).update(patchData),
       )
 
-      return json(c, 200, { id, ...patchData })
+      const updatedFolder = await db.one(
+        from("folders").where(q => q("id").equals(id)),
+      ) as FolderRow | null
+
+      const summaries: RunSummary[] = []
+      if (updatedFolder) {
+        const moved = hasParent && oldParentId !== newParentId
+        if (moved) {
+          if (oldParentId != null) {
+            const oldParent = await db.one(
+              from("folders").where(q => q("id").equals(oldParentId)).where(q => q("deleted_at").isNull()),
+            ) as FolderRow | null
+            if (oldParent) {
+              summaries.push(...await fireEvent({
+                db, store, event: "folder.moved.out",
+                folder: oldParent, subject: { kind: "folder", row: updatedFolder },
+                actor: { id: userId },
+              }))
+            }
+          }
+          if (newParentFolder) {
+            summaries.push(...await fireEvent({
+              db, store, event: "folder.moved.in",
+              folder: newParentFolder, subject: { kind: "folder", row: updatedFolder },
+              actor: { id: userId },
+            }))
+          }
+        } else if (hasName && updatedFolder.parent_id != null) {
+          const parent = await db.one(
+            from("folders").where(q => q("id").equals(updatedFolder.parent_id)).where(q => q("deleted_at").isNull()),
+          ) as FolderRow | null
+          if (parent) {
+            summaries.push(...await fireEvent({
+              db, store, event: "folder.updated",
+              folder: parent, subject: { kind: "folder", row: updatedFolder },
+              actor: { id: userId },
+            }))
+          }
+        }
+      }
+
+      const out: Record<string, unknown> = { id, ...patchData }
+      if (summaries.length > 0) out.action_results = summaries
+      return json(c, 200, out)
     })),
 
     del("/folders/:id", guard(async (c) => {
@@ -201,6 +270,7 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       if (!access) return json(c, 404, { error: "Folder not found" })
       if (!canWrite(access.role)) return json(c, 403, { error: "Read-only access" })
 
+      const folder = access.folder
       const ids = await collectSubtreeAll(db, id)
 
       for (const fid of ids) {
@@ -215,7 +285,23 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
         )
       }
 
-      return json(c, 200, { trashed: id })
+      const summaries: RunSummary[] = []
+      if (folder.parent_id != null) {
+        const parent = await db.one(
+          from("folders").where(q => q("id").equals(folder.parent_id)).where(q => q("deleted_at").isNull()),
+        ) as FolderRow | null
+        if (parent) {
+          summaries.push(...await fireEvent({
+            db, store, event: "folder.deleted",
+            folder: parent, subject: { kind: "folder", row: folder },
+            actor: { id: userId },
+          }))
+        }
+      }
+
+      const out: Record<string, unknown> = { trashed: id }
+      if (summaries.length > 0) out.action_results = summaries
+      return json(c, 200, out)
     })),
 
     post("/folders/:id/restore", guard(async (c) => {

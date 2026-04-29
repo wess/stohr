@@ -6,8 +6,10 @@ import { drop, fetchObject, makeKey, put } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { generateImageThumb, isThumbable, thumbKeyFor } from "../storage/thumb.ts"
 import { canWrite, fileAccess, folderAccess } from "../permissions/index.ts"
-import type { FileRow } from "../permissions/index.ts"
+import type { FileRow, FolderRow } from "../permissions/index.ts"
 import { checkQuota } from "../payments/usage.ts"
+import { fireEvent } from "../actions/dispatch.ts"
+import type { RunSummary } from "../actions/dispatch.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -148,11 +150,13 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       const folderId = !folderRaw || folderRaw === "null" || folderRaw === "" ? null : Number(folderRaw)
 
       let ownerId = userId
+      let targetFolder: FolderRow | null = null
       if (folderId != null) {
         const access = await folderAccess(db, userId, folderId)
         if (!access) return json(c, 404, { error: "Folder not found" })
         if (!canWrite(access.role)) return json(c, 403, { error: "Read-only access to this folder" })
         ownerId = access.folder.user_id
+        targetFolder = access.folder
       }
 
       const owner = await db.one(
@@ -171,7 +175,7 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         })
       }
 
-      const result: Array<{ id: number; name: string; mime: string; size: number; folder_id: number | null; version: number; created_at: string; new_version?: boolean }> = []
+      const result: Array<{ id: number; name: string; mime: string; size: number; folder_id: number | null; version: number; created_at: string; new_version?: boolean; action_results?: RunSummary[] }> = []
 
       for (const file of entries) {
         const name = (file as any).name ?? "upload.bin"
@@ -210,26 +214,57 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
                 .where(q => q("deleted_at").isNull()),
             ) as FileRow | null
 
+        let fileId: number
+        let isNewVersion: boolean
         if (existing) {
           const oldThumb = existing.thumb_key
           await archiveCurrent(db, existing, userId)
           const newVersion = existing.version + 1
-          const rows = await db.execute(
+          await db.execute(
             from("files")
               .where(q => q("id").equals(existing.id))
-              .update({ mime, size, storage_key: key, thumb_key: thumbKey, version: newVersion })
-              .returning("id", "name", "mime", "size", "folder_id", "version", "created_at"),
+              .update({ mime, size, storage_key: key, thumb_key: thumbKey, version: newVersion }),
           )
           if (oldThumb) await Promise.allSettled([drop(store, oldThumb)])
-          result.push({ ...rows[0], new_version: true } as any)
+          fileId = existing.id
+          isNewVersion = true
         } else {
           const rows = await db.execute(
             from("files")
               .insert({ user_id: ownerId, folder_id: folderId, name, mime, size, storage_key: key, thumb_key: thumbKey, version: 1 })
-              .returning("id", "name", "mime", "size", "folder_id", "version", "created_at"),
-          )
-          result.push({ ...rows[0], new_version: false } as any)
+              .returning("id"),
+          ) as Array<{ id: number }>
+          fileId = rows[0]!.id
+          isNewVersion = false
         }
+
+        let actionResults: RunSummary[] = []
+        if (targetFolder) {
+          const fresh = await db.one(
+            from("files").where(q => q("id").equals(fileId)),
+          ) as FileRow | null
+          if (fresh) {
+            actionResults = await fireEvent({
+              db,
+              store,
+              event: "file.created",
+              folder: targetFolder,
+              subject: { kind: "file", row: fresh },
+              actor: { id: userId },
+            })
+          }
+        }
+
+        const after = await db.one(
+          from("files")
+            .where(q => q("id").equals(fileId))
+            .select("id", "name", "mime", "size", "folder_id", "version", "created_at"),
+        ) as { id: number; name: string; mime: string; size: number; folder_id: number | null; version: number; created_at: string } | null
+
+        if (!after) continue
+        const entry: typeof result[number] = { ...after, new_version: isNewVersion }
+        if (actionResults.length > 0) entry.action_results = actionResults
+        result.push(entry)
       }
 
       return json(c, 201, result)
@@ -251,6 +286,10 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
 
       const patchData: Record<string, unknown> = {}
       if (hasName) patchData.name = String(body.name).trim()
+
+      const oldFolderId = access.file.folder_id
+      let newFolderId: number | null = oldFolderId
+      let targetFolder: FolderRow | null = null
       if (hasFolder) {
         const rawFid = body.folder_id !== undefined ? body.folder_id : body.folderId
         const fid = rawFid === null ? null : Number(rawFid)
@@ -261,17 +300,62 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
           if (targetAccess.folder.user_id !== access.file.user_id) {
             return json(c, 422, { error: "Cannot move file across owners" })
           }
+          targetFolder = targetAccess.folder
         } else {
           if (access.role !== "owner") return json(c, 403, { error: "Only the owner can move a file to the root" })
         }
         patchData.folder_id = fid
+        newFolderId = fid
       }
 
       await db.execute(
         from("files").where(p => p("id").equals(id)).update(patchData),
       )
 
-      return json(c, 200, { id, ...patchData })
+      const updatedFile = await db.one(
+        from("files").where(p => p("id").equals(id)),
+      ) as FileRow | null
+
+      const summaries: RunSummary[] = []
+      if (updatedFile) {
+        const moved = hasFolder && oldFolderId !== newFolderId
+        if (moved) {
+          if (oldFolderId != null) {
+            const oldFolder = await db.one(
+              from("folders").where(q => q("id").equals(oldFolderId)).where(q => q("deleted_at").isNull()),
+            ) as FolderRow | null
+            if (oldFolder) {
+              summaries.push(...await fireEvent({
+                db, store, event: "file.moved.out",
+                folder: oldFolder, subject: { kind: "file", row: updatedFile },
+                actor: { id: userId },
+              }))
+            }
+          }
+          if (targetFolder) {
+            summaries.push(...await fireEvent({
+              db, store, event: "file.moved.in",
+              folder: targetFolder, subject: { kind: "file", row: updatedFile },
+              actor: { id: userId },
+            }))
+          }
+        } else if (hasName && updatedFile.folder_id != null) {
+          const folder = await db.one(
+            from("folders").where(q => q("id").equals(updatedFile.folder_id)).where(q => q("deleted_at").isNull()),
+          ) as FolderRow | null
+          if (folder) {
+            summaries.push(...await fireEvent({
+              db, store, event: "file.updated",
+              folder, subject: { kind: "file", row: updatedFile },
+              actor: { id: userId },
+            }))
+          }
+        }
+      }
+
+      const out: Record<string, unknown> = { id, ...patchData }
+      if (summaries.length > 0) out.action_results = summaries
+      return json(c, 200, out)
     })),
 
     del("/files/:id", guard(async (c) => {
@@ -281,11 +365,28 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       if (!access) return json(c, 404, { error: "File not found" })
       if (!canWrite(access.role)) return json(c, 403, { error: "Read-only access" })
 
+      const file = access.file
       await db.execute(
         from("files").where(p => p("id").equals(id)).update({ deleted_at: raw("NOW()") }),
       )
 
-      return json(c, 200, { trashed: id })
+      const summaries: RunSummary[] = []
+      if (file.folder_id != null) {
+        const folder = await db.one(
+          from("folders").where(q => q("id").equals(file.folder_id)).where(q => q("deleted_at").isNull()),
+        ) as FolderRow | null
+        if (folder) {
+          summaries.push(...await fireEvent({
+            db, store, event: "file.deleted",
+            folder, subject: { kind: "file", row: file },
+            actor: { id: userId },
+          }))
+        }
+      }
+
+      const out: Record<string, unknown> = { trashed: id }
+      if (summaries.length > 0) out.action_results = summaries
+      return json(c, 200, out)
     })),
 
     post("/files/:id/restore", guard(async (c) => {

@@ -1,17 +1,20 @@
-# stohr
+# Stohr mobile
 
-Stohr cloud storage
+iOS + Android client for [Stohr](../../README.md), built with Flutter.
 
-## Getting Started
+Browse folders, upload from the camera roll, share files, and manage your account against a self-hosted Stohr instance.
 
-This project is a starting point for a Flutter application.
+## Develop
 
-A few resources to get you started if this is your first Flutter project:
+```sh
+cd apps/mobile
+flutter pub get
+flutter run         # picks the connected device
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+The app authenticates with your Stohr instance via the regular login + JWT flow; long-lived sessions are stored on the platform keychain.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## See also
+
+- [Stohr API](../../docs/API.md) — REST surface this app calls
+- [SDKs](../../sdks/README.md) — the [Dart SDK](../../sdks/dart/README.md) wraps the same operations

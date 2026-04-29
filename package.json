@@ -1,9 +1,11 @@
 {
   "name": "stohr",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "private": true,
-  "workspaces": ["libs/atlas/packages/*"],
+  "workspaces": [
+    "libs/atlas/packages/*"
+  ],
   "scripts": {
     "dev": "bun src/dev.ts",
     "api": "bun --hot src/server.ts",

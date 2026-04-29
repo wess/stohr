@@ -1,17 +1,20 @@
-# stohrshot
+# Stohrshot
 
-Stohr screenshot menu-bar app
+Menu-bar screenshot client for [Stohr](../../README.md) — capture, upload, get a shareable link.
 
-## Getting Started
+Built with Flutter for macOS. Authenticates against a Stohr instance via OAuth 2.0 (device flow) and uploads into the user's `Screenshots` folder, then mints a public share link copied to the clipboard.
 
-This project is a starting point for a Flutter application.
+## Develop
 
-A few resources to get you started if this is your first Flutter project:
+```sh
+cd apps/desktop
+flutter pub get
+flutter run -d macos
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Point it at a running Stohr API (default `http://localhost:3000`) the first time it launches.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## See also
+
+- [OAuth integration](../../docs/OAUTH.md) — device flow used here
+- [Stohr API](../../docs/API.md) — file upload + share endpoints

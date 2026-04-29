@@ -17,37 +17,38 @@ Status legend: **have** · **partial** · **missing**
 | Email + password | ✓ | ✓ | **have** | — |
 | OAuth (Google, GitHub, Microsoft) sign-in | ✓ | ✓ | **missing** | P0 |
 | SAML 2.0 / OIDC SSO | ✓ | ✓ | **missing** | P1 |
-| TOTP / 2FA | ✓ | ✓ | **missing** | P0 |
+| TOTP / 2FA | ✓ | ✓ | **have** (RFC 6238 TOTP, ±1 window, 10 single-use backup codes, MFA challenge JWT during login) | — |
 | WebAuthn / passkeys | ✓ | ✓ | **missing** | P1 |
 | SCIM user provisioning | ✓ | ✓ | **missing** | P2 |
-| Session management (list / revoke devices) | ✓ | ✓ | **missing** | P1 |
+| Session management (list / revoke devices) | ✓ | ✓ | **have** (`sessions` table, JWT `jti` checked per request, list/revoke/revoke-others endpoints) | — |
 
-Implementation notes: `@atlas/auth` already issues JWTs; adding OAuth/OIDC would slot into `src/auth/index.ts` alongside `signup`/`login`. 2FA needs a new column on `users` plus a verification step in the login flow.
+Implementation notes: `@atlas/auth` already issues JWTs and the session table makes them server-side revocable. OAuth/OIDC sign-in (login *with* Google/GitHub) would slot in alongside `signup`/`login` in `src/auth/`. WebAuthn would extend the existing MFA challenge flow.
 
 ## Clients
 
 | Capability | Box | Dropbox | Stohr | Priority |
 | --- | --- | --- | --- | --- |
 | Web app | ✓ | ✓ | **have** | — |
-| Desktop sync daemon (macOS/Windows/Linux) | ✓ | ✓ | **missing** | P0 |
-| Mobile app (iOS/Android) | ✓ | ✓ | **missing** | P0 |
+| Desktop sync daemon (macOS/Windows/Linux) | ✓ | ✓ | **partial** (Stohrshot menu-bar screenshot client in `apps/desktop`; no general sync yet) | P0 |
+| Mobile app (iOS/Android) | ✓ | ✓ | **partial** (Flutter app scaffolded in `apps/mobile`) | P0 |
 | WebDAV endpoint | ✓ (Box Drive) | ✗ | **missing** | P1 |
-| CLI / scripting client | ✓ | ✓ | **missing** | P1 |
-| Public HTTP API (documented) | ✓ | ✓ | **partial** (README lists routes; no OpenAPI spec) | P1 |
+| CLI / scripting client | ✓ | ✓ | **partial** (S3-compatible API + AWS CLI works) | P1 |
+| Public HTTP API (documented) | ✓ | ✓ | **have** (full reference in [`docs/API.md`](docs/API.md); no OpenAPI spec yet) | — |
 
-Implementation notes: sync is the single largest effort — protocol (delta/cursor-based), conflict resolution, file-watcher on the client. A WebDAV shim is the cheap middle ground and gets macOS Finder / Windows Explorer mounts for free. Publishing an OpenAPI spec unlocks SDK generation and is low-effort given the routes already exist.
+Implementation notes: general sync is the single largest effort — protocol (delta/cursor-based), conflict resolution, file-watcher on the client. A WebDAV shim is the cheap middle ground and gets macOS Finder / Windows Explorer mounts for free. Publishing an OpenAPI spec unlocks SDK generation and is low-effort given the routes already exist.
 
 ## Developer platform
 
 | Capability | Box | Dropbox | Stohr | Priority |
 | --- | --- | --- | --- | --- |
-| API tokens (user-scoped, revocable) | ✓ | ✓ | **missing** | P0 |
-| OAuth apps / third-party access grants | ✓ | ✓ | **missing** | P1 |
+| API tokens (user-scoped, revocable) | ✓ | ✓ | **have** (PATs prefixed `stohr_pat_`, SHA-256 hashed, mintable via `POST /me/apps`) | — |
+| OAuth apps / third-party access grants | ✓ | ✓ | **have** (full OAuth 2.0 provider: auth code + PKCE, device flow, refresh token rotation; see [OAUTH.md](docs/OAUTH.md)) | — |
 | Outbound webhooks (file/folder events) | ✓ | ✓ | **missing** | P0 |
-| Rate limiting | ✓ | ✓ | **missing** | P1 |
-| OpenAPI / SDK | ✓ | ✓ | **missing** | P1 |
+| Rate limiting | ✓ | ✓ | **have** (sliding-bucket counters in `rate_limits`; per-IP / per-identity / per-user on auth + MFA) | — |
+| Native SDKs | ✓ | ✓ | **have** (TypeScript / Dart / Swift / Kotlin under [`sdks/`](sdks/README.md)) | — |
+| OpenAPI spec | ✓ | ✓ | **missing** | P1 |
 
-Implementation notes: current auth is JWT-only (7-day sessions). Long-lived API tokens need a new `api_tokens` table and middleware that accepts either `Bearer <jwt>` or `Bearer <api_token>`. Webhooks need an events table, a delivery worker (retry with backoff), and HMAC-signed payloads.
+Implementation notes: outbound webhooks are the last big developer-platform gap. They need an events table, a delivery worker (retry with backoff), and HMAC-signed payloads — once that lands, Zapier/Make/n8n integrations come for free.
 
 ## File preview & editing
 
@@ -60,22 +61,21 @@ Implementation notes: current auth is JWT-only (7-day sessions). Long-lived API 
 | Video/audio streaming | ✓ | ✓ | **partial** (server streams, no transcoding) | P1 |
 | Text/code viewer | ✓ | ✓ | **missing** | P1 |
 
-Implementation notes: image thumbnails are now server-generated (sharp/libvips) and cached alongside the original in object storage. PDF preview still outstanding — pdf.js in the browser is the cheapest path; PDF-to-image on the server (via `pdftoppm` / `pdfium`) gives a richer grid thumbnail. Office editing integrates cleanly via OnlyOffice Document Server or Collabora Online — both speak WOPI.
+Implementation notes: pdf.js in the browser is the cheapest path for PDF preview; PDF-to-image on the server (via `pdftoppm` / `pdfium`) gives a richer grid thumbnail. Office editing integrates cleanly via OnlyOffice Document Server or Collabora Online — both speak WOPI.
 
 ## Sharing & collaboration
 
 | Capability | Box | Dropbox | Stohr | Priority |
 | --- | --- | --- | --- | --- |
-| Public share links with expiry | ✓ | ✓ | **have** | — |
-| Password-protected share links | ✓ | ✓ | **missing** | P0 |
+| Public share links with expiry | ✓ | ✓ | **have** (max 30 days; per-share expiry required) | — |
+| Password-protected share links | ✓ | ✓ | **have** (bcrypt-hashed, verified via `X-Share-Password` header) | — |
+| Burn-after-view share links | ✓ (some plans) | ✗ | **have** (atomic delete-before-serve; only one non-owner viewer wins) | — |
 | Download limits / view tracking | ✓ | ✓ | **missing** | P1 |
 | File request (upload-only inbound links) | ✓ | ✓ | **missing** | P1 |
-| Shared folders with collaborators | ✓ | ✓ | **missing** | P0 |
-| Permission levels (view / comment / edit) | ✓ | ✓ | **missing** | P0 |
+| Shared folders with collaborators | ✓ | ✓ | **have** (folder + file collaborators table; viewer/editor roles; folder grants cascade to children) | — |
+| Permission levels (view / comment / edit) | ✓ | ✓ | **partial** (viewer/editor; no comment role) | P1 |
 | Comments / annotations | ✓ | ✓ | **missing** | P2 |
 | @-mentions and notifications | ✓ | ✓ | **missing** | P2 |
-
-Implementation notes: multi-user sharing requires splitting ownership (`user_id`) from access (a `permissions` join table per folder/file). This is the single biggest schema change on the roadmap.
 
 ## Storage features
 
@@ -84,10 +84,10 @@ Implementation notes: multi-user sharing requires splitting ownership (`user_id`
 | Version history | ✓ | ✓ | **have** | — |
 | Soft-delete trash | ✓ | ✓ | **have** | — |
 | Auto-purge trash after N days | ✓ | ✓ | **missing** | P1 |
-| Per-user storage quotas | ✓ | ✓ | **missing** | P0 |
+| Per-user storage quotas | ✓ | ✓ | **have** (per-tier `storage_quota_bytes`; enforced at upload; over-quota → `402` with structured body) | — |
 | Chunked / resumable uploads | ✓ | ✓ | **missing** | P0 |
 | Deduplication (content-addressed storage) | ✓ | ✓ | **missing** | P2 |
-| Server-side encryption at rest (KMS) | ✓ | ✓ | **partial** (depends on S3 backend config) | P1 |
+| Server-side encryption at rest (KMS) | ✓ | ✓ | **partial** (depends on S3 backend config — see [SECURITY.md](SECURITY.md)) | P1 |
 | E2E encrypted vault | ✓ (Box Shield) | ✗ | **missing** | P2 |
 
 Implementation notes: current upload path buffers the whole file in memory via `parseMultipart`. Resumable uploads need a tus or S3-multipart-style protocol — mandatory once anyone tries to upload a video over flaky Wi-Fi.
@@ -107,28 +107,29 @@ Implementation notes: Postgres `tsvector` gives decent FTS without a new depende
 
 | Capability | Box | Dropbox | Stohr | Priority |
 | --- | --- | --- | --- | --- |
-| Zapier / Make / n8n | ✓ | ✓ | **missing** (needs webhooks + API tokens first) | P1 |
+| Zapier / Make / n8n | ✓ | ✓ | **missing** (blocked on outbound webhooks) | P1 |
 | Slack notifications | ✓ | ✓ | **missing** | P1 |
 | Email notifications | ✓ | ✓ | **missing** | P0 |
 | Email-to-upload | ✓ | ✓ | **missing** | P2 |
 | E-signature (DocuSign / HelloSign) | ✓ | ✓ (HelloSign) | **missing** | P2 |
 | IFTTT-style triggers | ✓ | ✓ | **missing** | P2 |
 
-Implementation notes: Zapier/n8n/Make all work out of the box once the webhook + API-token infrastructure exists — no per-platform integration code required.
+Implementation notes: PATs and OAuth are already shipped, so Zapier/n8n/Make all work the moment outbound webhooks land — no per-platform integration code required.
 
 ## Security & compliance
 
 | Capability | Box | Dropbox | Stohr | Priority |
 | --- | --- | --- | --- | --- |
 | Antivirus scanning on upload | ✓ | ✓ | **missing** | P0 |
-| Audit logs (who did what, when) | ✓ | ✓ | **missing** | P0 |
-| Admin console (user mgmt, org settings) | ✓ | ✓ | **missing** | P1 |
+| Audit logs (who did what, when) | ✓ | ✓ | **have** (`audit_events` table + Admin → Audit panel; auth, MFA, sessions, password) | — |
+| Admin console (user mgmt, org settings) | ✓ | ✓ | **have** (Admin panel: users, invites, payments, audit, OAuth clients, stats) | — |
+| Security headers (HSTS, COOP/CORP, etc.) | ✓ | ✓ | **have** (set on every response by `withSecurityHeaders`) | — |
 | DLP (data loss prevention) rules | ✓ | ✓ | **missing** | P2 |
 | Retention policies / legal hold | ✓ | ✓ | **missing** | P2 |
 | Watermarking on previews | ✓ | ✗ | **missing** | P2 |
 | IP allowlisting | ✓ | ✓ | **missing** | P2 |
 
-Implementation notes: ClamAV via its TCP socket is the standard AV integration — run it as an async scan after upload and mark files quarantined until clean. Audit logs are a single append-only table plus a middleware that records the active user, route, and target IDs per request.
+Implementation notes: ClamAV via its TCP socket is the standard AV integration — run it as an async scan after upload and mark files quarantined until clean.
 
 ## Observability
 
@@ -145,12 +146,11 @@ Implementation notes: ClamAV via its TCP socket is the standard AV integration �
 
 If you want an opinionated order that unblocks the most downstream work per unit effort:
 
-1. **API tokens + outbound webhooks** — unlocks Zapier/n8n/Slack without writing any per-platform code
-2. **OAuth sign-in (Google/Microsoft/GitHub) + 2FA** — baseline security parity
-3. **Email notifications (SMTP)** — needed for share notifications, password reset, account verification
-4. **Chunked/resumable uploads + quotas** — stops big uploads from failing and prevents runaway storage
-5. **Shared folders with permissions** — the single biggest schema change; everything collaborative depends on it
-6. **AV scanning + audit logs** — required before anyone puts real data in this
-7. **PDF preview** — image thumbnails already shipped; extending to PDFs is the next big preview win
-8. **WebDAV endpoint** — cheap way to get Finder/Explorer mounts before writing a real sync client
-9. **Desktop sync daemon + mobile app** — largest surface area; tackle last
+1. **Outbound webhooks** — last big developer-platform gap; unlocks Zapier/n8n/Slack without writing per-platform code (PATs and OAuth are already done)
+2. **OAuth sign-in** (Google/Microsoft/GitHub) — login parity with Box/Dropbox; MFA + sessions are already in place
+3. **Email notifications** (SMTP) — needed for share notifications, password reset, and the existing invite flows
+4. **Chunked / resumable uploads** — stops big uploads from failing on flaky networks (quotas + over-quota responses are already shipped)
+5. **PDF preview** — image thumbnails ship; PDFs are the next big preview win
+6. **AV scanning** — required before anyone puts real data in this; audit logs are already shipped to record findings
+7. **WebDAV endpoint** — cheap way to get Finder/Explorer mounts before writing a full sync client
+8. **Desktop sync daemon + mobile app** — Stohrshot and the Flutter app exist; turning either into a full sync client is the largest remaining surface area

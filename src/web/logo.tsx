@@ -1,5 +1,4 @@
 import React from "react"
-import logoUrl from "./assets/logo.png"
 
 type Props = {
   className?: string
@@ -8,6 +7,18 @@ type Props = {
 }
 
 export const Logo: React.FC<Props> = ({ className, size, ariaLabel = "Stohr" }) => {
-  const style = size != null ? { height: typeof size === "number" ? `${size}px` : size, width: "auto" } : undefined
-  return <img src={logoUrl} alt={ariaLabel} className={className} style={style} />
+  const fontSize = size != null
+    ? (typeof size === "number" ? `${Math.round(size * 0.55)}px` : size)
+    : undefined
+  const cls = `wordmark${className ? ` ${className}` : ""}`
+  return (
+    <span
+      className={cls}
+      aria-label={ariaLabel}
+      role="img"
+      style={fontSize ? { fontSize } : undefined}
+    >
+      stohr
+    </span>
+  )
 }

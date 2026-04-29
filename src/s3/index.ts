@@ -11,6 +11,8 @@ import { drop, fetchObject, makeKey, put as putStorage } from "../storage/index.
 import type { StorageHandle } from "../storage/index.ts"
 import { normalizeUsername } from "../util/username.ts"
 import { checkQuota } from "../payments/usage.ts"
+import { fireEvent } from "../actions/dispatch.ts"
+import type { FileRow, FolderRow } from "../permissions/index.ts"
 
 type S3Owner = {
   id: number
@@ -257,6 +259,31 @@ export const s3Routes = (db: Connection, store: StorageHandle) => [
           version: 1,
         }),
       )
+    }
+
+    if (folderId != null) {
+      const targetFolder = await db.one(
+        from("folders")
+          .where(q => q("id").equals(folderId))
+          .where(q => q("deleted_at").isNull()),
+      ) as FolderRow | null
+      const fresh = await db.one(
+        from("files")
+          .where(q => q("user_id").equals(owner.id))
+          .where(q => q("folder_id").equals(folderId))
+          .where(q => q("name").equals(fileName))
+          .where(q => q("deleted_at").isNull()),
+      ) as FileRow | null
+      if (targetFolder && fresh) {
+        await fireEvent({
+          db,
+          store,
+          event: "file.created",
+          folder: targetFolder,
+          subject: { kind: "file", row: fresh },
+          actor: { id: owner.id },
+        })
+      }
     }
 
     const etag = `"${sha256OfBytes(body).slice(0, 32)}"`

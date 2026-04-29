@@ -2,7 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
 import {
   AlertTriangle,
+  ArrowRight,
+  Calendar,
+  Check,
   ChevronRight,
+  Copy,
   Download,
   Edit3,
   File as FileIconBase,
@@ -15,23 +19,29 @@ import {
   Folder as FolderIcon,
   FolderOpen,
   FolderPlus,
+  Github,
   Inbox,
   Link2,
   Mail,
   Monitor,
   Moon,
+  MoreVertical,
   Music,
   Camera,
+  PanelLeft,
+  Plus,
   Search,
   Settings as SettingsIcon,
   Smartphone,
   Sun,
   Share2,
+  Terminal,
   Trash2,
   Upload as UploadIcon,
   UserPlus,
   Users,
   X,
+  Zap,
 } from "lucide-react"
 import * as api from "./api.ts"
 import { applyTheme, getTheme, setTheme as setThemePref, type Theme } from "./theme.ts"
@@ -43,6 +53,8 @@ type Route =
   | { kind: "file"; id: number; ownerUsername?: string }
   | { kind: "shared" }
   | { kind: "links" }
+  | { kind: "actions" }
+  | { kind: "actionEdit"; id: number }
   | { kind: "trash" }
   | { kind: "settings" }
   | { kind: "admin" }
@@ -70,6 +82,9 @@ const parseRoute = (loc: { pathname: string; search: string }): Route => {
   if (path === "/app/trash") return { kind: "trash" }
   if (path === "/app/settings") return { kind: "settings" }
   if (path === "/app/admin") return { kind: "admin" }
+  if (path === "/app/actions") return { kind: "actions" }
+  const actEdit = path.match(/^\/app\/actions\/(\d+)\/edit/)
+  if (actEdit) return { kind: "actionEdit", id: Number(actEdit[1]) }
   return { kind: "root" }
 }
 
@@ -393,9 +408,9 @@ const UploadPanel: React.FC<{
   )
 }
 
-const Modal: React.FC<{ title: string; onClose: () => void; children: React.ReactNode }> = ({ title, onClose, children }) => (
+const Modal: React.FC<{ title: string; onClose: () => void; children: React.ReactNode; size?: "default" | "wide" }> = ({ title, onClose, children, size = "default" }) => (
   <div className="modal-backdrop" onClick={onClose}>
-    <div className="modal" onClick={e => e.stopPropagation()}>
+    <div className={`modal${size === "wide" ? " modal-wide" : ""}`} onClick={e => e.stopPropagation()}>
       <h3>{title}</h3>
       {children}
     </div>
@@ -415,6 +430,64 @@ type Uploading = {
   status: "uploading" | "done" | "error"
   error?: string
   abort: () => void
+}
+
+type KebabItem = {
+  label: string
+  onClick: () => void
+  danger?: boolean
+  hidden?: boolean
+}
+
+const CardKebab: React.FC<{ items: KebabItem[]; ariaLabel?: string }> = ({ items, ariaLabel = "More" }) => {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const visible = items.filter(i => !i.hidden)
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false) }
+    document.addEventListener("mousedown", onDoc)
+    document.addEventListener("keydown", onKey)
+    return () => {
+      document.removeEventListener("mousedown", onDoc)
+      document.removeEventListener("keydown", onKey)
+    }
+  }, [open])
+
+  if (visible.length === 0) return null
+
+  return (
+    <div className="kebab" ref={ref} onClick={e => e.stopPropagation()}>
+      <button
+        type="button"
+        className="kebab-trigger"
+        aria-label={ariaLabel}
+        title={ariaLabel}
+        onClick={e => { e.stopPropagation(); setOpen(v => !v) }}
+      >
+        <MoreVertical size={16} strokeWidth={2} />
+      </button>
+      {open && (
+        <div className="kebab-menu" role="menu">
+          {visible.map((item, i) => (
+            <button
+              key={i}
+              type="button"
+              role="menuitem"
+              className={`kebab-item${item.danger ? " danger" : ""}`}
+              onClick={() => { setOpen(false); item.onClick() }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null }> = ({ routeFolderId, routeFileId }) => {
@@ -703,47 +776,51 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
     await load()
   }
 
+  const ownerSlug = currentOwner && me && currentOwner.id !== me.id ? currentOwner.username : undefined
+
+  const pathCrumbs = (
+    <div className="crumbs">
+      {currentRole === "owner"
+        ? <span className="crumb" onClick={() => navigate("/")}>All Files</span>
+        : currentOwner && <span className="crumb" onClick={() => navigate("/app/shared")}>Shared with me</span>}
+      {currentOwner && currentRole !== "owner" && (
+        <>
+          <span className="sep"><ChevronRight size={14} /></span>
+          <span style={{ color: "var(--muted)" }}>@{currentOwner.username}</span>
+        </>
+      )}
+      {crumbs.map((c, i) => (
+        <React.Fragment key={c.id}>
+          <span className="sep"><ChevronRight size={14} /></span>
+          {i === crumbs.length - 1
+            ? <span className="current">{c.name}</span>
+            : <span className="crumb" onClick={() => navigate(folderHref(c.id, ownerSlug))}>{c.name}</span>}
+        </React.Fragment>
+      ))}
+    </div>
+  )
+
   return (
     <div className="main">
       <div className="toolbar">
-        <div className="crumbs">
-          {currentRole === "owner"
-            ? <span className="crumb" onClick={() => navigate("/")}>All Files</span>
-            : currentOwner && <span className="crumb" onClick={() => navigate("/app/shared")}>Shared with me</span>}
-          {currentOwner && currentRole !== "owner" && (
-            <>
-              <span className="sep"><ChevronRight size={14} /></span>
-              <span style={{ color: "var(--muted)" }}>@{currentOwner.username}</span>
-            </>
-          )}
-          {crumbs.map((c, i) => {
-            const ownerSlug = currentOwner && me && currentOwner.id !== me.id ? currentOwner.username : undefined
-            return (
-              <React.Fragment key={c.id}>
-                <span className="sep"><ChevronRight size={14} /></span>
-                {i === crumbs.length - 1
-                  ? <span className="current">{c.name}</span>
-                  : <span className="crumb" onClick={() => navigate(folderHref(c.id, ownerSlug))}>{c.name}</span>}
-              </React.Fragment>
-            )
-          })}
-        </div>
         <input className="search" placeholder="Search files..." value={search} onChange={e => setSearch(e.target.value)} />
-        {currentId != null && currentRole === "owner" && (
-          <button onClick={() => setShowFolderSettings(true)} aria-label="Folder settings" title="Folder settings">
-            <SettingsIcon size={14} />
+        <div className="toolbar-actions">
+          {currentId != null && currentRole === "owner" && (
+            <button onClick={() => setShowFolderSettings(true)} aria-label="Folder settings" title="Folder settings">
+              <SettingsIcon size={14} />
+            </button>
+          )}
+          <button onClick={() => setCreatingFolder(true)}>
+            <FolderPlus size={14} /> <span>Folder</span>
           </button>
-        )}
-        <button onClick={() => setCreatingFolder(true)}>
-          <FolderPlus size={14} /> <span>Folder</span>
-        </button>
-        <button onClick={captureScreenshot} title="Capture screenshot">
-          <Camera size={14} /> <span>Capture</span>
-        </button>
-        <button className="primary" onClick={() => fileInput.current?.click()}>
-          <UploadIcon size={14} /> <span>Upload</span>
-        </button>
-        <input ref={fileInput} type="file" multiple hidden onChange={e => e.target.files && upload(e.target.files)} />
+          <button onClick={captureScreenshot} title="Capture screenshot">
+            <Camera size={14} /> <span>Capture</span>
+          </button>
+          <button className="primary" onClick={() => fileInput.current?.click()}>
+            <UploadIcon size={14} /> <span>Upload</span>
+          </button>
+          <input ref={fileInput} type="file" multiple hidden onChange={e => e.target.files && upload(e.target.files)} />
+        </div>
       </div>
       {captureNotice && (
         <div className="capture-notice">
@@ -757,6 +834,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
       >
+        <div className="path-bar">{pathCrumbs}</div>
         <div className={`dropzone${dragOver ? " over" : ""}`}>
           Drag & drop files here to upload to {currentId == null ? "your Stohr" : `"${crumbs[crumbs.length - 1]?.name ?? ""}"`}
         </div>
@@ -809,6 +887,14 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                 <div className={`check${sel ? " on" : ""}`} onClick={e => toggleSelect(key, e)}>
                   <div className="check-box" />
                 </div>
+                <CardKebab
+                  ariaLabel="Folder actions"
+                  items={[
+                    { label: "Share", onClick: () => setSharing({ kind: "folder", id: f.id, name: f.name }), hidden: currentRole !== "owner" },
+                    { label: "Rename", onClick: () => setRenaming({ kind: "folder", id: f.id, name: f.name }), hidden: !canEdit },
+                    { label: "Delete", onClick: () => del("folder", f.id), danger: true, hidden: !canEdit },
+                  ]}
+                />
                 <div className="icon">
                   {f.kind === "screenshots"
                     ? <Camera size={32} strokeWidth={1.5} />
@@ -817,13 +903,6 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                 <div className="name">{f.name}</div>
                 <div className="meta">
                   {f.kind === "photos" ? "Photos" : f.kind === "screenshots" ? "Screenshots" : "Folder"}
-                </div>
-                <div className="row" onClick={e => e.stopPropagation()}>
-                  {currentRole === "owner" && (
-                    <button onClick={() => setSharing({ kind: "folder", id: f.id, name: f.name })}>Share</button>
-                  )}
-                  {canEdit && <button onClick={() => setRenaming({ kind: "folder", id: f.id, name: f.name })}>Rename</button>}
-                  {canEdit && <button className="danger" onClick={() => del("folder", f.id)}>Delete</button>}
                 </div>
               </div>
             )
@@ -840,20 +919,21 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                 <div className={`check${sel ? " on" : ""}`} onClick={e => toggleSelect(key, e)}>
                   <div className="check-box" />
                 </div>
+                <CardKebab
+                  ariaLabel="File actions"
+                  items={[
+                    { label: "Download", onClick: () => downloadFile(f) },
+                    { label: "Share", onClick: () => setSharing({ kind: "file", id: f.id, name: f.name }), hidden: currentRole !== "owner" },
+                    { label: "Versions", onClick: () => setViewingVersions(f), hidden: f.version <= 1 },
+                    { label: "Rename", onClick: () => setRenaming({ kind: "file", id: f.id, name: f.name }), hidden: !canEdit },
+                    { label: "Delete", onClick: () => del("file", f.id), danger: true, hidden: !canEdit },
+                  ]}
+                />
                 <FileThumb file={f} />
                 <div className="name">{f.name}</div>
                 <div className="meta">
                   {formatBytes(f.size)}
                   {f.version > 1 && <span className="badge">v{f.version}</span>}
-                </div>
-                <div className="row" onClick={e => e.stopPropagation()}>
-                  <button onClick={() => downloadFile(f)}>Download</button>
-                  {currentRole === "owner" && (
-                    <button onClick={() => setSharing({ kind: "file", id: f.id, name: f.name })}>Share</button>
-                  )}
-                  {f.version > 1 && <button onClick={() => setViewingVersions(f)}>Versions</button>}
-                  {canEdit && <button onClick={() => setRenaming({ kind: "file", id: f.id, name: f.name })}>Rename</button>}
-                  {canEdit && <button className="danger" onClick={() => del("file", f.id)}>Delete</button>}
                 </div>
               </div>
             )
@@ -1888,6 +1968,494 @@ const LightboxView: React.FC<{
   )
 }
 
+/* ─────────── Recipes (user-facing automations) ───────────
+ * Mom doesn't see slugs, events, or schemas. She picks a recipe, fills in
+ * one or two readable fields, and we translate to one or more action
+ * folder rows behind the scenes.
+ */
+
+type RecipeFieldNumber = {
+  key: string
+  label: string
+  type: "number"
+  defaultValue: number
+  min?: number
+  max?: number
+  unit?: string
+  help?: string
+}
+type RecipeFieldSelect = {
+  key: string
+  label: string
+  type: "select"
+  defaultValue: string
+  options: Array<{ value: string; label: string }>
+  help?: string
+}
+type RecipeFieldNumberUnit = {
+  key: string                    // value lives at draft[key]
+  unitKey: string                // chosen unit lives at draft[unitKey]
+  label: string
+  type: "number-unit"
+  defaultUnit: string
+  units: Array<{ value: string; label: string; defaultValue: number; min: number; max: number }>
+  help?: string
+}
+type RecipeField = RecipeFieldNumber | RecipeFieldSelect | RecipeFieldNumberUnit
+
+type RecipeAction = { slug: string; event: api.ActionEventName; config: Record<string, unknown> }
+
+type Recipe = {
+  id: string
+  name: string
+  description: string
+  icon: React.ReactNode
+  fields: RecipeField[]
+  apply: (input: Record<string, unknown>) => RecipeAction[]
+  /** does an existing action row look like it came from this recipe? */
+  matches: (slug: string, config: Record<string, unknown>) => boolean
+  /** short summary of what's currently configured, e.g. "Max width 1024px" */
+  summarize?: (config: Record<string, unknown>) => string
+}
+
+const RECIPES: Recipe[] = [
+  {
+    id: "resize-images",
+    name: "Make images smaller",
+    description: "Shrinks every image to a maximum width while keeping its proportions. Great for photo folders that don't need full-size originals.",
+    icon: <FileImage size={20} strokeWidth={1.6} />,
+    fields: [
+      {
+        key: "width",
+        unitKey: "width_unit",
+        label: "Maximum width",
+        type: "number-unit",
+        defaultUnit: "px",
+        units: [
+          { value: "px", label: "px", defaultValue: 1024, min: 64, max: 8192 },
+          { value: "pct", label: "%", defaultValue: 50, min: 1, max: 100 },
+        ],
+        help: "Pixels = a fixed maximum. Percent = relative to each image's original width.",
+      },
+    ],
+    apply: (v) => {
+      const unit = (v.width_unit as string) ?? "px"
+      const raw = Number(v.width)
+      const cfg: Record<string, unknown> = { fit: "inside" }
+      if (unit === "pct") {
+        const pct = Math.max(1, Math.min(100, Number.isFinite(raw) ? Math.round(raw) : 50))
+        cfg.width_pct = pct
+      } else {
+        const width = Math.max(64, Math.min(8192, Number.isFinite(raw) ? Math.round(raw) : 1024))
+        cfg.width = width
+      }
+      return [
+        { slug: "stohr/resize-image", event: "file.created", config: cfg },
+        { slug: "stohr/resize-image", event: "file.moved.in", config: cfg },
+      ]
+    },
+    matches: (slug, config) => slug === "stohr/resize-image" && !config.format,
+    summarize: (config) => {
+      if (typeof config.width === "number") return `Maximum width ${config.width}px`
+      if (typeof config.width_pct === "number") return `${config.width_pct}% of original width`
+      return ""
+    },
+  },
+  {
+    id: "compress-images",
+    name: "Save space (compress images)",
+    description: "Re-saves images at smaller file sizes with little quality loss. Saves a lot of storage on photo-heavy folders.",
+    icon: <Zap size={20} strokeWidth={1.8} />,
+    fields: [
+      {
+        key: "width",
+        label: "Maximum width",
+        type: "number",
+        defaultValue: 2048,
+        min: 64,
+        max: 8192,
+        unit: "px",
+      },
+      {
+        key: "quality",
+        label: "Quality",
+        type: "select",
+        defaultValue: "85",
+        options: [
+          { value: "70", label: "Good (smallest files)" },
+          { value: "85", label: "Great (recommended)" },
+          { value: "95", label: "Best (largest files)" },
+        ],
+      },
+    ],
+    apply: (v) => {
+      const width = Math.max(64, Math.min(8192, Number(v.width ?? 2048) || 2048))
+      const quality = Math.max(1, Math.min(100, Number(v.quality ?? 85) || 85))
+      const cfg = { width, quality, format: "webp" }
+      return [
+        { slug: "stohr/resize-image", event: "file.created", config: cfg },
+        { slug: "stohr/resize-image", event: "file.moved.in", config: cfg },
+      ]
+    },
+    matches: (slug, config) => slug === "stohr/resize-image" && config.format === "webp",
+    summarize: (config) => {
+      const q = Number(config.quality ?? 85)
+      const label = q <= 75 ? "Good" : q >= 95 ? "Best" : "Great"
+      return `${label} quality, max ${config.width ?? 2048}px wide`
+    },
+  },
+  {
+    id: "organize-by-date",
+    name: "Organize by date",
+    description: "Sorts every new file into year and month subfolders, so you can find things by when you saved them.",
+    icon: <Calendar size={20} strokeWidth={1.6} />,
+    fields: [
+      {
+        key: "depth",
+        label: "How detailed?",
+        type: "select",
+        defaultValue: "month",
+        options: [
+          { value: "month", label: "Year and month (e.g. 2026 / 04)" },
+          { value: "day", label: "Year, month, and day (e.g. 2026 / 04 / 29)" },
+        ],
+      },
+    ],
+    apply: (v) => {
+      const pattern = v.depth === "day" ? "YYYY/MM/DD" : "YYYY/MM"
+      const cfg = { pattern }
+      return [
+        { slug: "stohr/organize-by-date", event: "file.created", config: cfg },
+        { slug: "stohr/organize-by-date", event: "file.moved.in", config: cfg },
+      ]
+    },
+    matches: (slug) => slug === "stohr/organize-by-date",
+    summarize: (config) => config.pattern === "YYYY/MM/DD" ? "By year, month, and day" : "By year and month",
+  },
+]
+
+const findRecipe = (slug: string, config: Record<string, unknown>): Recipe | undefined =>
+  RECIPES.find(r => r.matches(slug, config))
+
+const FolderAutomationsPanel: React.FC<{ folderId: number }> = ({ folderId }) => {
+  const [actions, setActions] = useState<api.FolderActionRow[]>([])
+  const [userActions, setUserActions] = useState<api.UserAction[]>([])
+  const [adding, setAdding] = useState<Recipe | null>(null)
+  const [draft, setDraft] = useState<Record<string, unknown>>({})
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+
+  const load = async () => {
+    const [list, uas] = await Promise.all([
+      api.listFolderActions(folderId),
+      api.listUserActions(),
+    ])
+    setActions(Array.isArray(list) ? list : [])
+    setUserActions(Array.isArray(uas) ? uas : [])
+  }
+  useEffect(() => { void load() }, [folderId])
+
+  /* Group existing rows so users see one entry per "automation".
+   * - Built-in recipes group by recipe id
+   * - User actions group by their slug
+   * - Anything else groups by raw slug
+   */
+  const groups = useMemo(() => {
+    type Group = {
+      key: string
+      recipe?: Recipe
+      userAction?: api.UserAction
+      rows: api.FolderActionRow[]
+    }
+    const out: Group[] = []
+    const seen = new Map<string, number>()
+    for (const a of actions) {
+      let key: string
+      let recipe: Recipe | undefined
+      let userAction: api.UserAction | undefined
+      if (a.slug.startsWith("u/")) {
+        userAction = userActions.find(u => u.slug === a.slug)
+        key = `u:${a.slug}`
+      } else {
+        recipe = findRecipe(a.slug, a.config)
+        key = recipe ? `r:${recipe.id}` : `s:${a.slug}`
+      }
+      if (seen.has(key)) {
+        out[seen.get(key)!].rows.push(a)
+      } else {
+        seen.set(key, out.length)
+        out.push({ key, recipe, userAction, rows: [a] })
+      }
+    }
+    return out
+  }, [actions, userActions])
+
+  const attachUserAction = async (ua: api.UserAction) => {
+    if (ua.triggers.length === 0) {
+      setError(`"${ua.name}" has no triggers selected. Open it in Actions to add some.`)
+      return
+    }
+    setBusy(true); setError("")
+    for (const trigger of ua.triggers) {
+      const res = await api.createFolderAction(folderId, { event: trigger, slug: ua.slug })
+      if ((res as any).error) {
+        setError((res as any).error)
+        setBusy(false)
+        await load()
+        return
+      }
+    }
+    setBusy(false)
+    await load()
+  }
+
+  const startAdd = (recipe: Recipe) => {
+    const init: Record<string, unknown> = {}
+    for (const f of recipe.fields) {
+      if (f.type === "number-unit") {
+        const unit = f.units.find(u => u.value === f.defaultUnit) ?? f.units[0]
+        init[f.key] = unit.defaultValue
+        init[f.unitKey] = unit.value
+      } else {
+        init[f.key] = f.defaultValue
+      }
+    }
+    setDraft(init)
+    setError("")
+    setAdding(recipe)
+  }
+
+  const submitAdd = async () => {
+    if (!adding) return
+    setBusy(true); setError("")
+    const tuples = adding.apply(draft)
+    for (const t of tuples) {
+      const res = await api.createFolderAction(folderId, t)
+      if ((res as any).error) {
+        setError((res as any).error)
+        setBusy(false)
+        await load()
+        return
+      }
+    }
+    setBusy(false)
+    setAdding(null)
+    await load()
+  }
+
+  const togglePause = async (rows: api.FolderActionRow[]) => {
+    const allOn = rows.every(r => r.enabled)
+    setBusy(true)
+    for (const r of rows) {
+      await api.updateFolderAction(folderId, r.id, { enabled: !allOn })
+    }
+    setBusy(false)
+    await load()
+  }
+
+  const removeGroup = async (label: string, rows: api.FolderActionRow[]) => {
+    if (!confirm(`Remove "${label}"?`)) return
+    setBusy(true)
+    for (const r of rows) {
+      await api.deleteFolderAction(folderId, r.id)
+    }
+    setBusy(false)
+    await load()
+  }
+
+  return (
+    <div className="auto-panel">
+      <div className="auto-panel-head">
+        <div>
+          <div className="auto-panel-title">Automations</div>
+          <div className="auto-panel-sub">
+            Run a helpful little task every time files arrive in this folder.
+          </div>
+        </div>
+      </div>
+
+      {groups.length === 0 && !adding && (
+        <div className="auto-empty">Nothing automated yet.</div>
+      )}
+
+      {groups.map(g => {
+        const label = g.recipe?.name ?? g.userAction?.name ?? "Custom automation"
+        const config = g.rows[0]?.config ?? {}
+        const summary = g.recipe?.summarize?.(config) ?? g.userAction?.description ?? ""
+        const allOn = g.rows.every(r => r.enabled)
+        return (
+          <div key={g.key} className="auto-row">
+            <div className="auto-row-icon">{g.recipe?.icon ?? <Zap size={18} strokeWidth={1.6} />}</div>
+            <div className="auto-row-text">
+              <div className="auto-row-title">
+                {label}
+                {g.userAction && <span className="action-pill">Your action</span>}
+                {!allOn && <span className="action-pill muted">Paused</span>}
+              </div>
+              {summary && <div className="auto-row-meta">{summary}</div>}
+            </div>
+            <div className="auto-row-buttons">
+              {g.userAction && (
+                <button onClick={() => navigate(`/app/actions/${g.userAction!.id}/edit`)} disabled={busy} title="Edit in Actions">
+                  <Edit3 size={13} />
+                </button>
+              )}
+              <button onClick={() => togglePause(g.rows)} disabled={busy}>
+                {allOn ? "Pause" : "Resume"}
+              </button>
+              <button className="danger" onClick={() => removeGroup(label, g.rows)} disabled={busy}>Remove</button>
+            </div>
+          </div>
+        )
+      })}
+
+      {!adding && (
+        <div className="auto-recipes">
+          <div className="auto-recipes-label">Built-in</div>
+          <div className="auto-recipe-grid">
+            {RECIPES.map(r => {
+              const already = groups.some(g => g.recipe?.id === r.id)
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  className="auto-recipe"
+                  onClick={() => startAdd(r)}
+                  disabled={already}
+                  title={already ? "Already added" : ""}
+                >
+                  <div className="auto-recipe-icon">{r.icon}</div>
+                  <div className="auto-recipe-name">{r.name}</div>
+                  <div className="auto-recipe-desc">{r.description}</div>
+                  {already && <div className="auto-recipe-flag">Already added</div>}
+                </button>
+              )
+            })}
+          </div>
+
+          {userActions.length > 0 && (
+            <>
+              <div className="auto-recipes-label" style={{ marginTop: 12 }}>Your actions</div>
+              <div className="auto-recipe-grid">
+                {userActions.map(ua => {
+                  const already = groups.some(g => g.userAction?.slug === ua.slug)
+                  return (
+                    <button
+                      key={ua.slug}
+                      type="button"
+                      className="auto-recipe"
+                      onClick={() => attachUserAction(ua)}
+                      disabled={already || busy}
+                      title={already ? "Already added" : ""}
+                    >
+                      <div className="auto-recipe-icon"><Zap size={20} strokeWidth={1.6} /></div>
+                      <div className="auto-recipe-name">{ua.name}</div>
+                      <div className="auto-recipe-desc">{ua.description ?? ""}</div>
+                      {already && <div className="auto-recipe-flag">Already added</div>}
+                    </button>
+                  )
+                })}
+              </div>
+              <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
+                Manage your actions in <a onClick={(e) => { e.preventDefault(); navigate("/app/actions") }} href="/app/actions" style={{ color: "var(--brand)", cursor: "pointer" }}>Actions</a>.
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {adding && (
+        <div className="auto-form">
+          <div className="auto-form-head">
+            <div className="auto-recipe-icon">{adding.icon}</div>
+            <div>
+              <div className="auto-form-title">{adding.name}</div>
+              <div className="auto-form-desc">{adding.description}</div>
+            </div>
+          </div>
+
+          <div className="auto-form-fields">
+            {adding.fields.map(f => (
+              <div key={f.key} className="auto-field">
+                <label className="auto-field-label" htmlFor={`auto-${f.key}`}>{f.label}</label>
+                {f.type === "number" && (
+                  <div className="auto-input-row">
+                    <input
+                      id={`auto-${f.key}`}
+                      type="number"
+                      min={f.min}
+                      max={f.max}
+                      value={(draft[f.key] as number | undefined) ?? ""}
+                      onChange={e => {
+                        const v = e.target.value
+                        setDraft({ ...draft, [f.key]: v === "" ? undefined : parseInt(v, 10) })
+                      }}
+                    />
+                    {f.unit && <span className="auto-input-unit">{f.unit}</span>}
+                  </div>
+                )}
+                {f.type === "select" && (
+                  <select
+                    id={`auto-${f.key}`}
+                    value={(draft[f.key] as string | undefined) ?? f.defaultValue}
+                    onChange={e => setDraft({ ...draft, [f.key]: e.target.value })}
+                  >
+                    {f.options.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                )}
+                {f.type === "number-unit" && (() => {
+                  const currentUnit = (draft[f.unitKey] as string) ?? f.defaultUnit
+                  const unitDef = f.units.find(u => u.value === currentUnit) ?? f.units[0]
+                  return (
+                    <div className="auto-input-row">
+                      <input
+                        id={`auto-${f.key}`}
+                        type="number"
+                        min={unitDef.min}
+                        max={unitDef.max}
+                        value={(draft[f.key] as number | undefined) ?? ""}
+                        onChange={e => {
+                          const v = e.target.value
+                          setDraft({ ...draft, [f.key]: v === "" ? undefined : parseInt(v, 10) })
+                        }}
+                      />
+                      <div className="auto-unit-toggle" role="group" aria-label="Unit">
+                        {f.units.map(u => (
+                          <button
+                            key={u.value}
+                            type="button"
+                            className={`auto-unit-option${u.value === currentUnit ? " selected" : ""}`}
+                            onClick={() => setDraft({ ...draft, [f.unitKey]: u.value, [f.key]: u.defaultValue })}
+                            aria-pressed={u.value === currentUnit}
+                          >
+                            {u.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })()}
+                {f.help && <div className="auto-field-help">{f.help}</div>}
+              </div>
+            ))}
+          </div>
+
+          {error && <div className="msg err">{error}</div>}
+
+          <div className="auto-form-buttons">
+            <button onClick={() => setAdding(null)} disabled={busy}>Back</button>
+            <button className="primary" onClick={submitAdd} disabled={busy}>
+              {busy ? "Saving…" : "Add automation"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const FolderSettingsModal: React.FC<{
   folderId: number
   folderName: string
@@ -1897,19 +2465,21 @@ const FolderSettingsModal: React.FC<{
   onClose: () => void
   onSaved: () => void
 }> = ({ folderId, folderName, ownerUsername, initialKind, initialIsPublic, onClose, onSaved }) => {
-  const [kind, setKind] = useState(initialKind === "photos" ? "photos" : "standard")
+  const initialKindSafe: "standard" | "photos" | "screenshots" =
+    initialKind === "photos" ? "photos" : initialKind === "screenshots" ? "screenshots" : "standard"
+  const [kind, setKind] = useState<"standard" | "photos" | "screenshots">(initialKindSafe)
   const [isPublic, setIsPublic] = useState(initialIsPublic)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
 
   const publicUrl = `${window.location.origin}/p/${ownerUsername}/${folderId}`
-  const dirty = kind !== initialKind || isPublic !== initialIsPublic
+  const dirty = kind !== initialKindSafe || isPublic !== initialIsPublic
 
   const save = async () => {
     setBusy(true)
     setError("")
     const res = await api.updateFolder(folderId, {
-      kind: kind as "standard" | "photos",
+      kind,
       is_public: isPublic,
     })
     setBusy(false)
@@ -1917,48 +2487,71 @@ const FolderSettingsModal: React.FC<{
     onSaved()
   }
 
+  const KIND_OPTIONS: Array<{ value: "standard" | "photos" | "screenshots"; label: string; desc: string; icon: React.ReactNode }> = [
+    { value: "standard", label: "Files & folders", desc: "The classic. Anything goes.", icon: <FolderIcon size={20} strokeWidth={1.6} /> },
+    { value: "photos", label: "Photo album", desc: "Show as a clean photo grid with lightbox.", icon: <FileImage size={20} strokeWidth={1.6} /> },
+    { value: "screenshots", label: "Screenshots", desc: "Drop captures here from the menu bar.", icon: <Camera size={20} strokeWidth={1.6} /> },
+  ]
+
   return (
-    <Modal title={`Folder settings — ${folderName}`} onClose={onClose}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={kind === "photos"}
-            onChange={e => setKind(e.target.checked ? "photos" : "standard")}
-            style={{ width: 18, height: 18 }}
-          />
-          <div>
-            <div style={{ fontWeight: 500 }}>Photos folder</div>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>
-              Render this folder as an image gallery with a lightbox.
-            </div>
+    <Modal title={`Settings — ${folderName}`} onClose={onClose} size="wide">
+      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+        {/* How should this folder look? */}
+        <section className="settings-section">
+          <div className="settings-section-head">
+            <div className="settings-section-title">How should this folder look?</div>
+            <div className="settings-section-sub">Pick the layout that fits what's in here.</div>
           </div>
-        </label>
+          <div className="kind-cards">
+            {KIND_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                className={`kind-card${kind === opt.value ? " selected" : ""}`}
+                onClick={() => setKind(opt.value)}
+              >
+                <div className="kind-card-icon">{opt.icon}</div>
+                <div className="kind-card-name">{opt.label}</div>
+                <div className="kind-card-desc">{opt.desc}</div>
+              </button>
+            ))}
+          </div>
+        </section>
 
-        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={isPublic}
-            onChange={e => setIsPublic(e.target.checked)}
-            style={{ width: 18, height: 18 }}
-          />
-          <div>
-            <div style={{ fontWeight: 500 }}>Public access</div>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>
-              Anyone with the link can view (no sign-in required).
+        {/* Sharing */}
+        <section className="settings-section">
+          <div className="settings-section-head">
+            <div className="settings-section-title">Who can see this folder?</div>
+            <div className="settings-section-sub">Public folders are visible to anyone with the link, no sign-in needed.</div>
+          </div>
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={isPublic}
+              onChange={e => setIsPublic(e.target.checked)}
+            />
+            <span className="settings-toggle-track" aria-hidden="true"><span className="settings-toggle-dot" /></span>
+            <div>
+              <div className="settings-toggle-label">{isPublic ? "Public — anyone with the link" : "Private — only people I share with"}</div>
+              {isPublic && (
+                <div className="settings-toggle-help">Share the link below with anyone you want to give access.</div>
+              )}
             </div>
-          </div>
-        </label>
+          </label>
+          {isPublic && (
+            <div className="settings-link-row">
+              <input className="settings-link-input" value={publicUrl} readOnly onFocus={e => e.currentTarget.select()} />
+              <button onClick={() => navigator.clipboard.writeText(publicUrl)}>
+                <Copy size={14} /> <span>Copy link</span>
+              </button>
+            </div>
+          )}
+        </section>
 
-        {isPublic && (
-          <div>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Public link:</div>
-            <div className="share-link">{publicUrl}</div>
-            <button onClick={() => navigator.clipboard.writeText(publicUrl)} style={{ marginTop: 6 }}>
-              Copy link
-            </button>
-          </div>
-        )}
+        {/* Automations */}
+        <section className="settings-section">
+          <FolderAutomationsPanel folderId={folderId} />
+        </section>
 
         {error && <div className="msg err">{error}</div>}
       </div>
@@ -2434,46 +3027,557 @@ const ShareText: React.FC<{ blobUrl: string }> = ({ blobUrl }) => {
   return <pre className="preview-text">{text}</pre>
 }
 
+/* ─────────── Action Builder views ─────────── */
+
+const TRIGGER_LABELS: Record<api.ActionEventName, string> = {
+  "file.created": "A file is uploaded here",
+  "file.updated": "A file here is renamed or replaced",
+  "file.deleted": "A file here is deleted",
+  "file.moved.in": "A file is moved here",
+  "file.moved.out": "A file is moved away",
+  "folder.created": "A subfolder is created",
+  "folder.updated": "A subfolder is renamed",
+  "folder.deleted": "A subfolder is deleted",
+  "folder.moved.in": "A subfolder is moved here",
+  "folder.moved.out": "A subfolder is moved away",
+}
+
+const ALL_TRIGGERS: api.ActionEventName[] = [
+  "file.created", "file.moved.in", "file.updated", "file.deleted", "file.moved.out",
+  "folder.created", "folder.moved.in", "folder.updated", "folder.deleted", "folder.moved.out",
+]
+
+type RegistryAction = {
+  slug: string
+  name: string
+  description: string
+  icon?: string | null
+  is_builtin?: boolean
+  editable?: boolean
+  forked_from?: string | null
+}
+
+const ActionsListView: React.FC = () => {
+  const [registry, setRegistry] = useState<RegistryAction[]>([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+
+  const load = async () => {
+    const reg = await jsonFetch("/api/actions/registry")
+    setRegistry(reg.actions ?? [])
+  }
+  useEffect(() => { void load() }, [])
+
+  const builtins = registry.filter(r => r.is_builtin)
+  const userActions = registry.filter(r => !r.is_builtin)
+
+  const cloneBuiltin = async (slug: string) => {
+    setBusy(true); setError("")
+    const res = await api.cloneBuiltin(slug)
+    setBusy(false)
+    if (res.error) return setError(res.error)
+    navigate(`/app/actions/${res.id}/edit`)
+  }
+
+  const createBlank = async () => {
+    setBusy(true); setError("")
+    const res = await api.createUserAction({
+      name: "New action",
+      description: "",
+      icon: "Zap",
+      triggers: ["file.created"],
+      steps: [],
+    })
+    setBusy(false)
+    if (res.error) return setError(res.error)
+    navigate(`/app/actions/${res.id}/edit`)
+  }
+
+  const remove = async (id: number, name: string) => {
+    if (!confirm(`Remove "${name}"? This will also detach it from any folders.`)) return
+    setBusy(true)
+    await api.deleteUserAction(id)
+    setBusy(false)
+    await load()
+  }
+
+  return (
+    <div className="main">
+      <div className="toolbar">
+        <div className="toolbar-actions">
+          <button className="primary" onClick={createBlank} disabled={busy}>
+            <Plus size={14} /> <span>New action</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="content">
+        <div className="path-bar"><div className="crumbs"><span className="current">Actions</span></div></div>
+
+        {error && <div className="msg err">{error}</div>}
+
+        <section className="actions-section">
+          <div className="actions-section-head">
+            <div>
+              <div className="actions-section-title">Built-in</div>
+              <div className="actions-section-sub">Read-only. Use them as-is, or save a copy and customize.</div>
+            </div>
+          </div>
+          <div className="actions-grid">
+            {builtins.length === 0 && <div className="actions-empty">No built-in actions.</div>}
+            {builtins.map(a => (
+              <div key={a.slug} className="action-tile builtin">
+                <div className="action-tile-icon"><Zap size={20} strokeWidth={1.6} /></div>
+                <div className="action-tile-name">{a.name} <span className="action-tile-badge">Built-in</span></div>
+                <div className="action-tile-desc">{a.description}</div>
+                <div className="action-tile-buttons">
+                  <button onClick={() => cloneBuiltin(a.slug)} disabled={busy}>Save a copy</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="actions-section">
+          <div className="actions-section-head">
+            <div>
+              <div className="actions-section-title">Your actions</div>
+              <div className="actions-section-sub">Build, edit, and reuse your own automations.</div>
+            </div>
+          </div>
+          <div className="actions-grid">
+            {userActions.length === 0 && (
+              <div className="actions-empty">
+                Nothing yet. Save a copy of a built-in or click <strong>New action</strong> to start from scratch.
+              </div>
+            )}
+            {userActions.map(a => (
+              <div key={a.slug} className="action-tile">
+                <div className="action-tile-icon"><Zap size={20} strokeWidth={1.6} /></div>
+                <div className="action-tile-name">{a.name}</div>
+                {a.description && <div className="action-tile-desc">{a.description}</div>}
+                {a.forked_from && <div className="action-tile-sub">Based on {a.forked_from}</div>}
+                <div className="action-tile-buttons">
+                  <button onClick={() => navigate(`/app/actions/${(a as any).id ?? Number(a.slug.replace(/^u\//, ""))}/edit`)}>
+                    <Edit3 size={13} /> <span>Edit</span>
+                  </button>
+                  <button className="danger" onClick={() => remove((a as any).id ?? Number(a.slug.replace(/^u\//, "")), a.name)}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </div>
+  )
+}
+
+const ActionEditView: React.FC<{ id: number }> = ({ id }) => {
+  const [draft, setDraft] = useState<api.UserAction | null>(null)
+  const [primitives, setPrimitives] = useState<api.PrimitiveDescriptor[]>([])
+  const [picking, setPicking] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+  const [dirty, setDirty] = useState(false)
+
+  useEffect(() => {
+    void (async () => {
+      const [a, p] = await Promise.all([
+        api.getUserAction(id),
+        api.listPrimitives(),
+      ])
+      if ((a as any).error) { setError((a as any).error); return }
+      setDraft(a as api.UserAction)
+      setPrimitives(p.primitives ?? [])
+    })()
+  }, [id])
+
+  const update = (patch: Partial<api.UserAction>) => {
+    if (!draft) return
+    setDraft({ ...draft, ...patch })
+    setDirty(true)
+  }
+
+  const updateStep = (i: number, config: Record<string, unknown>) => {
+    if (!draft) return
+    const steps = draft.steps.map((s, idx) => idx === i ? { ...s, config } : s)
+    update({ steps })
+  }
+
+  const removeStep = (i: number) => {
+    if (!draft) return
+    update({ steps: draft.steps.filter((_, idx) => idx !== i) })
+  }
+
+  const moveStep = (i: number, delta: -1 | 1) => {
+    if (!draft) return
+    const next = [...draft.steps]
+    const j = i + delta
+    if (j < 0 || j >= next.length) return
+    ;[next[i], next[j]] = [next[j]!, next[i]!]
+    update({ steps: next })
+  }
+
+  const initialConfigFor = (prim: api.PrimitiveDescriptor): Record<string, unknown> => {
+    const props = ((prim.config_schema as any)?.properties ?? {}) as Record<string, any>
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(props)) {
+      if (v?.default !== undefined) out[k] = v.default
+    }
+    return out
+  }
+
+  const addStep = (prim: api.PrimitiveDescriptor) => {
+    if (!draft) return
+    update({ steps: [...draft.steps, { kind: prim.kind, config: initialConfigFor(prim) }] })
+    setPicking(false)
+  }
+
+  const toggleTrigger = (t: api.ActionEventName) => {
+    if (!draft) return
+    const has = draft.triggers.includes(t)
+    update({ triggers: has ? draft.triggers.filter(x => x !== t) : [...draft.triggers, t] })
+  }
+
+  const save = async () => {
+    if (!draft) return
+    setBusy(true); setError("")
+    const res = await api.updateUserAction(draft.id, {
+      name: draft.name,
+      description: draft.description,
+      icon: draft.icon,
+      triggers: draft.triggers,
+      steps: draft.steps,
+      enabled: draft.enabled,
+    })
+    setBusy(false)
+    if ((res as any).error) return setError((res as any).error)
+    setDraft(res as api.UserAction)
+    setDirty(false)
+  }
+
+  if (!draft) {
+    return (
+      <div className="main">
+        <div className="content">{error ? <div className="msg err">{error}</div> : "Loading…"}</div>
+      </div>
+    )
+  }
+
+  const groups = {
+    filter: primitives.filter(p => p.category === "filter"),
+    transform: primitives.filter(p => p.category === "transform"),
+    route: primitives.filter(p => p.category === "route"),
+  }
+
+  return (
+    <div className="main">
+      <div className="toolbar">
+        <div className="toolbar-actions">
+          <button onClick={() => navigate("/app/actions")}>← Back</button>
+          <button className="primary" onClick={save} disabled={!dirty || busy}>
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+
+      <div className="content">
+        <div className="path-bar">
+          <div className="crumbs">
+            <span className="crumb" onClick={() => navigate("/app/actions")}>Actions</span>
+            <span className="sep"><ChevronRight size={14} /></span>
+            <span className="current">{draft.name}</span>
+          </div>
+        </div>
+
+        <div className="action-edit">
+          <section className="action-edit-section">
+            <label className="action-edit-field">
+              <span>Name</span>
+              <input
+                type="text"
+                value={draft.name}
+                onChange={e => update({ name: e.target.value })}
+              />
+            </label>
+            <label className="action-edit-field">
+              <span>Description</span>
+              <textarea
+                rows={2}
+                value={draft.description ?? ""}
+                onChange={e => update({ description: e.target.value })}
+              />
+            </label>
+          </section>
+
+          <section className="action-edit-section">
+            <div className="action-edit-section-title">When this action runs</div>
+            <div className="action-edit-section-sub">Pick one or more events. The action runs on each one.</div>
+            <div className="trigger-grid">
+              {ALL_TRIGGERS.map(t => {
+                const on = draft.triggers.includes(t)
+                return (
+                  <label key={t} className={`trigger-card${on ? " on" : ""}`}>
+                    <input type="checkbox" checked={on} onChange={() => toggleTrigger(t)} />
+                    <span>{TRIGGER_LABELS[t]}</span>
+                  </label>
+                )
+              })}
+            </div>
+            {draft.triggers.length === 0 && (
+              <div className="msg warn">This action won't run until you check at least one event.</div>
+            )}
+          </section>
+
+          <section className="action-edit-section">
+            <div className="action-edit-section-title">Steps to run, in order</div>
+            <div className="action-edit-section-sub">Each step happens to the file in turn. Filters can stop the chain.</div>
+
+            {draft.steps.length === 0 && !picking && (
+              <div className="actions-empty">No steps yet. Add one below.</div>
+            )}
+
+            {draft.steps.map((step, i) => {
+              const prim = primitives.find(p => p.kind === step.kind)
+              return (
+                <div key={i} className={`step-card category-${prim?.category ?? "other"}`}>
+                  <div className="step-card-head">
+                    <div>
+                      <div className="step-card-title">{prim?.name ?? step.kind}</div>
+                      <div className="step-card-cat">{prim?.category ?? "step"}</div>
+                    </div>
+                    <div className="step-card-buttons">
+                      <button onClick={() => moveStep(i, -1)} disabled={i === 0} title="Move up">↑</button>
+                      <button onClick={() => moveStep(i, 1)} disabled={i === draft.steps.length - 1} title="Move down">↓</button>
+                      <button className="danger" onClick={() => removeStep(i)} title="Remove">×</button>
+                    </div>
+                  </div>
+                  {prim && (
+                    <PrimitiveConfigForm
+                      prim={prim}
+                      value={step.config}
+                      onChange={cfg => updateStep(i, cfg)}
+                    />
+                  )}
+                </div>
+              )
+            })}
+
+            {picking ? (
+              <div className="step-picker">
+                <div className="step-picker-head">
+                  <div className="step-picker-title">Add a step</div>
+                  <button onClick={() => setPicking(false)}>Cancel</button>
+                </div>
+                {(["filter", "transform", "route"] as const).map(cat => groups[cat].length > 0 && (
+                  <div key={cat} className="step-picker-group">
+                    <div className="step-picker-group-title">{cat}</div>
+                    <div className="step-picker-grid">
+                      {groups[cat].map(p => (
+                        <button key={p.kind} type="button" className="step-picker-card" onClick={() => addStep(p)}>
+                          <div className="step-picker-card-name">{p.name}</div>
+                          <div className="step-picker-card-desc">{p.description}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <button className="step-add" onClick={() => setPicking(true)}>
+                <Plus size={14} /> <span>Add step</span>
+              </button>
+            )}
+          </section>
+
+          {error && <div className="msg err">{error}</div>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const PrimitiveConfigForm: React.FC<{
+  prim: api.PrimitiveDescriptor
+  value: Record<string, unknown>
+  onChange: (v: Record<string, unknown>) => void
+}> = ({ prim, value, onChange }) => {
+  const schema = (prim.config_schema as any) ?? {}
+  const props = (schema.properties ?? {}) as Record<string, any>
+  const required = (schema.required ?? []) as string[]
+  const entries = Object.entries(props)
+  if (entries.length === 0) return null
+
+  return (
+    <div className="step-config">
+      {entries.map(([key, prop]) => {
+        const val = value[key]
+        const label = prop.title ?? key
+        const help = prop.description
+        const isRequired = required.includes(key)
+
+        if (Array.isArray(prop.enum) && prop.type === "string") {
+          return (
+            <label key={key} className="step-config-field">
+              <span>{label}{isRequired && <em className="req"> *</em>}</span>
+              <select value={(val as string) ?? ""} onChange={e => onChange({ ...value, [key]: e.target.value })}>
+                {!isRequired && !prop.default && <option value="">— choose —</option>}
+                {prop.enum.map((opt: string) => <option key={opt} value={opt}>{opt}</option>)}
+              </select>
+              {help && <span className="step-config-help">{help}</span>}
+            </label>
+          )
+        }
+        if (prop.type === "integer" || prop.type === "number") {
+          return (
+            <label key={key} className="step-config-field">
+              <span>{label}{isRequired && <em className="req"> *</em>}</span>
+              <input
+                type="number"
+                min={prop.minimum}
+                max={prop.maximum}
+                value={val === undefined || val === null ? "" : String(val)}
+                onChange={e => {
+                  const v = e.target.value
+                  onChange({ ...value, [key]: v === "" ? undefined : (prop.type === "integer" ? parseInt(v, 10) : parseFloat(v)) })
+                }}
+              />
+              {help && <span className="step-config-help">{help}</span>}
+            </label>
+          )
+        }
+        if (prop.type === "boolean") {
+          return (
+            <label key={key} className="step-config-field step-config-row">
+              <input type="checkbox" checked={!!val} onChange={e => onChange({ ...value, [key]: e.target.checked })} />
+              <span>{label}{isRequired && <em className="req"> *</em>}</span>
+              {help && <span className="step-config-help">{help}</span>}
+            </label>
+          )
+        }
+        if (prop.type === "array" && prop.items?.enum) {
+          const arr = Array.isArray(val) ? (val as string[]) : []
+          const items = (prop.items.enum as string[])
+          return (
+            <div key={key} className="step-config-field">
+              <span>{label}{isRequired && <em className="req"> *</em>}</span>
+              <div className="step-config-chips">
+                {items.map(item => {
+                  const on = arr.includes(item)
+                  return (
+                    <button
+                      key={item}
+                      type="button"
+                      className={`chip${on ? " on" : ""}`}
+                      onClick={() => onChange({ ...value, [key]: on ? arr.filter(x => x !== item) : [...arr, item] })}
+                    >
+                      {item}
+                    </button>
+                  )
+                })}
+              </div>
+              {help && <span className="step-config-help">{help}</span>}
+            </div>
+          )
+        }
+        return (
+          <label key={key} className="step-config-field">
+            <span>{label}{isRequired && <em className="req"> *</em>}</span>
+            <input
+              type="text"
+              value={(val as string) ?? ""}
+              onChange={e => onChange({ ...value, [key]: e.target.value })}
+            />
+            {help && <span className="step-config-help">{help}</span>}
+          </label>
+        )
+      })}
+    </div>
+  )
+}
+
+const jsonFetch = async (path: string) => {
+  const res = await fetch(path, {
+    headers: api.getToken() ? { authorization: `Bearer ${api.getToken()}` } : {},
+  })
+  return res.json()
+}
+
+const SIDEBAR_COLLAPSED_KEY = "stohr_sidebar_collapsed"
+
 const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, route }) => {
   const [userSnapshot, setUserSnapshot] = useState(api.getUser())
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1" } catch { return false }
+  })
 
-  const activeTab: "files" | "shared" | "links" | "trash" | "settings" | "admin" = (() => {
+  const toggleCollapsed = () => {
+    setCollapsed(v => {
+      const next = !v
+      try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0") } catch {}
+      return next
+    })
+  }
+
+  const activeTab: "files" | "shared" | "links" | "actions" | "trash" | "settings" | "admin" = (() => {
     if (route.kind === "shared") return "shared"
     if (route.kind === "links") return "links"
+    if (route.kind === "actions" || route.kind === "actionEdit") return "actions"
     if (route.kind === "trash") return "trash"
     if (route.kind === "settings") return "settings"
     if (route.kind === "admin") return "admin"
     return "files"
   })()
 
+  const initial = (userSnapshot?.name?.[0] ?? userSnapshot?.username?.[0] ?? "?").toUpperCase()
+
   return (
-    <div className="shell">
+    <div className={`shell${collapsed ? " collapsed" : ""}`}>
       <aside className="sidebar">
-        <div className="brand"><Logo /></div>
-        <div className={`nav${activeTab === "files" ? " active" : ""}`} onClick={() => navigate("/")}>
-          <FolderOpen size={18} strokeWidth={1.75} /> <span>My Files</span>
+        <div className="sidebar-head">
+          <div className="brand"><Logo /></div>
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={toggleCollapsed}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            <PanelLeft size={16} strokeWidth={1.75} />
+          </button>
         </div>
-        <div className={`nav${activeTab === "shared" ? " active" : ""}`} onClick={() => navigate("/app/shared")}>
-          <Users size={18} strokeWidth={1.75} /> <span>Shared with me</span>
+        <div className={`nav${activeTab === "files" ? " active" : ""}`} onClick={() => navigate("/")} title="My Files">
+          <FolderOpen size={18} strokeWidth={1.75} /> <span className="nav-label">My Files</span>
         </div>
-        <div className={`nav${activeTab === "links" ? " active" : ""}`} onClick={() => navigate("/app/links")}>
-          <Link2 size={18} strokeWidth={1.75} /> <span>Public links</span>
+        <div className={`nav${activeTab === "shared" ? " active" : ""}`} onClick={() => navigate("/app/shared")} title="Shared with me">
+          <Users size={18} strokeWidth={1.75} /> <span className="nav-label">Shared with me</span>
         </div>
-        <div className={`nav${activeTab === "trash" ? " active" : ""}`} onClick={() => navigate("/app/trash")}>
-          <Trash2 size={18} strokeWidth={1.75} /> <span>Trash</span>
+        <div className={`nav${activeTab === "links" ? " active" : ""}`} onClick={() => navigate("/app/links")} title="Public links">
+          <Link2 size={18} strokeWidth={1.75} /> <span className="nav-label">Public links</span>
         </div>
-        <div className={`nav${activeTab === "settings" ? " active" : ""}`} onClick={() => navigate("/app/settings")}>
-          <SettingsIcon size={18} strokeWidth={1.75} /> <span>Settings</span>
+        <div className={`nav${activeTab === "actions" ? " active" : ""}`} onClick={() => navigate("/app/actions")} title="Actions">
+          <Zap size={18} strokeWidth={1.75} /> <span className="nav-label">Actions</span>
+        </div>
+        <div className={`nav${activeTab === "trash" ? " active" : ""}`} onClick={() => navigate("/app/trash")} title="Trash">
+          <Trash2 size={18} strokeWidth={1.75} /> <span className="nav-label">Trash</span>
+        </div>
+        <div className={`nav${activeTab === "settings" ? " active" : ""}`} onClick={() => navigate("/app/settings")} title="Settings">
+          <SettingsIcon size={18} strokeWidth={1.75} /> <span className="nav-label">Settings</span>
         </div>
         {userSnapshot?.is_owner && (
-          <div className={`nav${activeTab === "admin" ? " active" : ""}`} onClick={() => navigate("/app/admin")}>
-            <AlertTriangle size={18} strokeWidth={1.75} /> <span>Admin</span>
+          <div className={`nav${activeTab === "admin" ? " active" : ""}`} onClick={() => navigate("/app/admin")} title="Admin">
+            <AlertTriangle size={18} strokeWidth={1.75} /> <span className="nav-label">Admin</span>
           </div>
         )}
         <div className="user-footer">
-          <div className="who">{userSnapshot?.name ?? ""}</div>
-          <div className="who">@{userSnapshot?.username ?? ""}</div>
-          <div className="logout" onClick={onLogout}>Sign out</div>
+          <div className="user-avatar" aria-hidden="true">{initial}</div>
+          <div className="user-meta">
+            <div className="who">{userSnapshot?.name ?? ""}</div>
+            <div className="who muted">@{userSnapshot?.username ?? ""}</div>
+            <div className="logout" onClick={onLogout}>Sign out</div>
+          </div>
         </div>
       </aside>
       {activeTab === "files" && (
@@ -2484,6 +3588,8 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
       )}
       {activeTab === "shared" && <SharedView />}
       {activeTab === "links" && <SharesView />}
+      {activeTab === "actions" && route.kind === "actions" && <ActionsListView />}
+      {activeTab === "actions" && route.kind === "actionEdit" && <ActionEditView id={route.id} />}
       {activeTab === "trash" && <TrashView />}
       {activeTab === "settings" && (
         <Settings
@@ -4625,6 +5731,209 @@ const InviteRequestForm: React.FC = () => {
   )
 }
 
+const HeroMock: React.FC = () => (
+  <div className="lp-mock lp-mock-hero" aria-hidden="true">
+    <div className="lp-mock-chrome">
+      <span className="lp-mock-dot" /><span className="lp-mock-dot" /><span className="lp-mock-dot" />
+      <div className="lp-mock-url">stohr.io / app</div>
+    </div>
+    <div className="lp-mock-shell">
+      <aside className="lp-mock-sidebar">
+        <div className="lp-mock-brand">stohr</div>
+        <ul>
+          <li className="active"><FolderOpen size={14} strokeWidth={1.75} /> My Files</li>
+          <li><Users size={14} strokeWidth={1.75} /> Shared</li>
+          <li><Link2 size={14} strokeWidth={1.75} /> Public links</li>
+          <li><Trash2 size={14} strokeWidth={1.75} /> Trash</li>
+          <li><SettingsIcon size={14} strokeWidth={1.75} /> Settings</li>
+        </ul>
+      </aside>
+      <div className="lp-mock-main">
+        <div className="lp-mock-toolbar">
+          <span>My Files</span>
+          <span className="lp-mock-sep">/</span>
+          <span>Photos</span>
+          <span className="lp-mock-sep">/</span>
+          <strong>Trips</strong>
+        </div>
+        <div className="lp-mock-grid">
+          {Array.from({ length: 9 }).map((_, i) => (
+            <div key={i} className={`lp-mock-tile lp-mock-tile-${i + 1}`} />
+          ))}
+        </div>
+      </div>
+    </div>
+    <div className="lp-mock-toast">
+      <Check size={14} strokeWidth={2.5} />
+      Public link copied <code>stohr.io/p/wess/photos</code>
+    </div>
+  </div>
+)
+
+const PhotoGridMock: React.FC = () => (
+  <div className="lp-mock lp-mock-gallery" aria-hidden="true">
+    <div className="lp-mock-gallery-grid">
+      {Array.from({ length: 9 }).map((_, i) => (
+        <div key={i} className={`lp-mock-tile lp-mock-tile-${i + 1}`} />
+      ))}
+    </div>
+    <div className="lp-mock-gallery-pip">
+      <span className="lp-mock-pip-key">↑↓←→</span>
+      <span>navigate</span>
+      <span className="lp-mock-pip-key">esc</span>
+      <span>close</span>
+    </div>
+  </div>
+)
+
+const ActionFolderMock: React.FC = () => (
+  <div className="lp-mock lp-mock-card lp-mock-action" aria-hidden="true">
+    <div className="lp-mock-card-head">
+      <FolderIcon size={16} strokeWidth={1.75} />
+      <span>Photos</span>
+      <span className="lp-mock-sep">/</span>
+      <strong>thumbnails</strong>
+      <span className="lp-mock-action-chip"><Zap size={11} strokeWidth={2.5} /> Action</span>
+    </div>
+    <div className="lp-mock-action-body">
+      <div className="lp-mock-action-line">
+        <code className="lp-mock-event">file.created</code>
+        <ArrowRight size={14} strokeWidth={2} className="lp-mock-arrow" />
+        <code className="lp-mock-slug">stohr/resize-image</code>
+      </div>
+      <div className="lp-mock-action-line">
+        <code className="lp-mock-event">file.moved.in</code>
+        <ArrowRight size={14} strokeWidth={2} className="lp-mock-arrow" />
+        <code className="lp-mock-slug">stohr/resize-image</code>
+      </div>
+      <div className="lp-mock-action-result">
+        <Check size={13} strokeWidth={2.5} />
+        <span>sunset.jpg → 800×600 · 245 KB → 38 KB</span>
+      </div>
+    </div>
+  </div>
+)
+
+const CollabMock: React.FC = () => (
+  <div className="lp-mock lp-mock-card lp-mock-collab" aria-hidden="true">
+    <div className="lp-mock-card-head">
+      <FolderIcon size={16} strokeWidth={1.75} />
+      <strong>Wedding photos</strong>
+      <span className="lp-mock-public-pill">Shared</span>
+    </div>
+    <ul className="lp-mock-collab-list">
+      <li>
+        <span className="lp-mock-avatar lp-mock-avatar-1">W</span>
+        <span className="lp-mock-collab-name">@wess</span>
+        <span className="lp-mock-role lp-mock-role-owner">Owner</span>
+      </li>
+      <li>
+        <span className="lp-mock-avatar lp-mock-avatar-2">A</span>
+        <span className="lp-mock-collab-name">alice@studio.io</span>
+        <span className="lp-mock-role lp-mock-role-editor">Editor</span>
+      </li>
+      <li>
+        <span className="lp-mock-avatar lp-mock-avatar-3">B</span>
+        <span className="lp-mock-collab-name">@ben</span>
+        <span className="lp-mock-role lp-mock-role-viewer">Viewer</span>
+      </li>
+      <li className="lp-mock-collab-pending">
+        <span className="lp-mock-avatar lp-mock-avatar-pending">·</span>
+        <span className="lp-mock-collab-name">cara@team.dev</span>
+        <span className="lp-mock-role lp-mock-role-pending">Pending</span>
+      </li>
+    </ul>
+  </div>
+)
+
+const LinkMock: React.FC = () => (
+  <div className="lp-mock lp-mock-card lp-mock-link" aria-hidden="true">
+    <div className="lp-mock-link-bar">
+      <Link2 size={15} strokeWidth={1.75} />
+      <code>stohr.io/p/wess/photos/124</code>
+      <button type="button"><Copy size={13} strokeWidth={2} /> Copy</button>
+    </div>
+    <div className="lp-mock-link-meta">
+      <span className="lp-mock-link-pill">Public</span>
+      <span>Expires in 30 days</span>
+      <span className="lp-mock-sep">·</span>
+      <span>0 views</span>
+    </div>
+    <div className="lp-mock-link-preview">
+      <div className="lp-mock-tile lp-mock-tile-2" />
+      <div className="lp-mock-link-preview-text">
+        <strong>Trips / Iceland</strong>
+        <span>14 photos · 142 MB</span>
+      </div>
+    </div>
+  </div>
+)
+
+const TerminalMock: React.FC = () => (
+  <div className="lp-mock lp-mock-card lp-mock-term" aria-hidden="true">
+    <div className="lp-mock-term-head">
+      <span className="lp-mock-dot lp-mock-dot-r" />
+      <span className="lp-mock-dot lp-mock-dot-y" />
+      <span className="lp-mock-dot lp-mock-dot-g" />
+      <span className="lp-mock-term-title">~/stohr</span>
+    </div>
+    <div className="lp-mock-term-body">
+      <div><span className="lp-mock-prompt">$</span> cp .env.example .env</div>
+      <div><span className="lp-mock-prompt">$</span> bun install</div>
+      <div><span className="lp-mock-prompt">$</span> bun run dev</div>
+      <div className="lp-mock-term-ok">▸ api on http://localhost:3000</div>
+      <div className="lp-mock-term-ok">▸ web on http://localhost:3001</div>
+      <div className="lp-mock-term-cursor"><span className="lp-mock-prompt">$</span> <span className="lp-mock-caret">▍</span></div>
+    </div>
+  </div>
+)
+
+type Feature = {
+  num: string
+  eyebrow: string
+  title: React.ReactNode
+  body: React.ReactNode
+  visual: React.ReactNode
+}
+
+const FEATURES: Feature[] = [
+  {
+    num: "01",
+    eyebrow: "Galleries",
+    title: <>Photo galleries, <em>instantly</em>.</>,
+    body: <>Mark any folder as a Photos folder and the view becomes a tight square grid with click-to-lightbox keyboard navigation. Zero plugins, zero config — just toggle a checkbox.</>,
+    visual: <PhotoGridMock />,
+  },
+  {
+    num: "02",
+    eyebrow: "Action folders",
+    title: <>Folders that <em>act for you</em>.</>,
+    body: <>Attach automations directly to a folder. Resize images on upload, route files into year/month subfolders, run any built-in or community action on <code>file.created</code>, <code>file.moved.in</code>, and more.</>,
+    visual: <ActionFolderMock />,
+  },
+  {
+    num: "03",
+    eyebrow: "Collaboration",
+    title: <>Real <em>collaboration</em>.</>,
+    body: <>Share folders by username or email with viewer or editor roles. Pending invites resolve automatically when the other person signs up — no copying tokens around.</>,
+    visual: <CollabMock />,
+  },
+  {
+    num: "04",
+    eyebrow: "Public links",
+    title: <>Public links <em>without the chrome</em>.</>,
+    body: <>Flip on public access and get a clean <code>/p/you/123</code> URL anyone can browse — no signup wall, no upsells, no email capture before they see your work.</>,
+    visual: <LinkMock />,
+  },
+  {
+    num: "05",
+    eyebrow: "Self-host",
+    title: <>Self-host <em>or</em> hosted.</>,
+    body: <>Same code on both sides. Run it yourself on a $6 droplet with one command, or let us host it. Migrate either way whenever you want — your files are S3-compatible.</>,
+    visual: <TerminalMock />,
+  },
+]
+
 const LandingPage: React.FC = () => {
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -4653,11 +5962,12 @@ const LandingPage: React.FC = () => {
         <nav className="lp-nav-links">
           <a href="#features">Features</a>
           <a href="#pricing">Pricing</a>
+          <a href="#beta">Beta</a>
           <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer">GitHub</a>
         </nav>
         <div className="lp-nav-cta">
           <a href="/login" className="lp-link">Sign in</a>
-          <a href="/signup" className="lp-btn lp-btn-primary">Get started</a>
+          <a href="#beta" className="lp-btn lp-btn-primary">Get an invite</a>
         </div>
       </header>
 
@@ -4670,70 +5980,93 @@ const LandingPage: React.FC = () => {
             Your rules.
           </h1>
           <p className="lp-lede">
-            Photo galleries, real-time collaboration, public sharing — without
-            the surveillance, the upsells, or the dark patterns. Run it on a
-            $6 droplet, or pay us to.
+            Photo galleries, scriptable folders, public sharing — without the
+            surveillance, the upsells, or the dark patterns. Run it on a $6
+            droplet, or pay us to.
           </p>
           <div className="lp-cta-row">
-            <a href="/signup" className="lp-btn lp-btn-primary lp-btn-lg">Start free</a>
-            <a href="#pricing" className="lp-btn lp-btn-ghost lp-btn-lg">See pricing</a>
+            <a href="#beta" className="lp-btn lp-btn-primary lp-btn-lg">Get on the beta list</a>
+            <a href="#features" className="lp-btn lp-btn-ghost lp-btn-lg">See what's inside <ChevronRight size={16} strokeWidth={2} /></a>
           </div>
         </div>
-        <div className="lp-hero-form">
+        <div className="lp-hero-vis">
+          <HeroMock />
+        </div>
+      </section>
+
+      <section className="lp-trust" aria-label="Open source and stack">
+        <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer" className="lp-trust-item lp-trust-link">
+          <Github size={16} strokeWidth={1.75} /> github.com/wess/stohr
+        </a>
+        <span className="lp-trust-item">MIT licensed</span>
+        <span className="lp-trust-item">$6/mo droplet</span>
+        <span className="lp-trust-item">S3-compatible</span>
+        <span className="lp-trust-item">Bun · React · Postgres</span>
+      </section>
+
+      <section className="lp-features" id="features">
+        <header className="lp-section-head">
+          <p className="lp-eyebrow">Features</p>
+          <h2>Built for the way <em>you</em> store.</h2>
+          <p className="lp-section-lede">Five things that make Stohr feel different the moment you start using it.</p>
+        </header>
+
+        <div className="lp-feature-rows">
+          {FEATURES.map((f, i) => (
+            <article key={f.num} className={`lp-feature-row${i % 2 === 1 ? " lp-feature-row-rev" : ""}`}>
+              <div className="lp-feature-text">
+                <div className="lp-feature-tag">
+                  <span className="lp-num">{f.num}</span>
+                  <span className="lp-feature-eyebrow">{f.eyebrow}</span>
+                </div>
+                <h3>{f.title}</h3>
+                <p>{f.body}</p>
+              </div>
+              <div className="lp-feature-vis">
+                {f.visual}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="lp-beta" id="beta">
+        <div className="lp-beta-text">
+          <p className="lp-eyebrow">Beta · invite only</p>
+          <h2>Get on the <em>list</em>.</h2>
+          <p className="lp-section-lede">
+            We're rolling access out in waves so we can support every account
+            properly. No spam, no marketing emails — we'll write once when
+            there's space.
+          </p>
+          <ul className="lp-beta-points">
+            <li><Check size={14} strokeWidth={2.5} /> Free tier on day one</li>
+            <li><Check size={14} strokeWidth={2.5} /> Migrate out anytime — files are S3-compatible</li>
+            <li><Check size={14} strokeWidth={2.5} /> Self-host stays open source forever</li>
+          </ul>
+        </div>
+        <div className="lp-beta-form">
           <InviteRequestForm />
         </div>
       </section>
 
-      <section className="lp-features" id="features">
-        <h2>Built for the way <em>you</em> store.</h2>
-        <ol className="lp-feature-list">
-          <li>
-            <span className="lp-num">01</span>
-            <div>
-              <h3>Photo galleries, instantly.</h3>
-              <p>Mark any folder as a Photos folder and the view becomes a tight square grid with click-to-lightbox keyboard navigation. Zero plugins, zero config — just toggle a checkbox.</p>
-            </div>
-          </li>
-          <li>
-            <span className="lp-num">02</span>
-            <div>
-              <h3>Real collaboration.</h3>
-              <p>Share folders by username or email, with viewer or editor roles. Pending invites resolve automatically when the other person signs up — no copying tokens around.</p>
-            </div>
-          </li>
-          <li>
-            <span className="lp-num">03</span>
-            <div>
-              <h3>Public links without the chrome.</h3>
-              <p>Flip on public access and you get a clean <code>/p/you/123</code> URL anyone can browse — no signup wall, no upsells, no email capture before they see your work.</p>
-            </div>
-          </li>
-          <li>
-            <span className="lp-num">04</span>
-            <div>
-              <h3>Self-host or hosted.</h3>
-              <p>Same code on both sides. Run it yourself on a $6 droplet with one command, or let us host it. Migrate either way whenever you want — your files are S3-compatible.</p>
-            </div>
-          </li>
-        </ol>
-      </section>
-
       <section className="lp-pricing" id="pricing">
-        <div className="lp-pricing-head">
-          <h2>Simple pricing.</h2>
-          <p>Pay for storage, not for features. Every plan includes everything below.</p>
-        </div>
+        <header className="lp-section-head">
+          <p className="lp-eyebrow">Pricing</p>
+          <h2>Pay for storage. <em>Not features.</em></h2>
+          <p className="lp-section-lede">Every plan includes everything you saw above. The only thing that changes between tiers is how much room you get.</p>
+        </header>
 
         <div className="lp-tiers">
           <article className="lp-tier">
             <header className="lp-tier-head">Free</header>
             <div className="lp-price"><span className="lp-amount">$0</span></div>
             <div className="lp-storage">5 GB</div>
-            <a href="/signup" className="lp-btn lp-btn-ghost lp-btn-block">Start free</a>
+            <a href="#beta" className="lp-btn lp-btn-ghost lp-btn-block">Start free</a>
             <ul>
               <li>Photo galleries</li>
+              <li>Action folders</li>
               <li>Public sharing</li>
-              <li>Up to 5 collaborators</li>
             </ul>
           </article>
 
@@ -4741,7 +6074,7 @@ const LandingPage: React.FC = () => {
             <header className="lp-tier-head">Personal</header>
             <div className="lp-price"><span className="lp-amount">$6</span><span className="lp-period">/mo</span></div>
             <div className="lp-storage">50 GB</div>
-            <a href="/signup" className="lp-btn lp-btn-primary lp-btn-block">Choose Personal</a>
+            <a href="#beta" className="lp-btn lp-btn-primary lp-btn-block">Choose Personal</a>
             <ul>
               <li>Everything in Free</li>
               <li>Unlimited collaborators</li>
@@ -4753,7 +6086,7 @@ const LandingPage: React.FC = () => {
             <header className="lp-tier-head">Pro <span className="lp-pop">popular</span></header>
             <div className="lp-price"><span className="lp-amount">$14</span><span className="lp-period">/mo</span></div>
             <div className="lp-storage">250 GB</div>
-            <a href="/signup" className="lp-btn lp-btn-primary lp-btn-block">Choose Pro</a>
+            <a href="#beta" className="lp-btn lp-btn-primary lp-btn-block">Choose Pro</a>
             <ul>
               <li>Everything in Personal</li>
               <li>Custom domains <em>(soon)</em></li>
@@ -4765,7 +6098,7 @@ const LandingPage: React.FC = () => {
             <header className="lp-tier-head">Studio</header>
             <div className="lp-price"><span className="lp-amount">$34</span><span className="lp-period">/mo</span></div>
             <div className="lp-storage">1 TB</div>
-            <a href="/signup" className="lp-btn lp-btn-primary lp-btn-block">Choose Studio</a>
+            <a href="#beta" className="lp-btn lp-btn-primary lp-btn-block">Choose Studio</a>
             <ul>
               <li>Everything in Pro</li>
               <li>API access</li>
@@ -4780,12 +6113,30 @@ const LandingPage: React.FC = () => {
       </section>
 
       <footer className="lp-footer">
-        <div className="lp-footer-brand">stohr · 2026</div>
-        <div className="lp-footer-links">
-          <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer">Open source</a>
-          <a href="/login">Sign in</a>
-          <a href="#pricing">Pricing</a>
+        <div className="lp-footer-brand">
+          <Logo />
+          <span>Self-hostable cloud storage.</span>
         </div>
+        <div className="lp-footer-cols">
+          <div>
+            <h4>Product</h4>
+            <a href="#features">Features</a>
+            <a href="#pricing">Pricing</a>
+            <a href="#beta">Beta access</a>
+          </div>
+          <div>
+            <h4>Open source</h4>
+            <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer">GitHub</a>
+            <a href="https://github.com/wess/stohr/blob/main/LICENSE" target="_blank" rel="noreferrer">MIT license</a>
+            <a href="https://github.com/wess/stohr/tree/main/docs" target="_blank" rel="noreferrer">Docs</a>
+          </div>
+          <div>
+            <h4>Account</h4>
+            <a href="/login">Sign in</a>
+            <a href="#beta">Request invite</a>
+          </div>
+        </div>
+        <div className="lp-footer-foot">stohr · 2026 · Built with Bun.</div>
       </footer>
     </div>
   )

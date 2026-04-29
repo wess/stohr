@@ -25,6 +25,8 @@ import { oauthAuthorizeRoutes, sweepExpiredAuthCodes } from "./oauth/authorize.t
 import { oauthTokenRoutes, oauthRevokeRoutes, sweepExpiredRefreshTokens } from "./oauth/token.ts"
 import { oauthDiscoveryRoutes } from "./oauth/discovery.ts"
 import { deviceAuthorizeRoutes, sweepExpiredDeviceCodes } from "./oauth/device.ts"
+import { actionRoutes } from "./actions/index.ts"
+import { userActionRoutes } from "./actions/user/index.ts"
 import { createStorage } from "./storage/index.ts"
 import { withSecurityHeaders } from "./security/headers.ts"
 
@@ -75,6 +77,8 @@ const fetch = router(
   ...oauthRevokeRoutes(db),
   ...oauthDiscoveryRoutes(),
   ...deviceAuthorizeRoutes(db, config.secret),
+  ...actionRoutes(db, config.secret),
+  ...userActionRoutes(db, config.secret),
 )
 
 // OAuth cleanup: expired auth codes (60s TTL) every 5 min, expired device
