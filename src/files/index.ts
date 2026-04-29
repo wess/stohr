@@ -7,7 +7,8 @@ import type { StorageHandle } from "../storage/index.ts"
 import { generateImageThumb, isThumbable, thumbKeyFor } from "../storage/thumb.ts"
 import { canWrite, fileAccess, folderAccess } from "../permissions/index.ts"
 import type { FileRow, FolderRow } from "../permissions/index.ts"
-import { checkQuota } from "../payments/usage.ts"
+import { checkQuota, computeUsage } from "../payments/usage.ts"
+import { decideInline } from "../security/inline.ts"
 import { fireEvent } from "../actions/dispatch.ts"
 import type { RunSummary } from "../actions/dispatch.ts"
 
@@ -106,12 +107,12 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       const res = await fetchObject(store, row.storage_key)
       if (!res.body) return json(c, 500, { error: "Storage returned empty body" })
 
-      const inline = new URL(c.request.url).searchParams.get("inline") === "1"
-      const disposition = inline ? "inline" : `attachment; filename="${encodeURIComponent(row.name)}"`
+      const wantInline = new URL(c.request.url).searchParams.get("inline") === "1"
+      const { contentType, disposition } = decideInline(row.mime, row.name, wantInline)
 
       const withHeaders = putHeader(
         putHeader(
-          putHeader(c, "content-type", row.mime),
+          putHeader(c, "content-type", contentType),
           "content-disposition",
           disposition,
         ),
@@ -176,6 +177,11 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       }
 
       const result: Array<{ id: number; name: string; mime: string; size: number; folder_id: number | null; version: number; created_at: string; new_version?: boolean; action_results?: RunSummary[] }> = []
+      // Rollback stack — pre-quota-check is racy under concurrent uploads, so
+      // after every iteration we'll re-verify usage against the live DB. If
+      // we've exceeded quota, every undo here is invoked in reverse order to
+      // bring the user back below the limit.
+      const undoStack: Array<() => Promise<void>> = []
 
       for (const file of entries) {
         const name = (file as any).name ?? "upload.bin"
@@ -217,7 +223,7 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         let fileId: number
         let isNewVersion: boolean
         if (existing) {
-          const oldThumb = existing.thumb_key
+          const snapshot = { ...existing }
           await archiveCurrent(db, existing, userId)
           const newVersion = existing.version + 1
           await db.execute(
@@ -225,9 +231,32 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
               .where(q => q("id").equals(existing.id))
               .update({ mime, size, storage_key: key, thumb_key: thumbKey, version: newVersion }),
           )
-          if (oldThumb) await Promise.allSettled([drop(store, oldThumb)])
+          if (snapshot.thumb_key) await Promise.allSettled([drop(store, snapshot.thumb_key)])
           fileId = existing.id
           isNewVersion = true
+          undoStack.push(async () => {
+            // Restore the row to its pre-upload values and discard the
+            // file_versions archive entry we just created.
+            await db.execute(
+              from("file_versions")
+                .where(q => q("file_id").equals(snapshot.id))
+                .where(q => q("version").equals(snapshot.version))
+                .del(),
+            )
+            await db.execute(
+              from("files").where(q => q("id").equals(snapshot.id)).update({
+                mime: snapshot.mime,
+                size: snapshot.size,
+                storage_key: snapshot.storage_key,
+                thumb_key: snapshot.thumb_key,
+                version: snapshot.version,
+              }),
+            )
+            await Promise.allSettled([
+              drop(store, key),
+              ...(thumbKey ? [drop(store, thumbKey)] : []),
+            ])
+          })
         } else {
           const rows = await db.execute(
             from("files")
@@ -236,6 +265,13 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
           ) as Array<{ id: number }>
           fileId = rows[0]!.id
           isNewVersion = false
+          undoStack.push(async () => {
+            await db.execute(from("files").where(q => q("id").equals(fileId)).del())
+            await Promise.allSettled([
+              drop(store, key),
+              ...(thumbKey ? [drop(store, thumbKey)] : []),
+            ])
+          })
         }
 
         let actionResults: RunSummary[] = []
@@ -265,6 +301,25 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         const entry: typeof result[number] = { ...after, new_version: isNewVersion }
         if (actionResults.length > 0) entry.action_results = actionResults
         result.push(entry)
+      }
+
+      // Post-write quota verification — closes the TOCTOU window where two
+      // concurrent uploads from the same user both pass the initial check.
+      // Quota of 0 (unlimited) skips this entirely.
+      if (quota > 0) {
+        const finalUsage = await computeUsage(db, ownerId)
+        if (finalUsage.total > quota) {
+          for (const undo of undoStack.reverse()) {
+            try { await undo() } catch (err) { console.error("[files] quota rollback failed:", err) }
+          }
+          return json(c, 402, {
+            error: "Storage quota exceeded",
+            quota_bytes: quota,
+            used_bytes: finalUsage.total,
+            attempted_bytes: incoming,
+            breakdown: finalUsage,
+          })
+        }
       }
 
       return json(c, 201, result)
@@ -513,11 +568,14 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       const res = await fetchObject(store, meta.storage_key)
       if (!res.body) return json(c, 500, { error: "Storage returned empty body" })
 
+      // Old versions are always served as attachments. We deliberately do
+      // NOT echo the user-supplied mime back here — see security/inline.ts.
+      const { contentType, disposition } = decideInline(meta.mime, file.name, false)
       const withHeaders = putHeader(
         putHeader(
-          putHeader(c, "content-type", meta.mime),
+          putHeader(c, "content-type", contentType),
           "content-disposition",
-          `attachment; filename="${encodeURIComponent(file.name)}"`,
+          disposition,
         ),
         "content-length",
         String(meta.size),

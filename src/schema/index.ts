@@ -172,7 +172,7 @@ export const inviteRequests = defineSchema("invite_requests", {
 
 export const invites = defineSchema("invites", {
   id: column.serial().primaryKey(),
-  token: column.text().unique(),
+  token_hash: column.text().unique(),
   email: column.text().nullable(),
   invited_by: column.integer().nullable().ref("users", "id"),
   used_at: column.timestamp().nullable(),

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { createStore, download, presign, remove, upload } from "@atlas/storage"
 import type { Store } from "@atlas/storage"
 
@@ -25,7 +26,9 @@ export const signedUrl = (store: StorageHandle, key: string, expiresSeconds = 90
 
 export const makeKey = (userId: number, name: string) => {
   const stamp = Date.now().toString(36)
-  const rand = Math.random().toString(36).slice(2, 10)
+  // 8 hex chars (32 bits) of cryptographic randomness — keys aren't capabilities,
+  // but using crypto-grade randomness avoids ever leaking RNG state.
+  const rand = randomBytes(4).toString("hex")
   const safe = name.replace(/[^a-zA-Z0-9._-]/g, "_")
   return `u${userId}/${stamp}${rand}/${safe}`
 }

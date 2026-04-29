@@ -1,17 +1,13 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { del, get, halt, json, parseJson, patch, pipeline, post } from "@atlas/server"
+import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
+import { ownerOnly } from "../security/owner.ts"
 import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
 import { isScope, randomId, sha256, shortId, SUPPORTED_SCOPES } from "./helpers.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
-
-const ownerOnly = async (c: any) => {
-  if (!c.assigns?.auth?.is_owner) return halt(c, 403, { error: "Owner access required" })
-  return c
-}
 
 type ClientRow = {
   id: number
@@ -81,8 +77,9 @@ const toPublicClient = (row: ClientRow) => ({
 })
 
 export const oauthClientRoutes = (db: Connection, secret: string) => {
-  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerOnly)
-  const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerOnly, parseJson)
+  const ownerCheck = ownerOnly(db)
+  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck)
+  const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)
 
   return [
     get("/admin/oauth/clients", guard(async (c) => {

@@ -4830,12 +4830,16 @@ const SessionsSection: React.FC = () => {
   )
 }
 
-type Invite = { id: number; token: string; email: string | null; used_at: string | null; used_by: number | null; created_at: string }
+type Invite = { id: number; email: string | null; used_at: string | null; used_by: number | null; created_at: string }
 
 const InvitesPanel: React.FC = () => {
   const [invites, setInvites] = useState<Invite[]>([])
   const [email, setEmail] = useState("")
   const [error, setError] = useState("")
+  // The invite token is only returned once, at creation time. We keep it in
+  // memory so the user can copy the link before navigating away — the server
+  // stores only its hash and cannot show it again.
+  const [justCreated, setJustCreated] = useState<{ id: number; token: string } | null>(null)
 
   const load = async () => {
     const list = await api.listInvites()
@@ -4847,6 +4851,7 @@ const InvitesPanel: React.FC = () => {
     setError("")
     const res = await api.createInvite(email.trim() || undefined)
     if (res.error) return setError(res.error)
+    if (res.token && res.id) setJustCreated({ id: res.id, token: res.token })
     setEmail("")
     await load()
   }
@@ -4855,6 +4860,7 @@ const InvitesPanel: React.FC = () => {
     if (!confirm("Revoke this invite?")) return
     const res = await api.revokeInvite(id)
     if (res.error) return alert(res.error)
+    if (justCreated?.id === id) setJustCreated(null)
     await load()
   }
 
@@ -4876,31 +4882,37 @@ const InvitesPanel: React.FC = () => {
           <Mail size={14} /> <span>Create invite</span>
         </button>
       </div>
+      {justCreated && (
+        <div className="msg" style={{ marginTop: 12 }}>
+          <div style={{ fontWeight: 500, marginBottom: 4 }}>Copy this link now — we don't store it.</div>
+          <div className="share-link" style={{ fontSize: 11, wordBreak: "break-all" }}>
+            {`${window.location.origin}/signup?invite=${justCreated.token}`}
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <button onClick={() => copyLink(justCreated.token)}>Copy link</button>
+          </div>
+        </div>
+      )}
       <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
         {invites.length === 0 && <div style={{ color: "var(--muted)", fontSize: 13 }}>No invites yet</div>}
-        {invites.map(inv => {
-          const url = `${window.location.origin}/signup?invite=${inv.token}`
-          return (
-            <div key={inv.id} style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 6 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-                <div style={{ flex: 1, fontWeight: 500 }}>
-                  {inv.email ?? "Open invite"}
-                  {inv.used_at && <span className="badge" style={{ marginLeft: 8, background: "var(--muted)" }}>used</span>}
-                </div>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                  {new Date(inv.created_at).toLocaleDateString()}
-                </span>
+        {invites.map(inv => (
+          <div key={inv.id} style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <div style={{ flex: 1, fontWeight: 500 }}>
+                {inv.email ?? "Open invite"}
+                {inv.used_at && <span className="badge" style={{ marginLeft: 8, background: "var(--muted)" }}>used</span>}
               </div>
-              <div className="share-link" style={{ margin: "4px 0", fontSize: 11 }}>{url}</div>
-              <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                <button onClick={() => copyLink(inv.token)} disabled={!!inv.used_at}>Copy link</button>
-                {!inv.used_at && (
-                  <button className="danger" onClick={() => revoke(inv.id)} style={{ marginLeft: "auto" }}>Revoke</button>
-                )}
-              </div>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                {new Date(inv.created_at).toLocaleDateString()}
+              </span>
             </div>
-          )
-        })}
+            <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+              {!inv.used_at && (
+                <button className="danger" onClick={() => revoke(inv.id)} style={{ marginLeft: "auto" }}>Revoke</button>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   )
@@ -5307,7 +5319,6 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
 
 type AdminInvite = {
   id: number
-  token: string
   email: string | null
   invited_by: number | null
   invited_by_username: string | null
@@ -5347,30 +5358,23 @@ const AdminInvites: React.FC = () => {
       </div>
       {invites.length === 0 && <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 14 }}>No {filter === "all" ? "" : filter} invites.</div>}
       <div className="admin-list">
-        {invites.map(inv => {
-          const url = `${window.location.origin}/signup?invite=${inv.token}`
-          return (
-            <div key={inv.id} className="admin-row">
-              <div className="admin-row-main">
-                <div className="admin-row-line">
-                  <strong>{inv.email ?? "Open invite"}</strong>
-                  {inv.invited_by_username && <span className="admin-row-name">from @{inv.invited_by_username}</span>}
-                  {inv.used_by_username && <span className="admin-pill admin-pill-used">used by @{inv.used_by_username}</span>}
-                  <span className="admin-row-when">{new Date(inv.created_at).toLocaleDateString()}</span>
-                </div>
-                {!inv.used_at && <div className="admin-row-reason" style={{ fontFamily: "ui-monospace, monospace", fontSize: 11 }}>{url}</div>}
-              </div>
-              <div className="admin-row-actions">
-                {!inv.used_at && (
-                  <>
-                    <button onClick={() => navigator.clipboard.writeText(url)}>Copy</button>
-                    <button className="danger" disabled={busy === inv.id} onClick={() => remove(inv.id)}>Delete</button>
-                  </>
-                )}
+        {invites.map(inv => (
+          <div key={inv.id} className="admin-row">
+            <div className="admin-row-main">
+              <div className="admin-row-line">
+                <strong>{inv.email ?? "Open invite"}</strong>
+                {inv.invited_by_username && <span className="admin-row-name">from @{inv.invited_by_username}</span>}
+                {inv.used_by_username && <span className="admin-pill admin-pill-used">used by @{inv.used_by_username}</span>}
+                <span className="admin-row-when">{new Date(inv.created_at).toLocaleDateString()}</span>
               </div>
             </div>
-          )
-        })}
+            <div className="admin-row-actions">
+              {!inv.used_at && (
+                <button className="danger" disabled={busy === inv.id} onClick={() => remove(inv.id)}>Delete</button>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   )

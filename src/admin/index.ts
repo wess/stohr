@@ -1,19 +1,13 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { del, get, halt, json, parseJson, pipeline, post } from "@atlas/server"
+import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
-import { randomToken } from "../util/token.ts"
+import { randomToken, sha256Hex } from "../util/token.ts"
 import type { Emailer } from "../email/index.ts"
 import { inviteEmail } from "../email/templates/invite.ts"
+import { ownerOnly } from "../security/owner.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
-
-const ownerOnly = async (c: any) => {
-  if (!c.assigns?.auth?.is_owner) {
-    return halt(c, 403, { error: "Owner access required" })
-  }
-  return c
-}
 
 type InviteRequest = {
   id: number
@@ -27,8 +21,9 @@ type InviteRequest = {
 }
 
 export const adminRoutes = (db: Connection, secret: string, emailer: Emailer, appUrl: string) => {
-  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerOnly)
-  const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerOnly, parseJson)
+  const ownerCheck = ownerOnly(db)
+  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck)
+  const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)
 
   return [
     get("/admin/invite-requests", guard(async (c) => {
@@ -52,23 +47,19 @@ export const adminRoutes = (db: Connection, secret: string, emailer: Emailer, ap
       if (!row) return json(c, 404, { error: "Request not found" })
       if (row.status !== "pending") return json(c, 409, { error: `Already ${row.status}` })
 
-      const existing = await db.one(
-        from("invites")
-          .where(q => q("email").ilike(row.email))
-          .where(q => q("used_at").isNull())
-          .select("token")
-          .orderBy("created_at", "DESC")
-          .limit(1),
-      ) as { token: string } | null
-
-      let inviteToken = existing?.token
-      if (!inviteToken) {
-        const tok = randomToken()
-        const inserted = await db.execute(
-          from("invites").insert({ token: tok, email: row.email, invited_by: userId }).returning("token"),
-        ) as Array<{ token: string }>
-        inviteToken = inserted[0]!.token
-      }
+      // Always issue a fresh invite token here. We can no longer reuse a
+      // pre-existing unused invite for the same email because the plaintext
+      // is not stored — only its hash. Issuing a new one supersedes the old
+      // (older invites for the same email remain valid until used or revoked,
+      // but the user is emailed only the fresh one).
+      const inviteToken = randomToken()
+      await db.execute(
+        from("invites").insert({
+          token_hash: sha256Hex(inviteToken),
+          email: row.email,
+          invited_by: userId,
+        }),
+      )
 
       await db.execute(
         from("invite_requests").where(q => q("id").equals(id)).update({
@@ -81,7 +72,7 @@ export const adminRoutes = (db: Connection, secret: string, emailer: Emailer, ap
       const inviter = await db.one(
         from("users").where(q => q("id").equals(userId)).select("name", "username"),
       ) as { name: string; username: string } | null
-      const signupUrl = `${appUrl.replace(/\/$/, "")}/signup?invite=${encodeURIComponent(inviteToken!)}`
+      const signupUrl = `${appUrl.replace(/\/$/, "")}/signup?invite=${encodeURIComponent(inviteToken)}`
       const tpl = inviteEmail({
         inviterName: inviter?.name ?? inviter?.username ?? null,
         email: row.email,
@@ -179,13 +170,13 @@ export const adminRoutes = (db: Connection, secret: string, emailer: Emailer, ap
     get("/admin/invites", guard(async (c) => {
       const url = new URL(c.request.url)
       const filter = url.searchParams.get("filter") ?? "all"
-      let q = from("invites").select("id", "token", "email", "invited_by", "used_at", "used_by", "created_at")
+      // Plaintext token is never returned on read paths — only at create time.
+      let q = from("invites").select("id", "email", "invited_by", "used_at", "used_by", "created_at")
       if (filter === "unused") q = q.where(p => p("used_at").isNull())
       if (filter === "used") q = q.where(p => p("used_at").isNotNull())
 
       const rows = await db.all(q.orderBy("created_at", "DESC").limit(500)) as Array<{
         id: number
-        token: string
         email: string | null
         invited_by: number | null
         used_at: string | null

@@ -6,6 +6,7 @@ import { del, get, json, parseJson, pipeline, post, putHeader, stream } from "@a
 import { requireAuth } from "../auth/guard.ts"
 import { fetchObject } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
+import { decideInline } from "../security/inline.ts"
 
 const APP_TOKEN_PREFIX = "stohr_pat_"
 const MAX_EXPIRES_SECONDS = 30 * 24 * 60 * 60
@@ -222,11 +223,11 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
         })
       }
 
-      // Password gate (if set)
+      // Password gate (if set). Header only — query strings end up in browser
+      // history, server access logs, and Referer, so we never accept the
+      // password via ?p=.
       if (share.password_hash) {
-        const provided = c.request.headers.get("x-share-password")
-          ?? url.searchParams.get("p")
-          ?? ""
+        const provided = c.request.headers.get("x-share-password") ?? ""
         if (!provided || !(await verify(provided, share.password_hash))) {
           return json(c, 401, { error: "Password required", password_required: true })
         }
@@ -249,14 +250,12 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
       const res = await fetchObject(store, file.storage_key)
       if (!res.body) return json(c, 500, { error: "Storage returned empty body" })
 
-      const inline = url.searchParams.get("inline") === "1"
-      const disposition = inline
-        ? `inline; filename="${encodeURIComponent(file.name)}"`
-        : `attachment; filename="${encodeURIComponent(file.name)}"`
+      const wantInline = url.searchParams.get("inline") === "1"
+      const { contentType, disposition } = decideInline(file.mime, file.name, wantInline)
 
       const withHeaders = putHeader(
         putHeader(
-          putHeader(c, "content-type", file.mime),
+          putHeader(c, "content-type", contentType),
           "content-disposition",
           disposition,
         ),

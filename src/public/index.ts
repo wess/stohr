@@ -4,6 +4,7 @@ import { get, json, putHeader, stream } from "@atlas/server"
 import { fetchObject } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { normalizeUsername } from "../util/username.ts"
+import { decideInline } from "../security/inline.ts"
 
 type PublicFolder = {
   id: number
@@ -87,12 +88,12 @@ export const publicRoutes = (db: Connection, _secret: string, store: StorageHand
     const res = await fetchObject(store, file.storage_key)
     if (!res.body) return json(c, 500, { error: "Storage returned empty body" })
 
-    const inline = new URL(c.request.url).searchParams.get("inline") === "1"
-    const disposition = inline ? "inline" : `attachment; filename="${encodeURIComponent(file.name)}"`
+    const wantInline = new URL(c.request.url).searchParams.get("inline") === "1"
+    const { contentType, disposition } = decideInline(file.mime, file.name, wantInline)
 
     const withHeaders = putHeader(
       putHeader(
-        putHeader(c, "content-type", file.mime),
+        putHeader(c, "content-type", contentType),
         "content-disposition",
         disposition,
       ),

@@ -2,6 +2,7 @@ import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { get, json, parseJson, pipeline, post } from "@atlas/server"
 import { hash, token, verify } from "@atlas/auth"
+import { sha256Hex } from "../util/token.ts"
 import { isEmail, isValidUsername, normalizeUsername } from "../util/username.ts"
 import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
 import { logEvent } from "../security/audit.ts"
@@ -22,6 +23,12 @@ type UserRow = {
 }
 
 type AuthUser = { id: number; email: string; username: string; name: string; is_owner: boolean }
+
+// Pre-computed argon2id hash of a random throwaway string. Used to make the
+// "user not found" path spend the same wall-clock time as the "bad password"
+// path so an attacker can't enumerate accounts by timing the response.
+const DECOY_PASSWORD_HASH =
+  "$argon2id$v=19$m=65536,t=2,p=1$RetE64xcIWBR/OUrFhs4qiRpTMgEo2w3Z6lis33NPx8$fVAJ65lFBof5QYfFvuLLza/XeSZd8jCGzSd4fzu32nI"
 
 const issueMfaChallenge = (secret: string, userId: number) =>
   token.sign({ kind: "mfa", uid: userId }, secret, { expiresIn: 300 })
@@ -133,7 +140,9 @@ export const authRoutes = (db: Connection, secret: string) => {
       if (!isFirstUser) {
         if (!inviteToken) return json(c, 403, { error: "Invite token required" })
         invite = await db.one(
-          from("invites").where(q => q("token").equals(inviteToken)),
+          from("invites")
+            .where(q => q("token_hash").equals(sha256Hex(inviteToken)))
+            .select("id", "email", "used_at"),
         ) as { id: number; email: string | null; used_at: string | null } | null
         if (!invite) return json(c, 403, { error: "Invalid invite token" })
         if (invite.used_at) return json(c, 403, { error: "Invite already used" })
@@ -234,13 +243,18 @@ export const authRoutes = (db: Connection, secret: string) => {
           .where(q => identity.includes("@") ? q("email").equals(lookup) : q("username").equals(lookup))
           .select("id", "email", "username", "name", "password", "is_owner", "totp_enabled", "totp_secret", "totp_backup_codes"),
       ) as UserRow | null
+
+      // Always run a verify, even when the user doesn't exist, so the
+      // response timing doesn't leak account existence. The decoy hash is a
+      // real argon2id encoding so verify() does the full key derivation.
+      const verifyTarget = user?.password ?? DECOY_PASSWORD_HASH
+      const verifyOk = await verify(password, verifyTarget).catch(() => false)
+
       if (!user) {
         logEvent(db, { event: "login.fail", metadata: { reason: "no_user", identity }, ip, userAgent: ua })
         return json(c, 401, { error: "Invalid credentials" })
       }
-
-      const ok = await verify(password, user.password)
-      if (!ok) {
+      if (!verifyOk) {
         logEvent(db, { userId: user.id, event: "login.fail", metadata: { reason: "bad_password" }, ip, userAgent: ua })
         return json(c, 401, { error: "Invalid credentials" })
       }

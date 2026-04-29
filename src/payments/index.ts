@@ -1,7 +1,8 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { del, get, halt, json, parseJson, pipeline, post, put } from "@atlas/server"
+import { del, get, json, parseJson, pipeline, post, put } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
+import { ownerOnly } from "../security/owner.ts"
 import { quotaFor, isValidTier, TIER_QUOTAS } from "./quotas.ts"
 import { computeUsage } from "./usage.ts"
 import {
@@ -26,13 +27,6 @@ import {
 import { randomToken } from "../util/token.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
-
-const ownerOnly = async (c: any) => {
-  if (!c.assigns?.auth?.is_owner) {
-    return halt(c, 403, { error: "Owner access required" })
-  }
-  return c
-}
 
 const loadConfig = async (db: Connection): Promise<PaymentConfig> => {
   const row = await db.one(
@@ -141,8 +135,9 @@ const applySubscriptionEvent = async (
 
 export const paymentsRoutes = (db: Connection, secret: string) => {
   const guard = pipeline(requireAuth({ secret, db }))
-  const adminGuard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerOnly)
-  const adminAuthed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerOnly, parseJson)
+  const ownerCheck = ownerOnly(db)
+  const adminGuard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck)
+  const adminAuthed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)
 
   return [
     get("/payments/plans", async (c) => {

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto"
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { json, parseForm, parseJson, pipeline, post } from "@atlas/server"
@@ -114,7 +115,12 @@ const verifyClientCredentials = async (
   // proof-of-possession instead.
   if (!client.client_secret_hash) return true
   if (!providedSecret) return false
-  return sha256(providedSecret) === client.client_secret_hash
+  // Constant-time compare on the hex digests. Both buffers are SHA-256 hex
+  // so they're always 64 bytes; the length-equality guard is defense in depth.
+  const a = Buffer.from(sha256(providedSecret), "hex")
+  const b = Buffer.from(client.client_secret_hash, "hex")
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
 }
 
 export const oauthTokenRoutes = (db: Connection, secret: string) => {

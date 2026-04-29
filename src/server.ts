@@ -131,8 +131,21 @@ void sweepRefreshTokens()
 void sweepPasswordResets()
 void sweepWebauthn()
 
+// Production refuses to start with the default SECRET — JWTs signed with a
+// known value would be forgeable by anyone. In development we just warn so
+// `bun run dev` works out of the box on a fresh clone.
+const isDev = (process.env.NODE_ENV ?? "development") === "development"
 if (config.secret === "dev-secret-change-me") {
-  console.warn("[stohr] WARNING: running with the default SECRET. Set a strong SECRET in .env before production.")
+  if (isDev) {
+    console.warn("[stohr] WARNING: running with the default SECRET. Set a strong SECRET in .env before production.")
+  } else {
+    console.error("[stohr] FATAL: SECRET is set to its default value. Refusing to start. Set SECRET in your environment to a strong random string (e.g. `openssl rand -hex 32`).")
+    process.exit(1)
+  }
+}
+if (config.secret.length < 32 && !isDev) {
+  console.error(`[stohr] FATAL: SECRET is too short (${config.secret.length} chars). Use at least 32 chars in production.`)
+  process.exit(1)
 }
 
 Bun.serve({

@@ -4,7 +4,7 @@ import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { fileAccess, folderAccess, isOwner } from "../permissions/index.ts"
 import { isEmail, normalizeUsername } from "../util/username.ts"
-import { randomToken } from "../util/token.ts"
+import { randomToken, sha256Hex } from "../util/token.ts"
 import type { Emailer } from "../email/index.ts"
 import { inviteEmail } from "../email/templates/invite.ts"
 
@@ -143,27 +143,21 @@ const addCollab = (db: Connection, kind: ResourceKind, emailer: Emailer, appUrl:
     collabId = inserted[0]!.id
   }
 
-  let inviteRow = await db.one(
-    from("invites")
-      .where(q => q("email").ilike(email))
-      .where(q => q("used_at").isNull())
-      .select("token")
-      .orderBy("created_at", "DESC")
-      .limit(1),
-  ) as { token: string } | null
-
-  if (!inviteRow) {
-    const tok = randomToken()
-    const out = await db.execute(
-      from("invites").insert({ token: tok, email, invited_by: userId }).returning("token"),
-    ) as Array<{ token: string }>
-    inviteRow = { token: out[0]!.token }
-  }
+  // Always issue a fresh invite token. We can no longer reuse a pre-existing
+  // unused invite for the same email — only the hash is stored at rest.
+  const inviteToken = randomToken()
+  await db.execute(
+    from("invites").insert({
+      token_hash: sha256Hex(inviteToken),
+      email,
+      invited_by: userId,
+    }),
+  )
 
   const inviter = await db.one(
     from("users").where(q => q("id").equals(userId)).select("name", "username"),
   ) as { name: string; username: string } | null
-  const signupUrl = `${appUrl.replace(/\/$/, "")}/signup?invite=${encodeURIComponent(inviteRow.token)}`
+  const signupUrl = `${appUrl.replace(/\/$/, "")}/signup?invite=${encodeURIComponent(inviteToken)}`
   const tpl = inviteEmail({
     inviterName: inviter?.name ?? inviter?.username ?? null,
     email,
@@ -182,7 +176,7 @@ const addCollab = (db: Connection, kind: ResourceKind, emailer: Emailer, appUrl:
     email,
     role,
     user: null,
-    invite_token: inviteRow.token,
+    invite_token: inviteToken,
     email_sent: sendRes.ok,
     email_error: sendRes.ok ? undefined : sendRes.error,
   })
