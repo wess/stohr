@@ -3,6 +3,12 @@ import index from "./index.html"
 const API = process.env.API_URL ?? "http://localhost:3000"
 const PORT = Number(process.env.WEB_PORT ?? 3001)
 
+// Dev-only: HMR + verbose console in the browser. In production this MUST
+// be false, otherwise Bun bundles the SPA with the dev JSX runtime
+// (jsxDEV) but resolves React to the prod runtime that has no jsxDEV
+// export — every component crashes at first render.
+const isDev = (process.env.NODE_ENV ?? "development") === "development"
+
 Bun.serve({
   port: PORT,
   hostname: "0.0.0.0",
@@ -33,10 +39,7 @@ Bun.serve({
     }
     return new Response("Not Found", { status: 404 })
   },
-  development: {
-    hmr: true,
-    console: true,
-  },
+  development: isDev ? { hmr: true, console: true } : false,
 })
 
 console.log(`[stohr] web on http://localhost:${PORT}`)
