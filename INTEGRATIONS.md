@@ -15,14 +15,17 @@ Status legend: **have** · **partial** · **missing**
 | Capability | Box | Dropbox | Stohr | Priority |
 | --- | --- | --- | --- | --- |
 | Email + password | ✓ | ✓ | **have** | — |
-| OAuth (Google, GitHub, Microsoft) sign-in | ✓ | ✓ | **missing** | P0 |
+| Password reset (forgot-password email link) | ✓ | ✓ | **have** (signed `stohr_pwr_*` token, 1-hour TTL, single-use, rate-limited per email + IP, revokes all sessions on apply) | — |
+| Sign in *with* Google / GitHub / Microsoft (Stohr as OAuth client) | ✓ | ✓ | **missing** | P0 |
 | SAML 2.0 / OIDC SSO | ✓ | ✓ | **missing** | P1 |
 | TOTP / 2FA | ✓ | ✓ | **have** (RFC 6238 TOTP, ±1 window, 10 single-use backup codes, MFA challenge JWT during login) | — |
-| WebAuthn / passkeys | ✓ | ✓ | **missing** | P1 |
+| WebAuthn / passkeys | ✓ | ✓ | **have** (registration + discoverable login via `@simplewebauthn/server`; counter-regression check; challenges TTL'd in `webauthn_challenges`) | — |
 | SCIM user provisioning | ✓ | ✓ | **missing** | P2 |
 | Session management (list / revoke devices) | ✓ | ✓ | **have** (`sessions` table, JWT `jti` checked per request, list/revoke/revoke-others endpoints) | — |
 
-Implementation notes: `@atlas/auth` already issues JWTs and the session table makes them server-side revocable. OAuth/OIDC sign-in (login *with* Google/GitHub) would slot in alongside `signup`/`login` in `src/auth/`. WebAuthn would extend the existing MFA challenge flow.
+Note: Stohr is an OAuth **provider** (third-party apps integrate against it) — that ships, see [docs/OAUTH.md](docs/OAUTH.md). The "OAuth sign-in" row above is the inverse: letting Stohr accept Google/GitHub/Microsoft as identity providers. That's still missing.
+
+Implementation notes: `@atlas/auth` already issues JWTs and the session table makes them server-side revocable. WebAuthn and password reset shipped in migrations 00000029 / 00000030. OAuth/OIDC consumer sign-in (login *with* Google/GitHub) would slot in alongside `signup`/`login` in `src/auth/`.
 
 ## Clients
 
@@ -68,7 +71,7 @@ Implementation notes: pdf.js in the browser is the cheapest path for PDF preview
 | Capability | Box | Dropbox | Stohr | Priority |
 | --- | --- | --- | --- | --- |
 | Public share links with expiry | ✓ | ✓ | **have** (max 30 days; per-share expiry required) | — |
-| Password-protected share links | ✓ | ✓ | **have** (bcrypt-hashed, verified via `X-Share-Password` header) | — |
+| Password-protected share links | ✓ | ✓ | **have** (Argon2-hashed, verified via `X-Share-Password` header only — query-string fallback removed) | — |
 | Burn-after-view share links | ✓ (some plans) | ✗ | **have** (atomic delete-before-serve; only one non-owner viewer wins) | — |
 | Download limits / view tracking | ✓ | ✓ | **missing** | P1 |
 | File request (upload-only inbound links) | ✓ | ✓ | **missing** | P1 |
@@ -109,7 +112,8 @@ Implementation notes: Postgres `tsvector` gives decent FTS without a new depende
 | --- | --- | --- | --- | --- |
 | Zapier / Make / n8n | ✓ | ✓ | **missing** (blocked on outbound webhooks) | P1 |
 | Slack notifications | ✓ | ✓ | **missing** | P1 |
-| Email notifications | ✓ | ✓ | **missing** | P0 |
+| Transactional email (invites, password reset, collab invites) | ✓ | ✓ | **have** (Resend integration; falls back to console output when `RESEND_API_KEY` is empty) | — |
+| Activity-event email notifications (file shared, comment added, etc.) | ✓ | ✓ | **missing** | P1 |
 | Email-to-upload | ✓ | ✓ | **missing** | P2 |
 | E-signature (DocuSign / HelloSign) | ✓ | ✓ (HelloSign) | **missing** | P2 |
 | IFTTT-style triggers | ✓ | ✓ | **missing** | P2 |
@@ -121,7 +125,10 @@ Implementation notes: PATs and OAuth are already shipped, so Zapier/n8n/Make all
 | Capability | Box | Dropbox | Stohr | Priority |
 | --- | --- | --- | --- | --- |
 | Antivirus scanning on upload | ✓ | ✓ | **missing** | P0 |
-| Audit logs (who did what, when) | ✓ | ✓ | **have** (`audit_events` table + Admin → Audit panel; auth, MFA, sessions, password) | — |
+| Audit logs (who did what, when) | ✓ | ✓ | **have** (`audit_events` table + Admin → Audit panel; auth, MFA, sessions, password reset, OAuth grants + reuse-detection) | — |
+| Hashed-at-rest invites and reset tokens | ✓ | ✓ | **have** (SHA-256 only; plaintext returned once at creation) | — |
+| Inline file XSS protection | — | — | **have** (MIME allowlist for `?inline=1`; SVG, HTML, XML force download as `application/octet-stream`) | — |
+| Trusted-proxy IP handling | — | — | **have** (`TRUSTED_PROXIES` env; XFF only honored from configured CIDRs) | — |
 | Admin console (user mgmt, org settings) | ✓ | ✓ | **have** (Admin panel: users, invites, payments, audit, OAuth clients, stats) | — |
 | Security headers (HSTS, COOP/CORP, etc.) | ✓ | ✓ | **have** (set on every response by `withSecurityHeaders`) | — |
 | DLP (data loss prevention) rules | ✓ | ✓ | **missing** | P2 |
@@ -147,9 +154,9 @@ Implementation notes: ClamAV via its TCP socket is the standard AV integration �
 If you want an opinionated order that unblocks the most downstream work per unit effort:
 
 1. **Outbound webhooks** — last big developer-platform gap; unlocks Zapier/n8n/Slack without writing per-platform code (PATs and OAuth are already done)
-2. **OAuth sign-in** (Google/Microsoft/GitHub) — login parity with Box/Dropbox; MFA + sessions are already in place
-3. **Email notifications** (SMTP) — needed for share notifications, password reset, and the existing invite flows
-4. **Chunked / resumable uploads** — stops big uploads from failing on flaky networks (quotas + over-quota responses are already shipped)
+2. **OAuth sign-in** (Google/Microsoft/GitHub) — login parity with Box/Dropbox; MFA + sessions + WebAuthn are already in place
+3. **Activity-event email notifications** — transactional email already ships; activity-driven notifications (file shared, comment added) build on the same Resend integration
+4. **Chunked / resumable uploads** — stops big uploads from failing on flaky networks; also lifts the in-API memory ceiling per upload
 5. **PDF preview** — image thumbnails ship; PDFs are the next big preview win
 6. **AV scanning** — required before anyone puts real data in this; audit logs are already shipped to record findings
 7. **WebDAV endpoint** — cheap way to get Finder/Explorer mounts before writing a full sync client

@@ -5,9 +5,9 @@ In-depth guides for installing, deploying, and integrating with Stohr.
 ## Guides
 
 - [**Architecture**](ARCHITECTURE.md) — what's in the box, how the pieces fit together, request lifecycle
-- [**Configuration**](CONFIGURATION.md) — environment variables, the `payment_config` row, runtime settings
-- [**Deploy**](DEPLOY.md) — turn-key Droplet deploy, App Platform alternative, manual setup
-- [**REST API**](API.md) — every endpoint, grouped by resource
+- [**Configuration**](CONFIGURATION.md) — every environment variable, email/WebAuthn setup, the `payment_config` row, runtime settings
+- [**Deploy**](DEPLOY.md) — turn-key Droplet deploy, App Platform alternative, manual setup, post-deploy verification, troubleshooting, backups, rollback
+- [**REST API**](API.md) — every endpoint, grouped by resource; error codes, rate-limit responses, OAuth scopes
 - [**OAuth 2.0**](OAUTH.md) — Authorization Code + PKCE and Device Authorization Grant for third-party apps
 - [**Action folders**](ACTIONS.md) — folders that run actions on file/folder events; how to write a built-in
 - [**S3-compatible endpoints**](S3.md) — using Stohr with `aws-cli`, `boto3`, or any AWS SDK
@@ -17,7 +17,7 @@ In-depth guides for installing, deploying, and integrating with Stohr.
 
 Cross-cutting:
 
-- [Security model](../SECURITY.md) — auth, sessions, MFA, rate limits, audit, share security, encryption-at-rest
+- [Security model](../SECURITY.md) — auth, sessions, MFA, passkeys, password reset, rate limits, audit, share security, CSP, trusted proxies, encryption-at-rest
 - [Integrations roadmap](../INTEGRATIONS.md) — feature parity status vs. Box / Dropbox
 
 ## Quick reference

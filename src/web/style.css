@@ -3931,3 +3931,186 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
   height: 1px;
   background: var(--border);
 }
+
+/* ─────────────── Developer landing page (/developers) ─────────────── */
+
+.devp-page { min-height: 100vh; }
+
+.devp-section {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 56px 32px;
+  border-top: 1px solid var(--border);
+}
+.devp-section:first-of-type { border-top: none; padding-top: 16px; }
+.devp-section h2 {
+  font-family: "Fraunces", serif;
+  font-size: 36px;
+  font-weight: 600;
+  margin: 0 0 14px;
+  letter-spacing: -0.02em;
+}
+.devp-section h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 28px 0 10px;
+}
+.devp-section p { line-height: 1.65; color: var(--text-soft); }
+.devp-section code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  padding: 1px 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+}
+
+.devp-lede {
+  font-size: 16px;
+  color: var(--muted);
+  margin: 0 0 24px;
+  max-width: 720px;
+  line-height: 1.6;
+}
+
+.devp-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 18px;
+  margin-top: 8px;
+}
+.devp-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 8px;
+}
+.devp-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.devp-card {
+  background: var(--panel-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+}
+.devp-card h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.devp-card p {
+  margin: 8px 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-soft);
+}
+.devp-card-link {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+  transition: border-color 0.12s, transform 0.12s, box-shadow 0.12s;
+}
+.devp-card-link:hover {
+  border-color: var(--brand);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lg);
+}
+.devp-card-link h3 { color: var(--brand); }
+
+.devp-tag {
+  display: inline-block;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  margin: 0 0 12px !important;
+}
+
+.devp-note {
+  font-size: 13px !important;
+  color: var(--muted) !important;
+  margin-top: 12px !important;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  line-height: 1.55 !important;
+}
+.devp-note a { color: var(--brand); text-decoration: none; font-weight: 500; }
+.devp-note a:hover { text-decoration: underline; }
+
+.devp-checklist {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  line-height: 1.85;
+  color: var(--text-soft);
+  font-size: 14px;
+}
+.devp-checklist li { margin-bottom: 4px; }
+
+.devp-code {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  margin: 12px 0;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text);
+}
+.devp-code code {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  font-size: inherit !important;
+  color: inherit !important;
+  white-space: pre;
+}
+.devp-card .devp-code {
+  margin: 10px -2px;
+  font-size: 12px;
+}
+
+.devp-table-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin: 8px 0;
+  background: var(--panel-elev);
+}
+.devp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.devp-table th,
+.devp-table td {
+  padding: 11px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.devp-table tr:last-child td { border-bottom: none; }
+.devp-table th {
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--panel);
+}
+.devp-table td:first-child { width: 30%; white-space: nowrap; }
+.devp-table a { color: var(--brand); text-decoration: none; }
+.devp-table a:hover { text-decoration: underline; }
+

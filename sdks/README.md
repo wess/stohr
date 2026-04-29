@@ -12,6 +12,11 @@ Official client libraries for the [Stohr](https://stohr.io) cloud-storage API.
 All four wrap the same REST API (`https://stohr.io/api`) and expose the same
 operations, named idiomatically per language.
 
+> Note: WebAuthn / passkey endpoints and the password-reset flow are
+> currently REST-only. They'll be added to the SDKs in a follow-up release;
+> until then call `/me/passkeys/*`, `/login/passkey/*`, and `/password/*`
+> directly with the SDK's HTTP client.
+
 ## Common API surface
 
 ```
@@ -62,7 +67,7 @@ Stohr exposes a Sigv4-authenticated S3 endpoint at
 `https://stohr.io/s3/<bucket>/<key>` where `bucket` is your username and
 `key` is a slash-separated file path inside your storage. Mint S3 access
 keys via `POST /api/me/s3-keys` and configure your S3 client to use them.
-See the root `README.md` for full details.
+See [`docs/S3.md`](../docs/S3.md) for full details.
 
 ## Versioning
 

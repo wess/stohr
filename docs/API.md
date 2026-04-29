@@ -2,6 +2,27 @@
 
 All endpoints under `/api`. JSON in/out except where noted. Parameter names accept both `snake_case` (canonical) and `camelCase`.
 
+## Conventions
+
+- **Auth**: send `Authorization: Bearer <token>` for any route marked "auth required". A token is one of: a regular user JWT (web/mobile), a personal access token (`stohr_pat_…`), or an OAuth access token. Some routes refuse OAuth tokens — those are called out below.
+- **Errors**: every non-2xx response has the shape `{ "error": "<message>" }`, sometimes with extra structured fields (`retry_after`, `quota_bytes`, etc.). The status codes Stohr uses:
+
+  | status | meaning |
+  | --- | --- |
+  | 400 | malformed JSON / missing required field |
+  | 401 | missing or invalid bearer token; bad credentials |
+  | 402 | storage quota exceeded — `{ error, quota_bytes, used_bytes, attempted_bytes, breakdown }` |
+  | 403 | authenticated but no permission for this resource |
+  | 404 | resource doesn't exist or isn't visible to you |
+  | 409 | conflict (e.g. email already in use, invite already used) |
+  | 410 | resource gone (expired share token) |
+  | 422 | validation error |
+  | 429 | rate-limited — `{ error, retry_after }` (seconds until you can retry) |
+  | 500 | unexpected server error |
+
+- **Rate limits**: see [SECURITY.md](../SECURITY.md#rate-limiting) for the per-bucket numbers. The 429 body always includes `retry_after`.
+- **OAuth scopes** (when calling with an OAuth access token): `read` / `write` / `share`. Tokens that lack the required scope return 403 with `error: "Insufficient scope — '<needed>' is required, token has [<granted>]"`.
+
 ## Auth
 
 | method | path | body | returns |
@@ -14,6 +35,31 @@ All endpoints under `/api`. JSON in/out except where noted. Parameter names acce
 The first user — `needsSetup === true` — bypasses `invite_token` and is flagged `is_owner: true`. Login returns a 5-minute MFA challenge JWT when the account has TOTP enabled; finish via `/login/mfa`.
 
 Login + signup are rate-limited per IP / per identity / per user (see [`SECURITY.md`](../SECURITY.md)).
+
+## Password reset
+
+| method | path | body | returns |
+| --- | --- | --- | --- |
+| `POST` | `/password/forgot` | `{ email }` | always `{ ok: true, message }` (does not reveal whether the email is on file) |
+| `POST` | `/password/reset` | `{ token, new_password }` | `{ ok: true }` (token consumed; all sessions revoked) |
+
+The reset token is a `stohr_pwr_…` value delivered by email. 1-hour TTL, single-use. Per-email and per-IP rate-limited. The token in the email URL is the only handle — query-string interception in Referer is mitigated by the global `Referrer-Policy: strict-origin-when-cross-origin` and by the reset-page being on Stohr's own origin.
+
+## Passkeys / WebAuthn
+
+Passkeys can be used for either passwordless login (discoverable credentials) or as a stronger second factor.
+
+| method | path | body | returns |
+| --- | --- | --- | --- |
+| `GET` | `/me/passkeys` | — | list of registered credentials (id, name, transports, last_used_at, created_at) |
+| `POST` | `/me/passkeys/register/start` | — | WebAuthn `PublicKeyCredentialCreationOptions`; client passes to `navigator.credentials.create()` |
+| `POST` | `/me/passkeys/register/finish` | `{ name?, response: <browser response> }` | the new credential row |
+| `PATCH` | `/me/passkeys/:id` | `{ name }` | `{ ok }` |
+| `DELETE` | `/me/passkeys/:id` | — | `{ deleted }` |
+| `POST` | `/login/passkey/discover/start` | — | `PublicKeyCredentialRequestOptions` for `navigator.credentials.get()` |
+| `POST` | `/login/passkey/discover/finish` | `{ response: <browser response> }` | user + JWT (no password required) |
+
+Server validates origin, RP ID, signature, and counter regression. Challenges live in `webauthn_challenges` with a 5-minute TTL.
 
 ## Account `/me` (auth required)
 
@@ -101,14 +147,14 @@ See [S3.md](S3.md) for using the keys.
 | --- | --- | --- |
 | `GET` | `/files?folder_id=<id\|null>` or `?q=<search>` | list / search |
 | `GET` | `/files/:id` | metadata |
-| `GET` | `/files/:id/download` | streams the blob; add `?inline=1` for inline disposition |
+| `GET` | `/files/:id/download` | streams the blob; add `?inline=1` for inline disposition (only honored for `image/*`, `video/*`, `audio/*`, `application/pdf`, `text/plain` — anything else is forced to attachment) |
 | `GET` | `/files/:id/thumb` | streams the WebP thumbnail (images only); 404 if none |
 | `POST` | `/files` | `multipart/form-data`, optional `folder_id` field |
 | `PATCH` | `/files/:id` | `{ name?, folder_id? }` |
 | `DELETE` | `/files/:id` | soft-delete |
 | `POST` | `/files/:id/restore` | restore |
 | `DELETE` | `/files/:id/purge` | permanent |
-| `GET` | `/files/:id/versions` | current + archived |
+| `GET` | `/files/:id/versions?limit=&offset=` | paginated `{ items, total, limit, offset }` — current + archived |
 | `GET` | `/files/:id/versions/:v/download` | specific version |
 | `POST` | `/files/:id/versions/:v/restore` | promote to live |
 | `DELETE` | `/files/:id/versions/:v` | delete archived |
@@ -126,7 +172,7 @@ Re-uploading to the same `(folder, name)` archives the previous live version and
 | `GET` | `/s/:token` | — | streams blob (public, sets `Content-Disposition: attachment`; pass `?inline=1` to inline) |
 | `GET` | `/s/:token?meta=1` | — | metadata for preview pages |
 
-`expires_in` is required (max 30 days). Password-protected shares verify via the `X-Share-Password` header (or `?p=` query param). Burn-after-view shares atomically delete the row before serving — only one non-owner viewer wins.
+`expires_in` is required (max 30 days). Password-protected shares verify via the `X-Share-Password` request header — query-string passwords (`?p=`) are **not** accepted. The inline `Content-Type` is restricted to a safe-MIME allowlist (images, video, audio, PDF, plain text); anything else is forced to `application/octet-stream` + `Content-Disposition: attachment`. Burn-after-view shares atomically delete the row before serving — only one non-owner viewer wins.
 
 ## Trash (auth required)
 
@@ -173,10 +219,12 @@ If `identity` is an email and no user has it, the response includes `invite_toke
 
 | method | path | notes |
 | --- | --- | --- |
-| `GET` | `/invites` | invites the current user has minted |
-| `POST` | `/invites` | `{ email? }` — bind to an email or leave open |
+| `GET` | `/invites` | invites the current user has minted (no plaintext token returned) |
+| `POST` | `/invites` | `{ email? }` — bind to an email or leave open. Response includes `token` once; copy immediately |
 | `DELETE` | `/invites/:id` | revoke if unused |
 | `GET` | `/invites/:token/check` | public — check if a token is valid |
+
+Tokens are stored as SHA-256 hashes; the plaintext is only ever returned in the response to the create call. List/admin views show metadata only.
 
 ## Invite requests (public)
 
