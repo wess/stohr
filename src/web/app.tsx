@@ -1591,7 +1591,19 @@ const PreviewModal: React.FC<{ file: FileItem; onClose: () => void }> = ({ file,
               <audio src={url} controls autoPlay />
             </div>
           )}
-          {kind === "pdf" && url && <iframe src={url} title={file.name} />}
+          {kind === "pdf" && url && (
+            <div className="preview-pdf">
+              <iframe
+                src={url}
+                title={file.name}
+                sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+              />
+              <div className="preview-pdf-fallback">
+                <span>Trouble viewing the PDF? </span>
+                <a href={url} target="_blank" rel="noopener noreferrer">Open in a new tab</a>
+              </div>
+            </div>
+          )}
           {kind === "text" && text !== null && <pre className="preview-text">{text}</pre>}
           {kind === "other" && (
             <div className="preview-empty">

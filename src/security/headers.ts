@@ -17,6 +17,10 @@ const CSP_PROD =
   "font-src 'self' data:; " +
   "connect-src 'self'; " +
   "media-src 'self' blob:; " +
+  // PDF preview renders via <iframe src=blob:…> using the browser's built-in
+  // PDF viewer. Without this, the iframe falls back to default-src 'self' and
+  // is blocked.
+  "frame-src 'self' blob:; " +
   "object-src 'none'; " +
   "base-uri 'self'; " +
   "form-action 'self'; " +
@@ -32,6 +36,7 @@ const CSP_DEV =
   "font-src 'self' data:; " +
   "connect-src 'self' ws: wss: http: https:; " +
   "media-src 'self' blob:; " +
+  "frame-src 'self' blob:; " +
   "object-src 'none'; " +
   "base-uri 'self'; " +
   "form-action 'self'; " +

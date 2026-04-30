@@ -11,6 +11,7 @@ import { checkQuota, computeUsage } from "../payments/usage.ts"
 import { decideInline } from "../security/inline.ts"
 import { fireEvent } from "../actions/dispatch.ts"
 import type { RunSummary } from "../actions/dispatch.ts"
+import { emitEvent } from "../webhooks/emit.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -304,6 +305,12 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         const entry: typeof result[number] = { ...after, new_version: isNewVersion }
         if (actionResults.length > 0) entry.action_results = actionResults
         result.push(entry)
+
+        void emitEvent(db, {
+          userId: ownerId,
+          event: isNewVersion ? "file.updated" : "file.created",
+          payload: { ...after, new_version: isNewVersion },
+        })
       }
 
       // Post-write quota verification — closes the TOCTOU window where two
@@ -413,6 +420,20 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
 
       const out: Record<string, unknown> = { id, ...patchData }
       if (summaries.length > 0) out.action_results = summaries
+      if (updatedFile) {
+        void emitEvent(db, {
+          userId: updatedFile.user_id,
+          event: "file.updated",
+          payload: {
+            id: updatedFile.id,
+            name: updatedFile.name,
+            mime: updatedFile.mime,
+            size: updatedFile.size,
+            folder_id: updatedFile.folder_id,
+            version: updatedFile.version,
+          },
+        })
+      }
       return json(c, 200, out)
     })),
 
@@ -444,6 +465,11 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
 
       const out: Record<string, unknown> = { trashed: id }
       if (summaries.length > 0) out.action_results = summaries
+      void emitEvent(db, {
+        userId: file.user_id,
+        event: "file.deleted",
+        payload: { id: file.id, name: file.name, folder_id: file.folder_id },
+      })
       return json(c, 200, out)
     })),
 

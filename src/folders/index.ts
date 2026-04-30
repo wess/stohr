@@ -8,6 +8,7 @@ import { canWrite, folderAccess, isOwner } from "../permissions/index.ts"
 import type { FolderRow } from "../permissions/index.ts"
 import { fireEvent } from "../actions/dispatch.ts"
 import type { RunSummary } from "../actions/dispatch.ts"
+import { emitEvent } from "../webhooks/emit.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -152,6 +153,11 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
 
       const out: Record<string, unknown> = { ...rows[0] }
       if (summaries.length > 0) out.action_results = summaries
+      void emitEvent(db, {
+        userId: ownerId,
+        event: "folder.created",
+        payload: { ...rows[0], parent_id: parentId },
+      })
       return json(c, 201, out)
     })),
 
@@ -261,6 +267,17 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
 
       const out: Record<string, unknown> = { id, ...patchData }
       if (summaries.length > 0) out.action_results = summaries
+      if (updatedFolder) {
+        void emitEvent(db, {
+          userId: updatedFolder.user_id,
+          event: "folder.updated",
+          payload: {
+            id: updatedFolder.id,
+            name: updatedFolder.name,
+            parent_id: updatedFolder.parent_id,
+          },
+        })
+      }
       return json(c, 200, out)
     })),
 
@@ -302,6 +319,11 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
 
       const out: Record<string, unknown> = { trashed: id }
       if (summaries.length > 0) out.action_results = summaries
+      void emitEvent(db, {
+        userId: folder.user_id,
+        event: "folder.deleted",
+        payload: { id: folder.id, name: folder.name, parent_id: folder.parent_id },
+      })
       return json(c, 200, out)
     })),
 

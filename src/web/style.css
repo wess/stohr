@@ -1917,6 +1917,23 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
   border: none;
   background: #fff;
 }
+.preview-pdf {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.preview-pdf iframe { flex: 1; }
+.preview-pdf-fallback {
+  background: var(--panel);
+  color: #94a3b8;
+  font-size: 12px;
+  padding: 8px 12px;
+  text-align: center;
+  border-top: 1px solid rgba(255,255,255,0.04);
+}
+.preview-pdf-fallback a { color: var(--brand); text-decoration: none; }
+.preview-pdf-fallback a:hover { text-decoration: underline; }
 .preview-audio {
   background: var(--panel);
   padding: 40px;

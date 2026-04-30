@@ -31,9 +31,15 @@ import { passwordRoutes, sweepExpiredPasswordResets } from "./auth/password.ts"
 import { passkeyRoutes, sweepExpiredWebauthnChallenges } from "./auth/passkeys.ts"
 import { deletionRoutes, sweepDeletedAccounts } from "./auth/deletion.ts"
 import { contactRoutes } from "./contact/index.ts"
+import { webhookRoutes } from "./webhooks/index.ts"
+import { healthRoutes } from "./health/index.ts"
+import { seedRecurring, startDispatcher } from "./jobs/index.ts"
+import { registerJobs } from "./jobs/register.ts"
 import { createStorage } from "./storage/index.ts"
 import { createEmailer } from "./email/index.ts"
 import { withSecurityHeaders } from "./security/headers.ts"
+import { withRequestLog } from "./log/request.ts"
+import { log } from "./log/index.ts"
 
 const config = defineConfig({
   port: env("PORT", { parse: Number, default: "3000" }),
@@ -73,6 +79,10 @@ const emailer = createEmailer({
 
 await migrate.up(db, "./migrations")
 
+registerJobs(store)
+await seedRecurring(db)
+startDispatcher(db)
+
 const fetch = router(
   ...authRoutes(db, config.secret),
   ...passwordRoutes(db, emailer, config.appUrl),
@@ -104,6 +114,8 @@ const fetch = router(
   ...deviceAuthorizeRoutes(db, config.secret),
   ...actionRoutes(db, config.secret),
   ...userActionRoutes(db, config.secret),
+  ...webhookRoutes(db, config.secret),
+  ...healthRoutes(db, store),
 )
 
 // OAuth cleanup: expired auth codes (60s TTL) every 5 min, expired device
@@ -115,7 +127,7 @@ const guardedSweep = (label: string, fn: () => Promise<unknown>) => {
   return async () => {
     if (running) return
     running = true
-    try { await fn() } catch (err) { console.error(`[stohr] sweep ${label} failed:`, err) }
+    try { await fn() } catch (err) { log.error("sweep failed", { label, err: err instanceof Error ? err.message : String(err) }) }
     finally { running = false }
   }
 }
@@ -146,24 +158,24 @@ void sweepDeletions()
 const isDev = (process.env.NODE_ENV ?? "development") === "development"
 if (config.secret === "dev-secret-change-me") {
   if (isDev) {
-    console.warn("[stohr] WARNING: running with the default SECRET. Set a strong SECRET in .env before production.")
+    log.warn("running with the default SECRET — set a strong SECRET in .env before production")
   } else {
-    console.error("[stohr] FATAL: SECRET is set to its default value. Refusing to start. Set SECRET in your environment to a strong random string (e.g. `openssl rand -hex 32`).")
+    log.error("FATAL: SECRET is set to its default value; refusing to start. Set SECRET to a strong random string (e.g. openssl rand -hex 32).")
     process.exit(1)
   }
 }
 if (config.secret.length < 32 && !isDev) {
-  console.error(`[stohr] FATAL: SECRET is too short (${config.secret.length} chars). Use at least 32 chars in production.`)
+  log.error("FATAL: SECRET is too short", { length: config.secret.length, min: 32 })
   process.exit(1)
 }
 
 Bun.serve({
   port: config.port,
   hostname: "0.0.0.0",
-  fetch: withSecurityHeaders(fetch),
+  fetch: withRequestLog(withSecurityHeaders(fetch)),
   maxRequestBodySize: config.maxUploadBytes,
   idleTimeout: 0,
 })
 
-console.log(`[stohr] api on http://localhost:${config.port}`)
-console.log(`[stohr] storage endpoint: ${config.s3Endpoint} (encryption-at-rest is the provider's responsibility — see SECURITY.md)`)
+log.info("api listening", { port: config.port, url: `http://localhost:${config.port}` })
+log.info("storage configured", { endpoint: config.s3Endpoint, bucket: config.s3Bucket })

@@ -8,6 +8,7 @@ import { fetchObject } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { decideInline } from "../security/inline.ts"
 import { checkRate, clientIp } from "../security/ratelimit.ts"
+import { emitEvent } from "../webhooks/emit.ts"
 
 const APP_TOKEN_PREFIX = "stohr_pat_"
 const MAX_EXPIRES_SECONDS = 30 * 24 * 60 * 60
@@ -165,8 +166,22 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
           .returning("id", "token", "expires_at", "burn_on_view", "created_at")
       ) as Array<{ id: number; token: string; expires_at: string; burn_on_view: boolean; created_at: string }>
 
+      const created = rows[0]
+      void emitEvent(db, {
+        userId,
+        event: "share.created",
+        payload: {
+          share_id: created.id,
+          file_id: fileId,
+          token: created.token,
+          expires_at: created.expires_at,
+          burn_on_view: created.burn_on_view,
+          password_required: !!passwordHash,
+        },
+      })
+
       return json(c, 201, {
-        ...rows[0],
+        ...created,
         password_required: !!passwordHash,
       })
     })),
@@ -182,6 +197,11 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
       await db.execute(
         from("shares").where(q => q("id").equals(id)).del()
       )
+      void emitEvent(db, {
+        userId,
+        event: "share.deleted",
+        payload: { share_id: id, file_id: (row as { file_id: number }).file_id },
+      })
       return json(c, 200, { deleted: id })
     })),
 

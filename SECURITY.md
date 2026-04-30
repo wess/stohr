@@ -140,6 +140,16 @@ Setting it wrong has real consequences:
 - Too narrow → the API records the proxy IP for every request, collapsing rate-limit buckets and audit logs onto a single IP. One bad actor locks out everyone.
 - Too wide → an attacker can spoof XFF and either evade their own bucket or pin someone else's.
 
+## Outbound webhooks
+
+User-configured webhooks (`POST /me/webhooks`) deliver HMAC-SHA256 signed POSTs to subscriber URLs. Defence properties:
+
+- Each webhook has a per-row `secret` (`whsec_…`, 32 random bytes). The plaintext is **only** returned at create + rotate; reads never expose it.
+- Every delivery carries `x-stohr-signature: sha256=<hex>` HMAC over `${timestamp}.${body}` using the secret. Receivers should constant-time-compare and **reject anything more than ~5 minutes old** (replay defence — the timestamp is also signed, so it can't be moved without breaking the MAC).
+- Each delivery has a unique `x-stohr-delivery` id; receivers should dedupe on it.
+- Delivery is at-least-once: failed POSTs retry with exponential backoff (30s → 2m → 8m → 32m → 2h cap, max 6 attempts) and persist a `webhook_deliveries` row with the response status and a truncated body snippet.
+- The HTTP fetch has a 10 s timeout with `AbortController`. We do **not** follow redirects beyond the first hop, and the `User-Agent` is fixed (`Stohr-Webhook/1.0`). We do not currently block private-network destinations — operators should put the API behind an egress firewall if SSRF risk is a concern.
+
 ## Upload memory ceiling
 
 `MAX_UPLOAD_BYTES` (default 1 GiB) is the hard cap on a single request body. Bun buffers the body and `@atlas/storage` re-buffers it to compute the SigV4 payload hash, so this is effectively a per-upload memory ceiling. Plan for direct-to-S3 presigned PUTs in a future release to remove the ceiling.
@@ -150,6 +160,7 @@ Setting it wrong has real consequences:
 - **Bucket-default-encryption assertion** at API startup (probe the bucket and warn if the provider does not advertise encryption)
 - **External pen test / bug bounty** — recommended before public launch
 - **Direct-to-S3 presigned uploads** to remove the in-API buffering ceiling
+- **SSRF protection on outbound webhooks** — block private/loopback/metadata IP ranges in delivery, not just at the firewall
 
 ## Reporting issues
 

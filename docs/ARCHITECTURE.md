@@ -73,6 +73,10 @@ src/
   storage/              — only module that talks to @atlas/storage
   email/                — Resend integration + transactional templates
   actions/              — folder-action dispatch + built-in registry
+  webhooks/             — outbound webhook subscriptions, HMAC-signed delivery
+  jobs/                 — durable background job runner (Postgres-backed queue)
+  health/               — /healthz and /readyz endpoints
+  log/                  — JSON-line structured logger + request-log middleware
   util/                 — small helpers (token, username)
   web/                  — single-file React SPA + serve.ts proxy
 migrations/             — hand-written SQL, applied at API startup via @atlas/migrate
@@ -162,3 +166,36 @@ Started from `src/server.ts` on a `setInterval`. Each one is wrapped in a "runni
 - Expired share rows — every hour (started from `shareRoutes`)
 
 All sweeps also run once at boot so the first request after restart doesn't see stale rows.
+
+## Background jobs (durable)
+
+Sweeps are fire-and-forget timers. Anything that needs **at-least-once** delivery, retries, or coordination across processes uses the durable job runner in `src/jobs/index.ts`.
+
+The `jobs` table holds rows with `type`, `payload`, `run_at`, `attempts`, `max_attempts`, and `status`. The dispatcher claims work with `UPDATE … FROM (SELECT … FOR UPDATE SKIP LOCKED)` so multiple API processes can share the queue without double-running a job. Failed handlers retry with exponential backoff (30s → 2m → 8m → 32m → 2h cap); rows that exhaust `max_attempts` are marked `dead` and kept indefinitely for inspection. `done` rows are trimmed after 7 days.
+
+Currently used for:
+
+- `webhook.deliver` — POST a `webhook_deliveries` row to its subscriber URL with HMAC-SHA256 signature, retry on non-2xx
+- `trash.autopurge` — recurring (hourly), hard-deletes files/folders soft-deleted longer than `TRASH_RETENTION_DAYS`
+
+`registerRecurring(type, intervalMs, handler)` in `src/jobs/register.ts` is the convenience shim that wires a handler **and** re-enqueues the job after each successful run, giving cron-without-cron with no separate scheduler process.
+
+## Outbound webhooks
+
+`src/webhooks/emit.ts` is fire-and-forget — invoked from file/folder/share lifecycle handlers. It looks up enabled webhooks for the actor, applies event filters (exact match or `prefix.*` wildcard), inserts a `webhook_deliveries` row per match, and enqueues a `webhook.deliver` job.
+
+The delivery handler in `src/webhooks/deliver.ts` POSTs the envelope `{ event, delivered_at, data }` with these headers:
+
+- `x-stohr-signature: sha256=<hmac>` — HMAC over `${timestamp}.${body}` using the per-webhook secret
+- `x-stohr-timestamp: <unix-seconds>` — receivers should reject anything more than ~5 minutes old (replay defence)
+- `x-stohr-event` and `x-stohr-delivery` — for filtering and idempotent dedupe
+
+10-second timeout per attempt, recorded into `webhook_deliveries` with the response status and a truncated body snippet.
+
+## Logging
+
+Every response carries an `x-request-id` (echoes inbound, generated otherwise). The same id appears in the JSON-line access log in `src/log/request.ts`. The `log` helper exported from `src/log/index.ts` is gated by `LOG_LEVEL` (defaults to `info`); `info`/`debug` go to stdout, `warn`/`error` to stderr. `/healthz` and `/readyz` are excluded from the access log so load-balancer polls don't drown the stream.
+
+## Health endpoints
+
+`/healthz` is a process-liveness ping (uptime only, no DB). `/readyz` returns 503 unless every dependency check passes — currently `SELECT 1` against Postgres and a best-effort storage ping. Point load balancers at `/readyz`, container orchestrators at `/healthz`.

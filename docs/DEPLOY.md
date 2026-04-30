@@ -56,21 +56,36 @@ You're looking for the `docker compose up -d --build` line at the end. Once it's
 ## Post-deploy verification
 
 ```sh
-# 1. API is up and security headers landed
+# 1. Liveness — process is up
+curl -sf https://<your-domain>/healthz | jq
+
+# 2. Readiness — DB and storage reachable. 503 means a dependency is broken
+curl -sf https://<your-domain>/readyz | jq
+
+# 3. API is up and security headers landed
 curl -sI https://<your-domain>/api/setup | grep -iE 'content-security-policy|strict-transport-security'
 
-# 2. Migrations applied (replace POSTGRES_PASSWORD with the value in your .env)
+# 4. Migrations applied (replace POSTGRES_PASSWORD with the value in your .env)
 ssh root@<ip> 'docker compose -f /opt/stohr/compose.yaml exec postgres \
   psql -U postgres -d stohr -c "SELECT name FROM atlas_migrations ORDER BY id DESC LIMIT 3;"'
 
-# 3. Tail the API logs for clean boot
+# 5. Tail the API logs for clean boot
 ssh root@<ip> 'docker compose -f /opt/stohr/compose.yaml logs --tail=50 api'
 
-# 4. Sign up the first user — they become the owner
+# 6. Sign up the first user — they become the owner
 open https://<your-domain>/signup
 ```
 
 If any of these fail, see "Troubleshooting" below.
+
+## Health checks for orchestrators
+
+Stohr exposes two unauthenticated endpoints at the API root:
+
+- `GET /healthz` — **liveness**. Returns `200` with `{ ok, uptime_s }` whenever the process is running. Never touches the DB. Use this for "is the container alive" probes (Kubernetes `livenessProbe`, Docker `HEALTHCHECK`).
+- `GET /readyz` — **readiness**. Verifies Postgres (`SELECT 1`) and best-effort S3 reachability. Returns `200` with `{ ok, checks }` only if every dependency is healthy; otherwise `503`. Use this for load-balancer health checks and Kubernetes `readinessProbe`.
+
+Both skip the access log to avoid drowning your log stream when the LB polls every second.
 
 ## Email setup (required for invites + password reset)
 

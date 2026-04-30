@@ -46,19 +46,19 @@ Implementation notes: general sync is the single largest effort — protocol (de
 | --- | --- | --- | --- | --- |
 | API tokens (user-scoped, revocable) | ✓ | ✓ | **have** (PATs prefixed `stohr_pat_`, SHA-256 hashed, mintable via `POST /me/apps`) | — |
 | OAuth apps / third-party access grants | ✓ | ✓ | **have** (full OAuth 2.0 provider: auth code + PKCE, device flow, refresh token rotation; see [OAUTH.md](docs/OAUTH.md)) | — |
-| Outbound webhooks (file/folder events) | ✓ | ✓ | **missing** | P0 |
+| Outbound webhooks (file/folder events) | ✓ | ✓ | **have** (per-user HMAC-SHA256 signed; retries via durable job runner with exponential backoff; delivery log + replay; see `POST /me/webhooks` in [API.md](docs/API.md#webhooks-auth-required-first-party-only)) | — |
 | Rate limiting | ✓ | ✓ | **have** (sliding-bucket counters in `rate_limits`; per-IP / per-identity / per-user on auth + MFA) | — |
 | Native SDKs | ✓ | ✓ | **have** (TypeScript / Dart / Swift / Kotlin under [`sdks/`](sdks/README.md)) | — |
 | OpenAPI spec | ✓ | ✓ | **missing** | P1 |
 
-Implementation notes: outbound webhooks are the last big developer-platform gap. They need an events table, a delivery worker (retry with backoff), and HMAC-signed payloads — once that lands, Zapier/Make/n8n integrations come for free.
+Implementation notes: with outbound webhooks shipped, Zapier/Make/n8n integrations are now wireable without per-platform code (PATs and OAuth were already done). The remaining developer-platform gap is publishing an OpenAPI spec to unlock SDK regeneration.
 
 ## File preview & editing
 
 | Capability | Box | Dropbox | Stohr | Priority |
 | --- | --- | --- | --- | --- |
 | Image thumbnails | ✓ | ✓ | **have** (JPEG/PNG/WebP/GIF; server-generated WebP via `sharp`, served from `GET /files/:id/thumb`) | — |
-| PDF preview | ✓ | ✓ | **missing** | P0 |
+| PDF preview | ✓ | ✓ | **have** (browser-native viewer in the SPA preview modal — `<iframe src=blob:…>` with `sandbox` attrs and "open in new tab" fallback; CSP allows `frame-src blob:`) | — |
 | Office document preview (docx/xlsx/pptx) | ✓ | ✓ | **missing** | P1 |
 | Collaborative editing (Office/Google Docs) | ✓ (via Office Online) | ✓ (Dropbox Paper, Office) | **missing** | P2 |
 | Video/audio streaming | ✓ | ✓ | **partial** (server streams, no transcoding) | P1 |
@@ -86,7 +86,7 @@ Implementation notes: pdf.js in the browser is the cheapest path for PDF preview
 | --- | --- | --- | --- | --- |
 | Version history | ✓ | ✓ | **have** | — |
 | Soft-delete trash | ✓ | ✓ | **have** | — |
-| Auto-purge trash after N days | ✓ | ✓ | **missing** | P1 |
+| Auto-purge trash after N days | ✓ | ✓ | **have** (recurring `trash.autopurge` job; `TRASH_RETENTION_DAYS` env, default 30) | — |
 | Per-user storage quotas | ✓ | ✓ | **have** (per-tier `storage_quota_bytes`; enforced at upload; over-quota → `402` with structured body) | — |
 | Chunked / resumable uploads | ✓ | ✓ | **missing** | P0 |
 | Deduplication (content-addressed storage) | ✓ | ✓ | **missing** | P2 |
@@ -110,7 +110,7 @@ Implementation notes: Postgres `tsvector` gives decent FTS without a new depende
 
 | Capability | Box | Dropbox | Stohr | Priority |
 | --- | --- | --- | --- | --- |
-| Zapier / Make / n8n | ✓ | ✓ | **missing** (blocked on outbound webhooks) | P1 |
+| Zapier / Make / n8n | ✓ | ✓ | **partial** (HMAC-signed outbound webhooks shipped; no per-platform pre-built integrations yet) | P1 |
 | Slack notifications | ✓ | ✓ | **missing** | P1 |
 | Transactional email (invites, password reset, collab invites) | ✓ | ✓ | **have** (Resend integration; falls back to console output when `RESEND_API_KEY` is empty) | — |
 | Activity-event email notifications (file shared, comment added, etc.) | ✓ | ✓ | **missing** | P1 |
@@ -118,7 +118,7 @@ Implementation notes: Postgres `tsvector` gives decent FTS without a new depende
 | E-signature (DocuSign / HelloSign) | ✓ | ✓ (HelloSign) | **missing** | P2 |
 | IFTTT-style triggers | ✓ | ✓ | **missing** | P2 |
 
-Implementation notes: PATs and OAuth are already shipped, so Zapier/n8n/Make all work the moment outbound webhooks land — no per-platform integration code required.
+Implementation notes: PATs, OAuth, and outbound webhooks all ship — Zapier/n8n/Make work today using the standard "webhook trigger + HTTP action" path on each platform. The remaining work is publishing pre-built app templates on each marketplace.
 
 ## Security & compliance
 
@@ -143,9 +143,9 @@ Implementation notes: ClamAV via its TCP socket is the standard AV integration �
 | Capability | Box | Dropbox | Stohr | Priority |
 | --- | --- | --- | --- | --- |
 | Metrics (Prometheus) | — (internal) | — (internal) | **missing** | P1 |
-| Structured logging | — | — | **partial** (console.log only) | P0 |
+| Structured logging | — | — | **have** (JSON-line logger in `src/log/`; `LOG_LEVEL` env; one access-log line per request with `request_id`, method, path, status, duration_ms) | — |
 | Distributed tracing (OpenTelemetry) | — | — | **missing** | P2 |
-| Health / readiness endpoints | — | — | **missing** | P0 |
+| Health / readiness endpoints | — | — | **have** (`GET /healthz` liveness, `GET /readyz` checks DB + storage and returns 503 on failure) | — |
 
 ---
 
@@ -153,11 +153,11 @@ Implementation notes: ClamAV via its TCP socket is the standard AV integration �
 
 If you want an opinionated order that unblocks the most downstream work per unit effort:
 
-1. **Outbound webhooks** — last big developer-platform gap; unlocks Zapier/n8n/Slack without writing per-platform code (PATs and OAuth are already done)
+1. **Chunked / resumable uploads** — `MAX_UPLOAD_BYTES` is currently a memory ceiling, not a disk ceiling, because `@atlas/storage` buffers the body to compute SigV4. Presigned-PUT direct-to-S3 removes the buffering and unblocks large uploads on flaky networks
 2. **OAuth sign-in** (Google/Microsoft/GitHub) — login parity with Box/Dropbox; MFA + sessions + WebAuthn are already in place
-3. **Activity-event email notifications** — transactional email already ships; activity-driven notifications (file shared, comment added) build on the same Resend integration
-4. **Chunked / resumable uploads** — stops big uploads from failing on flaky networks; also lifts the in-API memory ceiling per upload
-5. **PDF preview** — image thumbnails ship; PDFs are the next big preview win
-6. **AV scanning** — required before anyone puts real data in this; audit logs are already shipped to record findings
-7. **WebDAV endpoint** — cheap way to get Finder/Explorer mounts before writing a full sync client
-8. **Desktop sync daemon + mobile app** — Stohrshot and the Flutter app exist; turning either into a full sync client is the largest remaining surface area
+3. **AV scanning** — required before anyone puts real data in this; audit logs and the durable job runner are already in place to record findings and run scans asynchronously
+4. **Activity-event email notifications** — transactional email already ships; activity-driven notifications build on the same Resend integration. The webhook event stream + job runner make this a small wiring task
+5. **OpenAPI spec** — auto-generate from the existing `@atlas/server` routes, then regenerate the four SDKs from it. Turns SDK maintenance from a four-repo chore into a CI step
+6. **WebDAV endpoint** — cheap way to get Finder/Explorer mounts before writing a full sync client
+7. **Desktop sync daemon + mobile app** — Stohrshot and the Flutter app exist; turning either into a full sync client is the largest remaining surface area
+8. **Prometheus metrics + OpenTelemetry tracing** — structured logs and `/readyz` shipped. Metrics + traces are the next observability layer

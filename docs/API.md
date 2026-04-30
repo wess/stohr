@@ -245,6 +245,54 @@ See [ACTIONS.md](ACTIONS.md) for the model, event list, and how to write a built
 
 When an action fires during a request (e.g. a `POST /files` upload into an action folder), the matching run summaries are appended to each result entry as `action_results`.
 
+## Webhooks (auth required, first-party only)
+
+Outbound webhook subscriptions per user. Events fire whenever a file or folder you own is created, updated, or deleted, or whenever a share link you own is created or deleted. Events are **at-least-once** — receivers must dedupe on the `x-stohr-delivery` header.
+
+| method | path | body | returns |
+| --- | --- | --- | --- |
+| `GET` | `/me/webhooks` | — | list of your webhooks (no secrets) |
+| `POST` | `/me/webhooks` | `{ url, events?: string[], description? }` | new webhook **with the secret returned once** — stash it; you can't read it back |
+| `PATCH` | `/me/webhooks/:id` | `{ url?, events?, enabled?, description? }` | `{ id }` |
+| `DELETE` | `/me/webhooks/:id` | — | `{ deleted }` |
+| `POST` | `/me/webhooks/:id/rotate-secret` | — | `{ id, secret }` (new secret returned once) |
+| `POST` | `/me/webhooks/:id/test` | — | `{ queued }` — enqueues a synthetic `ping` delivery |
+| `GET` | `/me/webhooks/:id/deliveries` | — | last 100 attempts with status, response code, attempts, errors |
+
+**Event filter syntax**: an empty array means "all events". Otherwise use exact matches (`file.created`) or wildcard prefixes (`file.*`).
+
+**Available events**: `file.created`, `file.updated`, `file.deleted`, `folder.created`, `folder.updated`, `folder.deleted`, `share.created`, `share.deleted`, plus the synthetic `ping` from the test endpoint.
+
+**Delivery semantics**:
+
+- POST with `content-type: application/json`, body `{ event, delivered_at, data }`.
+- 10s timeout. Any non-2xx or network failure triggers retry with exponential backoff (30s → 2m → 8m → 32m → 2h cap, up to 6 attempts). Then the delivery is marked dead.
+- The job runner is shared with other background work; multi-process deployments coordinate via `FOR UPDATE SKIP LOCKED`.
+
+**Headers your endpoint will receive**:
+
+| header | value |
+| --- | --- |
+| `x-stohr-event` | event name, e.g. `file.created` |
+| `x-stohr-delivery` | unique delivery id (use to dedupe) |
+| `x-stohr-timestamp` | unix seconds at signing time |
+| `x-stohr-signature` | `sha256=<hex>` HMAC over `${timestamp}.${body}` using your secret |
+
+**Verifying a payload** (Node/Bun):
+
+```ts
+import { createHmac, timingSafeEqual } from "node:crypto"
+
+const verify = (secret: string, ts: string, body: string, sig: string): boolean => {
+  const mac = createHmac("sha256", secret).update(`${ts}.${body}`).digest("hex")
+  const expected = `sha256=${mac}`
+  if (sig.length !== expected.length) return false
+  return timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
+}
+```
+
+Reject any request where `Date.now()/1000 - Number(ts)` exceeds your tolerance window (5 minutes is typical) — that prevents replay.
+
 ## OAuth 2.0
 
 See [OAUTH.md](OAUTH.md) for the full flow walk-through.
@@ -291,6 +339,17 @@ All `/admin/*` routes require `auth.is_owner === true`.
 | `PATCH` | `/admin/oauth/clients/:id` | edit name / redirect URIs / scopes / `is_official` |
 | `POST` | `/admin/oauth/clients/:id/rotate-secret` | issue a fresh `client_secret` |
 | `DELETE` | `/admin/oauth/clients/:id` | revoke (existing tokens stop working) |
+
+## Health & readiness
+
+Both endpoints are unauthenticated and unrate-limited. Skip `/api` — these are at the API root.
+
+| method | path | notes |
+| --- | --- | --- |
+| `GET` | `/healthz` | Liveness. `{ ok: true, uptime_s }`. Never touches the DB; safe to poll on a 1s interval |
+| `GET` | `/readyz` | Readiness. `{ ok, checks: { db, storage } }` with per-check `ms` timing. Returns **503** if any dependency check fails. Point your load balancer at this |
+
+Every API response carries an `x-request-id` header — the value of an inbound `x-request-id` is echoed if present, otherwise generated. The same id appears in the structured access log line for that request, so a 5xx report from a user is one grep away from the relevant logs.
 
 ## S3-compatible (sigv4 auth)
 

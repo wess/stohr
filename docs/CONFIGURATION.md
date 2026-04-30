@@ -55,6 +55,21 @@ These three must be set together. A passkey created against one `RP_ID` cannot b
 | `MAX_UPLOAD_BYTES` | `1073741824` (1 GiB) | Hard cap on a single request body. Bun buffers the body and `@atlas/storage` re-buffers it to compute SigV4 — this is effectively a per-upload memory ceiling |
 | `TRUSTED_PROXIES` | (empty) | Comma-separated IPv4 addresses or CIDRs allowed to set `X-Forwarded-For` / `X-Real-IP`. With Docker Compose set this to `172.16.0.0/12` (covers the bridge). Leave empty for direct-to-API traffic. Untrusted XFF is ignored; the socket peer is used instead |
 
+### Observability
+
+| var | default | purpose |
+| --- | --- | --- |
+| `LOG_LEVEL` | `info` | One of `debug`, `info`, `warn`, `error`. The API emits one JSON object per line — `info` and `debug` go to stdout, `warn` and `error` to stderr. Each log line includes `ts`, `level`, `msg`, and (for `http` lines) a `request_id` correlating to the `x-request-id` response header |
+
+### Background jobs
+
+The API runs a built-in dispatcher that reads from a `jobs` table — used by outbound webhook delivery and the trash auto-purge sweep. Multiple API processes can share the queue safely (claims use `FOR UPDATE SKIP LOCKED`).
+
+| var | default | purpose |
+| --- | --- | --- |
+| `JOBS_TICK_MS` | `2000` | Dispatcher poll interval. Lower = faster pickup, higher = less DB load. Defaults are fine for most deployments |
+| `TRASH_RETENTION_DAYS` | `30` | Files / folders soft-deleted longer than this are hard-deleted (with storage drops) by the hourly `trash.autopurge` job. Set to a large number to effectively disable |
+
 ### Compose-only
 
 These are read by `compose.yaml` and aren't seen by the API directly.
