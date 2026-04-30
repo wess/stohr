@@ -75,6 +75,7 @@ src/
   actions/              — folder-action dispatch + built-in registry
   webhooks/             — outbound webhook subscriptions, HMAC-signed delivery
   jobs/                 — durable background job runner (Postgres-backed queue)
+  ai/                   — bai (libs/bai) wrapper: lazy init, embed, extract, semantic search
   health/               — /healthz and /readyz endpoints
   log/                  — JSON-line structured logger + request-log middleware
   util/                 — small helpers (token, username)
@@ -199,3 +200,14 @@ Every response carries an `x-request-id` (echoes inbound, generated otherwise). 
 ## Health endpoints
 
 `/healthz` is a process-liveness ping (uptime only, no DB). `/readyz` returns 503 unless every dependency check passes — currently `SELECT 1` against Postgres and a best-effort storage ping. Point load balancers at `/readyz`, container orchestrators at `/healthz`.
+
+## AI / semantic search (optional)
+
+`src/ai/index.ts` wraps the [`bai`](../libs/bai/README.md) workspace package — in-process llama.cpp via `bun:ffi`. Wired so the rest of the codebase doesn't see the dependency: every entry point becomes a graceful no-op when `AI_EMBED_MODEL` is unset or the native library isn't installed.
+
+- Boot: `initAi(config.aiEmbedModel)` dynamically imports `bai`, probes `isAvailable()`, loads the model, and stashes the handle in module-level state. Failures here log a warning and disable the feature; they don't crash the API.
+- Lifecycle: file create/update enqueues an `embeddings.generate` job. The handler in `src/ai/job.ts` reads the storage object, extracts text (text-class mimes only in v1), hashes it, embeds via `embedText`, and upserts into `file_embeddings`. Same-content uploads of new file versions are skipped via the hash check.
+- Storage: `migrations/00000038_file_embeddings/up.sql` creates the pgvector extension + `file_embeddings` table with an HNSW cosine index. The vector column is locked at `vector(768)` to match `nomic-embed-text-v1.5`; switching models means a fresh table.
+- Search: `GET /search/semantic?q=` embeds the query and runs an indexed cosine ANN. Owner-scoped in v1 (collaborator visibility is a follow-up). `GET /search/status` returns the runtime state so the SPA can hide UI when AI is off.
+
+When AI is disabled, `embeddings.generate` jobs short-circuit before the native call — there's no cost beyond enqueueing if the operator never sets `AI_EMBED_MODEL`.

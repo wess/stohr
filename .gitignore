@@ -76,3 +76,7 @@ pubspec.lock
 **/windows/flutter/ephemeral/
 **/windows/flutter/generated_plugin_registrant.*
 **/windows/flutter/generated_plugins.cmake
+
+# bai native build artifacts (compiled per-platform; do not commit)
+libs/bai/native/rust/target/
+libs/bai/native/dist/

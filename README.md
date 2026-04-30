@@ -13,6 +13,7 @@ Bun + React + Postgres + S3-compatible blob store.
 - **OAuth provider** — third-party apps integrate via authorization-code with PKCE, refresh-token rotation, device flow.
 - **S3-compatible API** — point any S3 SDK or `s3cmd`/`rclone` at Stohr; reuses your account quota.
 - **Outbound webhooks** — per-user HMAC-signed webhooks for file/folder/share events with retries and a delivery log; pair with PATs/OAuth to reach Zapier, n8n, Make, or your own services.
+- **Semantic search (optional)** — file contents embedded in-process via [`bai`](libs/bai/README.md) (llama.cpp + bun:ffi). No API keys, no sidecar. `GET /search/semantic` ranks by vector similarity over a pgvector HNSW index. Falls back to filename search when disabled.
 - **Subscriptions** — built-in Lemon Squeezy integration with tier quotas and admin override.
 - **Admin** — invite issuance, audit log, user/owner management, OAuth client registry, payment configuration.
 - **Operability** — JSON-line structured logs with request-id correlation, `/healthz` and `/readyz` endpoints, durable Postgres-backed background job runner.

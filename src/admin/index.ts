@@ -6,6 +6,8 @@ import { randomToken, sha256Hex } from "../util/token.ts"
 import type { Emailer } from "../email/index.ts"
 import { inviteEmail } from "../email/templates/invite.ts"
 import { ownerOnly } from "../security/owner.ts"
+import { aiModelId, aiStatus, isAiEnabled } from "../ai/index.ts"
+import { isEmbeddableMime } from "../ai/extract.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -233,6 +235,104 @@ export const adminRoutes = (db: Connection, secret: string, emailer: Emailer, ap
         invites_unused: invitesAll.length - invitesUsed,
         requests_pending: requestsPending.length,
       })
+    })),
+
+    get("/admin/ai", guard(async (c) => {
+      // Coverage stats so the operator can see what's embedded vs. what's
+      // pending. Cheap query — counts only.
+      const status = aiStatus()
+      const totalRow = await db.one({
+        text: "SELECT COUNT(*)::int AS n FROM files WHERE deleted_at IS NULL",
+        values: [],
+      }) as { n: number } | null
+      const embeddedRow = await db.one({
+        text: status.model
+          ? "SELECT COUNT(*)::int AS n FROM file_embeddings WHERE model = $1"
+          : "SELECT COUNT(*)::int AS n FROM file_embeddings",
+        values: status.model ? [status.model] : [],
+      }) as { n: number } | null
+      const pendingRow = await db.one({
+        text: `SELECT COUNT(*)::int AS n FROM jobs
+               WHERE type = 'embeddings.generate' AND status IN ('pending', 'running')`,
+        values: [],
+      }) as { n: number } | null
+      const deadRow = await db.one({
+        text: `SELECT COUNT(*)::int AS n FROM jobs
+               WHERE type = 'embeddings.generate' AND status = 'dead'`,
+        values: [],
+      }) as { n: number } | null
+      return json(c, 200, {
+        ...status,
+        files_total: totalRow?.n ?? 0,
+        files_embedded: embeddedRow?.n ?? 0,
+        jobs_pending: pendingRow?.n ?? 0,
+        jobs_dead: deadRow?.n ?? 0,
+      })
+    })),
+
+    post("/admin/ai/backfill", authed(async (c) => {
+      // Enqueues embeddings.generate jobs for every non-deleted file that
+      // is missing a current-model embedding. Idempotent: re-running while
+      // a previous backfill is still draining is safe (the dispatcher
+      // dedupes nothing, but the handler will skip files whose embedding
+      // is already current via the content-hash + model check).
+      if (!isAiEnabled()) {
+        return json(c, 503, { error: "AI is disabled on this instance", status: aiStatus() })
+      }
+      const model = aiModelId()
+      if (!model) {
+        return json(c, 503, { error: "No active embedding model" })
+      }
+
+      const body = (c.body ?? {}) as { force?: boolean; limit?: number }
+      const force = !!body.force
+      const limit = (() => {
+        const n = Number(body.limit)
+        if (!Number.isFinite(n) || n <= 0) return 5000
+        return Math.min(50_000, Math.floor(n))
+      })()
+
+      // Pull candidate files. The handler will further filter by mime,
+      // but pre-filtering at SQL keeps the candidate set sane on
+      // instances with millions of binary files.
+      const rows = await db.execute({
+        text: force
+          ? `SELECT id, mime FROM files
+             WHERE deleted_at IS NULL
+             ORDER BY created_at DESC
+             LIMIT $1`
+          : `SELECT f.id, f.mime FROM files f
+             LEFT JOIN file_embeddings e ON e.file_id = f.id AND e.model = $1
+             WHERE f.deleted_at IS NULL AND e.file_id IS NULL
+             ORDER BY f.created_at DESC
+             LIMIT $2`,
+        values: force ? [limit] : [model, limit],
+      }) as Array<{ id: number | string; mime: string }>
+
+      const candidates = rows.filter(r => isEmbeddableMime(r.mime))
+      if (candidates.length === 0) return json(c, 200, { enqueued: 0, scanned: rows.length })
+
+      // Single batch insert. Postgres is happy with thousands of
+      // VALUES rows — well under the 65k parameter limit at 4 params/row.
+      const values: unknown[] = []
+      const placeholders: string[] = []
+      candidates.forEach((r, i) => {
+        const base = i * 4
+        placeholders.push(`($${base + 1}, $${base + 2}::jsonb, NOW(), $${base + 3}::int)`)
+        values.push("embeddings.generate", JSON.stringify({ file_id: Number(r.id) }), 3)
+      })
+      // Above pushed only 3 values per row but used 4 placeholders — fix:
+      values.length = 0
+      placeholders.length = 0
+      candidates.forEach((r, i) => {
+        const base = i * 3
+        placeholders.push(`($${base + 1}, $${base + 2}::jsonb, $${base + 3}::int)`)
+        values.push("embeddings.generate", JSON.stringify({ file_id: Number(r.id) }), 3)
+      })
+      const sql = `INSERT INTO jobs (type, payload, max_attempts) VALUES ${placeholders.join(", ")}`
+      await db.execute({ text: sql, values })
+
+      return json(c, 200, { enqueued: candidates.length, scanned: rows.length, model, limit, force })
     })),
 
     get("/admin/audit", guard(async (c) => {

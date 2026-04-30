@@ -33,6 +33,7 @@ import { deletionRoutes, sweepDeletedAccounts } from "./auth/deletion.ts"
 import { contactRoutes } from "./contact/index.ts"
 import { webhookRoutes } from "./webhooks/index.ts"
 import { healthRoutes } from "./health/index.ts"
+import { initAi } from "./ai/index.ts"
 import { seedRecurring, startDispatcher } from "./jobs/index.ts"
 import { registerJobs } from "./jobs/register.ts"
 import { createStorage } from "./storage/index.ts"
@@ -56,6 +57,7 @@ const config = defineConfig({
   rpId: env("RP_ID", { default: "localhost" }),
   rpName: env("RP_NAME", { default: "Stohr" }),
   rpOrigin: env("RP_ORIGIN", { default: "http://localhost:3001" }),
+  aiEmbedModel: env("AI_EMBED_MODEL", { default: "" }),
   // @atlas/storage buffers the upload body in API memory to compute the
   // AWS SigV4 payload hash, so this cap is *also* a memory ceiling per
   // concurrent upload. Plan a future migration to presigned-PUT direct-to-S3
@@ -78,6 +80,8 @@ const emailer = createEmailer({
 })
 
 await migrate.up(db, "./migrations")
+
+await initAi(config.aiEmbedModel || undefined)
 
 registerJobs(store)
 await seedRecurring(db)

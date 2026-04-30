@@ -63,12 +63,31 @@ These three must be set together. A passkey created against one `RP_ID` cannot b
 
 ### Background jobs
 
-The API runs a built-in dispatcher that reads from a `jobs` table — used by outbound webhook delivery and the trash auto-purge sweep. Multiple API processes can share the queue safely (claims use `FOR UPDATE SKIP LOCKED`).
+The API runs a built-in dispatcher that reads from a `jobs` table — used by outbound webhook delivery, the trash auto-purge sweep, and embedding generation. Multiple API processes can share the queue safely (claims use `FOR UPDATE SKIP LOCKED`).
 
 | var | default | purpose |
 | --- | --- | --- |
 | `JOBS_TICK_MS` | `2000` | Dispatcher poll interval. Lower = faster pickup, higher = less DB load. Defaults are fine for most deployments |
 | `TRASH_RETENTION_DAYS` | `30` | Files / folders soft-deleted longer than this are hard-deleted (with storage drops) by the hourly `trash.autopurge` job. Set to a large number to effectively disable |
+
+### AI / semantic search
+
+Stohr embeds file contents in-process using [`bai`](../libs/bai/README.md) (llama.cpp via `bun:ffi`). When enabled, `GET /search/semantic` returns files ranked by vector similarity rather than filename match. Disabled by default; the API boots fine without it, falling back to filename + trigram search.
+
+| var | default | purpose |
+| --- | --- | --- |
+| `AI_EMBED_MODEL` | (empty) | Bai preset id (see `bunx bai list`). Only `nomic-embed-text-v1.5` is supported in v1 because the `file_embeddings.embedding` column is locked to `vector(768)` |
+
+**Setup checklist when enabling AI:**
+
+1. **Postgres** — needs the `vector` extension. Most managed providers (Supabase, Neon, RDS, DigitalOcean, Crunchy) ship it. Stohr's migration does `CREATE EXTENSION IF NOT EXISTS vector` for you.
+2. **libbai** — `bun install` runs `bai`'s postinstall script which fetches the prebuilt native library. If your platform has no prebuilt yet, build from source: `cd libs/bai/native && ./build.sh`.
+3. **Pull the model** — `bunx bai pull nomic-embed-text-v1.5` (~270 MB; cached under `~/.cache/bai/models`).
+4. **Set `AI_EMBED_MODEL=nomic-embed-text-v1.5`** in `.env` and restart the API.
+
+On boot, look for `ai enabled` in the structured logs. `GET /search/status` returns the current state and explains why if disabled.
+
+Embedding extraction is currently limited to `text/*`, JSON, XML, YAML, TOML, and code-style mimes. PDFs and Office documents are not embedded yet — they're treated as opaque blobs and remain searchable only by filename.
 
 ### Compose-only
 

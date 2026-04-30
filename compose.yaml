@@ -1,6 +1,11 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector/pgvector:pg16 ships pgvector preinstalled. Stohr's
+    # 00000038_file_embeddings migration runs CREATE EXTENSION vector
+    # at boot; without this image the API would fail on first start
+    # whenever AI_EMBED_MODEL is set. The plain postgres:16-alpine
+    # image works for non-AI deployments but you'd lose semantic search.
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: stohr
       POSTGRES_USER: postgres
@@ -42,6 +47,20 @@ services:
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-172.16.0.0/12}
       # RAM ceiling per concurrent upload (Bun + SigV4 hashing both buffer).
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-1073741824}
+      # AI / semantic search. Leave empty to disable; the API boots fine
+      # without it. Set to a bai preset id (e.g. nomic-embed-text-v1.5)
+      # AND pull the model into the baimodels volume first:
+      #   docker compose run --rm api bunx bai pull nomic-embed-text-v1.5
+      AI_EMBED_MODEL: ${AI_EMBED_MODEL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      JOBS_TICK_MS: ${JOBS_TICK_MS:-2000}
+      TRASH_RETENTION_DAYS: ${TRASH_RETENTION_DAYS:-30}
+    volumes:
+      # Persisted model cache for bai. Survives `docker compose down -v`
+      # only if you preserve the named volume; otherwise run `bai pull`
+      # again. Models are large enough (100s of MB) that we don't bake
+      # them into the image.
+      - baimodels:/root/.cache/bai/models
     depends_on:
       postgres:
         condition: service_healthy
@@ -78,3 +97,4 @@ volumes:
   pgdata:
   caddydata:
   caddyconfig:
+  baimodels:

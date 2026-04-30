@@ -100,11 +100,12 @@ Implementation notes: current upload path buffers the whole file in memory via `
 | Capability | Box | Dropbox | Stohr | Priority |
 | --- | --- | --- | --- | --- |
 | Filename search | ✓ | ✓ | **have** (Postgres `pg_trgm` trigram indexes + `type:`/`ext:` filter tokens; cmd+k palette UI) | — |
-| Full-text search (file contents) | ✓ | ✓ | **missing** | P1 |
+| Full-text search (file contents) | ✓ | ✓ | **partial** (semantic-vector search via `bai` + pgvector covers text-class mimes today; classical FTS over a `tsvector` column not yet wired) | P2 |
+| Semantic search / AI Q&A | ✓ (Box AI) | ✓ (Dropbox Dash) | **partial** (`AI_EMBED_MODEL=nomic-embed-text-v1.5` enables `/search/semantic`; in-process via `bai`/llama.cpp, no API keys; Q&A still missing) | P1 |
 | OCR for images / PDFs | ✓ | ✓ | **missing** | P2 |
 | Metadata / tag search | ✓ | ✓ | **missing** | P2 |
 
-Implementation notes: Postgres `tsvector` gives decent FTS without a new dependency; add an async worker that extracts text on upload (`pdftotext`, `tika`, etc.).
+Implementation notes: semantic search ships through `bai` (in-process llama.cpp) — no API keys, no sidecar, ~270 MB model. Currently text-class mimes only; PDF/Office extraction (via `pdftotext`/`tika`) is the obvious next step and would feed the same embedding pipeline. Image embeddings (CLIP/SigLIP) will share the pgvector index once `bai` exposes them.
 
 ## Automation & third-party
 

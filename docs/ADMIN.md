@@ -61,6 +61,10 @@ Actions: edit, **Rotate secret** (confidential only), **Revoke** (existing token
 
 Quick metric grid: total users, total storage, files, folders, pending invite requests, active invites, used invites, total invites.
 
+### AI / semantic search
+
+Visible only when `AI_EMBED_MODEL` is set on the API. `GET /admin/ai` returns coverage stats (`files_total`, `files_embedded`, `jobs_pending`, `jobs_dead`). `POST /admin/ai/backfill` enqueues `embeddings.generate` jobs for files missing an embedding under the active model. Pass `{ force: true }` to re-embed everything (e.g. after a model swap once per-model multi-column support lands). The job runner handles the actual embedding asynchronously; the backfill call returns immediately with a count.
+
 ## Per-user security (lives in Settings, not Admin)
 
 The owner can't manage other users' MFA, sessions, or PATs. Each user controls those from **Settings → Security**:

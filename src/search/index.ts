@@ -3,6 +3,8 @@ import { from, raw } from "@atlas/db"
 import { get, json, pipeline } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { escapeLike, mimePatternsFor, parseQuery } from "./parse.ts"
+import { aiStatus, embedText, isAiEnabled } from "../ai/index.ts"
+import { semanticSearch } from "../ai/search.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -80,5 +82,29 @@ export const searchRoutes = (db: Connection, secret: string) => {
 
       return json(c, 200, { files, folders })
     })),
+
+    // Semantic search across embedded file contents. 503 when AI is
+    // off — clients should fall back to /search. We only return owned
+    // files in v1; collaborator visibility comes later.
+    get("/search/semantic", guard(async (c) => {
+      const userId = authId(c)
+      const url = new URL(c.request.url)
+      const q = (url.searchParams.get("q") ?? "").trim()
+      const limit = clampLimit(url.searchParams.get("limit"), 20, 50)
+
+      if (!isAiEnabled()) {
+        return json(c, 503, { error: "Semantic search is disabled on this instance", status: aiStatus() })
+      }
+      if (!q) return json(c, 422, { error: "q is required" })
+      if (q.length > 2000) return json(c, 422, { error: "q exceeds 2000 chars" })
+
+      const vec = embedText(q)
+      if (!vec) return json(c, 503, { error: "Embed failed", status: aiStatus() })
+
+      const hits = await semanticSearch(db, userId, vec, limit)
+      return json(c, 200, { hits, model: aiStatus().model })
+    })),
+
+    get("/search/status", guard(async (c) => json(c, 200, aiStatus()))),
   ]
 }

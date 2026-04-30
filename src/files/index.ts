@@ -12,6 +12,7 @@ import { decideInline } from "../security/inline.ts"
 import { fireEvent } from "../actions/dispatch.ts"
 import type { RunSummary } from "../actions/dispatch.ts"
 import { emitEvent } from "../webhooks/emit.ts"
+import { enqueueIfEnabled as enqueueEmbeddingJob } from "../ai/job.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -311,6 +312,7 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
           event: isNewVersion ? "file.updated" : "file.created",
           payload: { ...after, new_version: isNewVersion },
         })
+        void enqueueEmbeddingJob(db, fileId)
       }
 
       // Post-write quota verification — closes the TOCTOU window where two

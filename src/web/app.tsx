@@ -866,6 +866,9 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
   const [paletteResults, setPaletteResults] = useState<PaletteResults>({ files: [], folders: [] })
   const [paletteActive, setPaletteActive] = useState(0)
   const [paletteLoading, setPaletteLoading] = useState(false)
+  const [paletteMode, setPaletteMode] = useState<"name" | "ai">("name")
+  const [paletteSemantic, setPaletteSemantic] = useState<api.SemanticHit[]>([])
+  const [aiAvailable, setAiAvailable] = useState<boolean>(false)
 
   const load = async () => {
     const [fo, fi] = await Promise.all([
@@ -908,14 +911,26 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
   }, [currentId, currentOwner?.id])
 
   useEffect(() => {
+    // One-shot probe so the cmd-K palette can show or hide the AI mode.
+    let aborted = false
+    api.aiStatus().then(s => {
+      if (!aborted) setAiAvailable(!!s?.enabled)
+    }).catch(() => { /* keep aiAvailable=false on probe failure */ })
+    return () => { aborted = true }
+  }, [])
+
+  useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault()
         setPaletteOpen(true)
         setPaletteQuery("")
         setPaletteResults({ files: [], folders: [] })
+        setPaletteSemantic([])
         setPaletteActive(0)
         setPaletteLoading(false)
+        // Default to name mode each open — AI mode is opt-in per session
+        setPaletteMode("name")
       }
     }
     window.addEventListener("keydown", h)
@@ -926,37 +941,51 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
     if (!paletteOpen) return
     if (!paletteQuery) {
       setPaletteResults({ files: [], folders: [] })
+      setPaletteSemantic([])
       setPaletteActive(0)
       return
     }
     setPaletteLoading(true)
     const ctrl = new AbortController()
+    // AI mode debounces longer — embedding is per-keystroke expensive.
+    const debounceMs = paletteMode === "ai" ? 350 : 150
     const t = setTimeout(async () => {
       try {
-        const res = await api.search(paletteQuery, undefined, ctrl.signal) as PaletteResults
-        if (ctrl.signal.aborted) return
-        const results: PaletteResults = {
-          folders: Array.isArray(res?.folders) ? res.folders : [],
-          files: Array.isArray(res?.files) ? res.files : [],
+        if (paletteMode === "ai") {
+          const res = await api.semanticSearch(paletteQuery, 20, ctrl.signal)
+          if (ctrl.signal.aborted) return
+          const hits = Array.isArray(res?.hits) ? res.hits : []
+          setPaletteSemantic(hits)
+          setPaletteResults({ files: [], folders: [] })
+          setPaletteActive(prev => hits.length === 0 ? 0 : Math.min(prev, hits.length - 1))
+        } else {
+          const res = await api.search(paletteQuery, undefined, ctrl.signal) as PaletteResults
+          if (ctrl.signal.aborted) return
+          const results: PaletteResults = {
+            folders: Array.isArray(res?.folders) ? res.folders : [],
+            files: Array.isArray(res?.files) ? res.files : [],
+          }
+          setPaletteResults(results)
+          setPaletteSemantic([])
+          setPaletteActive(prev => {
+            const total = results.folders.length + results.files.length
+            return total === 0 ? 0 : Math.min(prev, total - 1)
+          })
         }
-        setPaletteResults(results)
-        setPaletteActive(prev => {
-          const total = results.folders.length + results.files.length
-          return total === 0 ? 0 : Math.min(prev, total - 1)
-        })
       } catch (err) {
         if ((err as { name?: string })?.name === "AbortError") return
         setPaletteResults({ files: [], folders: [] })
+        setPaletteSemantic([])
         setPaletteActive(0)
       } finally {
         if (!ctrl.signal.aborted) setPaletteLoading(false)
       }
-    }, 150)
+    }, debounceMs)
     return () => {
       clearTimeout(t)
       ctrl.abort()
     }
-  }, [paletteOpen, paletteQuery])
+  }, [paletteOpen, paletteQuery, paletteMode])
 
   const orderedKeys = useMemo(
     () => [...folders.map(f => `fo-${f.id}`), ...files.map(f => `fi-${f.id}`)],
@@ -1353,8 +1382,26 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
 
       {paletteOpen && (() => {
         const combined = [...paletteResults.folders, ...paletteResults.files]
-        const closePalette = () => { setPaletteOpen(false); setPaletteQuery(""); setPaletteResults({ files: [], folders: [] }); setPaletteActive(0) }
+        const total = paletteMode === "ai" ? paletteSemantic.length : combined.length
+        const closePalette = () => {
+          setPaletteOpen(false); setPaletteQuery("")
+          setPaletteResults({ files: [], folders: [] })
+          setPaletteSemantic([])
+          setPaletteActive(0)
+        }
         const activate = (idx: number) => {
+          if (paletteMode === "ai") {
+            const hit = paletteSemantic[idx]
+            if (!hit) return
+            closePalette()
+            // Hits don't carry the role/version fields the preview modal
+            // expects; project a minimal FileItem-shaped record.
+            setPreviewing({
+              id: hit.file_id, name: hit.name, mime: hit.mime, size: hit.size,
+              folder_id: hit.folder_id, version: 1, created_at: "",
+            } as FileItem)
+            return
+          }
           const item = combined[idx]
           if (!item) return
           closePalette()
@@ -1367,7 +1414,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
         const onKeyDown = (e: React.KeyboardEvent) => {
           if (e.key === "ArrowDown") {
             e.preventDefault()
-            setPaletteActive(prev => Math.min(prev + 1, combined.length - 1))
+            setPaletteActive(prev => Math.min(prev + 1, Math.max(0, total - 1)))
           } else if (e.key === "ArrowUp") {
             e.preventDefault()
             setPaletteActive(prev => Math.max(prev - 1, 0))
@@ -1378,21 +1425,48 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
             closePalette()
           }
         }
+        const noResults =
+          paletteQuery.length > 0 && !paletteLoading &&
+          (paletteMode === "ai"
+            ? paletteSemantic.length === 0
+            : paletteResults.folders.length === 0 && paletteResults.files.length === 0)
         return (
           <div className="modal-backdrop" onClick={closePalette}>
-            <div className="modal" style={{ maxWidth: 520, width: "100%" }} onClick={e => e.stopPropagation()} onKeyDown={onKeyDown}>
+            <div className="modal" style={{ maxWidth: 560, width: "100%" }} onClick={e => e.stopPropagation()} onKeyDown={onKeyDown}>
               <input
                 autoFocus
                 className="search"
                 style={{ width: "100%", marginBottom: 8, boxSizing: "border-box" }}
-                placeholder="Search files and folders..."
+                placeholder={paletteMode === "ai" ? "Ask about your files…" : "Search files and folders..."}
                 value={paletteQuery}
                 onChange={e => { setPaletteQuery(e.target.value); setPaletteActive(0) }}
               />
-              {paletteQuery.length > 0 && !paletteLoading && paletteResults.folders.length === 0 && paletteResults.files.length === 0 && (
-                <div style={{ padding: "12px 0", color: "var(--muted)", textAlign: "center", fontSize: 14 }}>No matches.</div>
+              {aiAvailable && (
+                <div style={{ display: "flex", gap: 6, marginBottom: 8, fontSize: 12 }}>
+                  <button
+                    type="button"
+                    className={paletteMode === "name" ? "primary" : ""}
+                    style={{ padding: "4px 10px", fontSize: 12 }}
+                    onClick={() => { setPaletteMode("name"); setPaletteActive(0) }}
+                  >Name</button>
+                  <button
+                    type="button"
+                    className={paletteMode === "ai" ? "primary" : ""}
+                    style={{ padding: "4px 10px", fontSize: 12 }}
+                    onClick={() => { setPaletteMode("ai"); setPaletteActive(0) }}
+                    title="Search by content meaning, not filename"
+                  >Ask AI</button>
+                  <span style={{ flex: 1 }} />
+                  {paletteLoading && <span style={{ color: "var(--muted)" }}>thinking…</span>}
+                </div>
               )}
-              {paletteResults.folders.length > 0 && (
+              {noResults && (
+                <div style={{ padding: "12px 0", color: "var(--muted)", textAlign: "center", fontSize: 14 }}>
+                  {paletteMode === "ai" ? "No semantically similar files." : "No matches."}
+                </div>
+              )}
+
+              {paletteMode === "name" && paletteResults.folders.length > 0 && (
                 <>
                   <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", padding: "6px 0 2px" }}>Folders</div>
                   {paletteResults.folders.map((f, i) => (
@@ -1409,7 +1483,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                   ))}
                 </>
               )}
-              {paletteResults.files.length > 0 && (
+              {paletteMode === "name" && paletteResults.files.length > 0 && (
                 <>
                   <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", padding: "6px 0 2px" }}>Files</div>
                   {paletteResults.files.map((f, i) => {
@@ -1427,6 +1501,32 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                       </div>
                     )
                   })}
+                </>
+              )}
+
+              {paletteMode === "ai" && paletteSemantic.length > 0 && (
+                <>
+                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", padding: "6px 0 2px" }}>By meaning</div>
+                  {paletteSemantic.map((hit, i) => (
+                    <div
+                      key={`ph-${hit.file_id}`}
+                      className={`picker-row${paletteActive === i ? " active" : ""}`}
+                      style={{ cursor: "pointer", borderRadius: 6, padding: "8px 10px", background: paletteActive === i ? "var(--hover)" : undefined, display: "block" }}
+                      onClick={() => activate(i)}
+                      onMouseEnter={() => setPaletteActive(i)}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <MimeIcon mime={hit.mime} size={16} />
+                        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{hit.name}</span>
+                        <span style={{ fontSize: 11, color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>{(hit.score * 100).toFixed(0)}%</span>
+                      </div>
+                      {hit.text_excerpt && (
+                        <div style={{ marginTop: 4, marginLeft: 24, fontSize: 12, color: "var(--muted)", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                          {hit.text_excerpt.slice(0, 220)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </>
               )}
             </div>

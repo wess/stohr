@@ -1,0 +1,21 @@
+{
+  "name": "bai",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    ".": { "import": "./index.ts" },
+    "./embed": { "import": "./embed/index.ts" },
+    "./generate": { "import": "./generate/index.ts" },
+    "./models": { "import": "./models/index.ts" },
+    "./similarity": { "import": "./similarity/index.ts" }
+  },
+  "bin": {
+    "bai": "./cli/index.ts"
+  },
+  "scripts": {
+    "postinstall": "bun ./scripts/postinstall.ts"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

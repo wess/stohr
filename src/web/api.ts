@@ -329,6 +329,58 @@ export const search = (q: string, limit?: number, signal?: AbortSignal) => {
   return jsonReq("GET", `/search?${qs}`, undefined, signal)
 }
 
+export type AiStatus = {
+  enabled: boolean
+  model: string | null
+  dim: number | null
+  reason: string | null
+}
+
+export type SemanticHit = {
+  file_id: number
+  name: string
+  mime: string
+  size: number
+  folder_id: number | null
+  text_excerpt: string | null
+  score: number
+}
+
+export const aiStatus = () =>
+  jsonReq("GET", "/search/status") as Promise<AiStatus & { error?: string }>
+
+export const semanticSearch = (q: string, limit?: number, signal?: AbortSignal) => {
+  const qs = limit !== undefined
+    ? `q=${encodeURIComponent(q)}&limit=${limit}`
+    : `q=${encodeURIComponent(q)}`
+  return jsonReq("GET", `/search/semantic?${qs}`, undefined, signal) as Promise<{
+    hits: SemanticHit[]
+    model: string | null
+    error?: string
+    status?: AiStatus
+  }>
+}
+
+export const adminAiStatus = () =>
+  jsonReq("GET", "/admin/ai") as Promise<AiStatus & {
+    files_total: number
+    files_embedded: number
+    jobs_pending: number
+    jobs_dead: number
+    error?: string
+  }>
+
+export const adminAiBackfill = (opts: { force?: boolean; limit?: number } = {}) =>
+  jsonReq("POST", "/admin/ai/backfill", opts) as Promise<{
+    enqueued: number
+    scanned: number
+    model: string
+    limit: number
+    force: boolean
+    error?: string
+  }>
+
+
 export const listVersions = (fileId: number) =>
   jsonReq("GET", `/files/${fileId}/versions`)
 

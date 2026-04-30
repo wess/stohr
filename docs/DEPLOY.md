@@ -107,6 +107,42 @@ To enable real email:
    ```
 5. Test by minting an invite from Settings → Invites and asking the recipient if it arrived.
 
+## AI / semantic search (optional)
+
+Stohr embeds file contents in-process via `bai` (llama.cpp through `bun:ffi`). Disabled by default; the API boots without it and `/search/semantic` returns 503 until enabled. When you turn it on, the SPA's ⌘K palette gets an "Ask AI" mode automatically.
+
+**What's already wired:**
+
+- `compose.yaml` uses `pgvector/pgvector:pg16` so the `vector` extension and HNSW index work out of the box. The `00000038_file_embeddings` migration runs automatically.
+- The `api` Dockerfile multi-stage build compiles `libbai.so` from `libs/bai/native/rust` and drops it at `/root/.cache/bai/lib/libbai.so` — the path the FFI loader checks. No env override needed.
+- A named volume `baimodels` is mounted at `/root/.cache/bai/models` so model files survive container rebuilds.
+
+**To enable on the server:**
+
+```sh
+ssh root@<ip>
+cd /opt/stohr
+echo 'AI_EMBED_MODEL=nomic-embed-text-v1.5' >> .env
+bun run setup           # rebuilds image, pulls model, brings services up
+```
+
+`bun run setup` is idempotent — re-running on an already-configured host is a no-op except for the rebuild.
+
+**Backfill existing files** (admin-only, one-shot per model swap):
+
+```sh
+STOHR_TOKEN=<owner-jwt-or-pat> bun run ai:backfill
+STOHR_TOKEN=<owner-jwt-or-pat> bun run ai:status   # progress
+```
+
+**Resource cost on a $6 droplet (1 vCPU, 1 GB RAM):**
+
+- libbai + nomic-embed-text-v1.5 loaded: ~300 MB resident.
+- Embedding throughput: ~30–80 chunks/sec on CPU; with the `embeddings.generate` job running serially, indexing 10k files takes 10–20 min. Bigger droplets are faster but it's not the bottleneck for normal use.
+- Each query is one embedding call (~10 ms) + indexed pgvector ANN (~5–50 ms).
+
+**To disable:** unset `AI_EMBED_MODEL` and `docker compose up -d api`. The model file is kept in the volume; re-enabling is instant.
+
 ## App Platform alternative
 
 The repo also includes `Dockerfile` + `.do/app.yaml` for App Platform. Trade-off: ~$25/mo (two services + dev DB) vs ~$11/mo for the droplet, but no SSHing for redeploys — `git push` triggers a deploy.
@@ -137,11 +173,23 @@ cp .env.example .env
 #   S3_*             (your S3-compatible provider credentials)
 #   RESEND_API_KEY   (or leave blank for console-output dev mode)
 #   TRUSTED_PROXIES=172.16.0.0/12   (covers the docker bridge)
-docker compose up -d --build
-docker compose logs -f api
+#   AI_EMBED_MODEL   (optional — see "AI / semantic search" below)
+bun run setup
 ```
 
+`bun run setup` validates `.env`, syncs submodules, builds the images, pulls the AI model into the `baimodels` volume if `AI_EMBED_MODEL` is set, brings the stack up, and waits for `/healthz`.
+
 The `caddyfile` shipped in the repo reads `{$DOMAIN}` and proxies to `web:3001`. Caddy auto-provisions Let's Encrypt for that domain.
+
+### Operator scripts
+
+| script | what it does |
+| --- | --- |
+| `bun run setup` | First-time bring-up. Validates `.env`, builds, pulls AI model if configured, starts services, waits for `/healthz` |
+| `bun run update` | Run after `git pull`. Re-syncs submodules, rebuilds, recreates services, verifies `/healthz` |
+| `bun run ai:pull [<id>]` | Pull a bai model into the `baimodels` volume (default: `AI_EMBED_MODEL` from `.env`) |
+| `bun run ai:backfill` | Enqueue `embeddings.generate` for files missing a current-model embedding. `STOHR_TOKEN` env required. `--force` re-embeds everything |
+| `bun run ai:status` | Coverage snapshot — `files_embedded / files_total`, pending + dead jobs |
 
 ## Troubleshooting
 
@@ -150,6 +198,18 @@ You're running with `NODE_ENV=production` and either an empty `SECRET` or the li
 
 **The web SPA shows "jsxDEV is not a function" in the browser console.**
 The web container was bundled in dev mode. Make sure `NODE_ENV=production` is set on the host before `docker compose build`, then rebuild: `docker compose build --pull web && docker compose up -d web`. Hard-refresh the browser to clear the cached bundle.
+
+**`docker compose build api` is slow / hangs on the rust-builder stage.**
+First-build cost. The `rust-builder` stage compiles llama.cpp + the bai shim from source — 5–15 minutes on a $6 droplet, ~3 minutes on a beefy box. Subsequent builds reuse the buildx cache mount and finish in seconds unless `libs/bai/native/rust/src` changes. To skip AI entirely on a build, you can comment out the `rust-builder` stage and the `COPY --from=rust-builder` line in `Dockerfile`; just leave `AI_EMBED_MODEL` unset and the API runs without ever loading libbai.
+
+**`/search/semantic` returns 503 with `bai: native library not found`.**
+The image build didn't produce `libbai.so` (the rust-builder stage failed silently — check `docker compose build api` output) or the COPY into the runtime stage was skipped. `docker run --rm api ls -la /root/.cache/bai/lib/` to verify; rebuild with `docker compose build --no-cache api` if it's missing.
+
+**`/search/semantic` returns 503 after enabling `AI_EMBED_MODEL`.**
+The model isn't pulled. Run `docker compose run --rm api bunx bai pull nomic-embed-text-v1.5` and `docker compose restart api`. `GET /search/status` will show the exact reason in its `reason` field.
+
+**`CREATE EXTENSION vector` fails on a non-compose Postgres.**
+You're running an external Postgres without pgvector. Either install the extension (most managed providers — Supabase, Neon, RDS, DigitalOcean, Crunchy — have it) or leave `AI_EMBED_MODEL` unset and Stohr won't try.
 
 **Migrations fail with `extension "pgcrypto" is not allow-listed`.**
 The Postgres role needs `CREATE` on the database (managed Postgres providers usually allow this; some need a flag flipped). Or run as superuser: `psql "$DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto;'`.
@@ -168,11 +228,19 @@ After the initial deploy, redeployments are:
 ssh root@<ip>
 cd /opt/stohr
 git pull
-docker compose up -d --build
-docker compose logs -f api    # watch for migration application + clean boot
+bun run update          # syncs submodules, rebuilds, recreates services, polls /healthz
 ```
 
-For zero-downtime swaps, `docker compose up -d --build --no-deps api web` builds new containers behind the scenes and replaces them while postgres and caddy keep running.
+`bun run update` is idempotent and verifies `/healthz` before exiting. For zero-downtime swaps you can still bypass it: `docker compose up -d --build --no-deps api web` rebuilds the api/web containers while postgres and caddy keep running.
+
+The old manual flow is still available if you'd rather drive each step yourself:
+
+```sh
+git submodule update --init --recursive
+docker compose build
+docker compose up -d
+docker compose logs -f api
+```
 
 ## Backups
 

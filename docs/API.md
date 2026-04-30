@@ -202,6 +202,31 @@ The `q` string is tokenized:
 - `ext:pdf` filters by extension
 - everything else joins into a name fragment (case-insensitive `ILIKE`, `%` and `_` escaped)
 
+### Semantic search (optional)
+
+When the operator has set `AI_EMBED_MODEL` and pulled the model, file contents are embedded in-process via `bai` and stored in `file_embeddings` (`pgvector` HNSW index). Two extra endpoints become useful:
+
+| method | path | notes |
+| --- | --- | --- |
+| `GET` | `/search/semantic?q=&limit=` | Embeds `q` and returns up to `limit` files ranked by cosine similarity. Owner-only in v1 (collab-shared files are not yet returned). 503 if AI is disabled — clients should fall back to `/search` |
+| `GET` | `/search/status` | `{ enabled, model, dim, reason }` — tells the client whether to offer semantic-search UI |
+
+Each `/search/semantic` hit looks like:
+
+```json
+{
+  "file_id": 42,
+  "name": "RFC-stage1.md",
+  "mime": "text/markdown",
+  "size": 12_400,
+  "folder_id": 7,
+  "text_excerpt": "First ~1KB of the embedded text…",
+  "score": 0.83
+}
+```
+
+`score` is `1 - cosine_distance`, so 1.0 is identical and 0.0 is orthogonal. Embeddings are populated asynchronously by the `embeddings.generate` job — uploaded files become semantically searchable seconds after upload, not on the request itself. Only text-class mimes (`text/*`, JSON, XML, YAML, TOML, code) are embedded today; PDFs and Office docs remain filename-only.
+
 ## Collaborations
 
 Folder/file collaborators are added by username or email:
@@ -329,6 +354,8 @@ All `/admin/*` routes require `auth.is_owner === true`.
 | `DELETE` | `/admin/invites/:id` | revoke unused |
 | `GET` | `/admin/stats` | aggregate counts |
 | `GET` | `/admin/audit?event=&user_id=&limit=` | audit event log (max 500 per call) |
+| `GET` | `/admin/ai` | AI status + coverage: `{ enabled, model, dim, files_total, files_embedded, jobs_pending, jobs_dead }` |
+| `POST` | `/admin/ai/backfill` | `{ force?: boolean, limit?: number }` — enqueue `embeddings.generate` jobs for files missing embeddings (or all files when `force=true`). Returns `{ enqueued, scanned, model, limit, force }`. 503 if AI is disabled |
 | `GET/PUT` | `/admin/payments/config` | LS connection + plan IDs |
 | `POST` | `/admin/payments/autosetup` | auto-detect store/products/variants |
 | `GET` | `/admin/payments/subscriptions` | active subs |
