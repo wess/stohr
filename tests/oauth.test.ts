@@ -63,7 +63,7 @@ describe("client registration", () => {
     // Beta tester invited via direct insert
     const inviteToken = "inv-" + Math.random().toString(36).slice(2)
     await db.execute(
-      from("invites").insert({ token: inviteToken }),
+      from("invites").insert({ token_hash: sha256(inviteToken) }),
     )
     const beta = await callJson(app, "/signup", {
       method: "POST",

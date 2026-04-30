@@ -61,12 +61,16 @@ export const publicRoutes = (db: Connection, _secret: string, store: StorageHand
     ) as { id: number; username: string; name: string } | null
     if (!owner || owner.username !== username) return json(c, 404, { error: "Not found" })
 
+    // Cap at 500 — large public galleries should paginate; an unbounded list
+    // serializes to JSON in API memory and would take down the process if
+    // someone made a public folder with a million files.
     const files = await db.all(
       from("files")
         .where(q => q("folder_id").equals(folderId))
         .where(q => q("deleted_at").isNull())
         .select("id", "name", "mime", "size", "version", "created_at")
-        .orderBy("created_at", "DESC"),
+        .orderBy("created_at", "DESC")
+        .limit(500),
     )
 
     return json(c, 200, {

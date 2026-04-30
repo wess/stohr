@@ -4,7 +4,7 @@ import { del, get, json, parseMultipart, patch, pipeline, post, putHeader, strea
 import { requireAuth } from "../auth/guard.ts"
 import { drop, fetchObject, makeKey, put } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
-import { generateImageThumb, isThumbable, thumbKeyFor } from "../storage/thumb.ts"
+import { generateImageThumb, isThumbable, THUMB_MAX_BYTES, thumbKeyFor } from "../storage/thumb.ts"
 import { canWrite, fileAccess, folderAccess } from "../permissions/index.ts"
 import type { FileRow, FolderRow } from "../permissions/index.ts"
 import { checkQuota, computeUsage } from "../payments/usage.ts"
@@ -191,7 +191,10 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         await put(store, key, file, mime)
 
         let thumbKey: string | null = null
-        if (isThumbable(mime)) {
+        // Skip thumbnail generation for oversized images before we materialize
+        // the full upload into a Buffer — generateImageThumb would reject the
+        // bytes anyway, so don't waste the allocation.
+        if (isThumbable(mime) && size <= THUMB_MAX_BYTES) {
           const bytes = new Uint8Array(await file.arrayBuffer())
           const thumb = await generateImageThumb(bytes, mime)
           if (thumb) {

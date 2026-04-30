@@ -4,6 +4,7 @@ import { db, truncateAll, TEST_SECRET } from "./setup.ts"
 import { buildApp, callJson } from "./helpers/http.ts"
 import { computeUsage, checkQuota } from "../src/payments/usage.ts"
 import { quotaFor } from "../src/payments/quotas.ts"
+import { sha256Hex } from "../src/util/token.ts"
 
 let app: ReturnType<typeof buildApp>
 
@@ -27,7 +28,7 @@ const mintInvite = async (ownerId: number, email?: string): Promise<string> => {
   const t = `invitetoken-${Math.random().toString(36).slice(2, 12)}`
   await db.execute(
     from("invites").insert({
-      token: t,
+      token_hash: sha256Hex(t),
       email: email ?? null,
       invited_by: ownerId,
     }),

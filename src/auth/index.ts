@@ -241,8 +241,8 @@ export const authRoutes = (db: Connection, secret: string) => {
       const user = await db.one(
         from("users")
           .where(q => identity.includes("@") ? q("email").equals(lookup) : q("username").equals(lookup))
-          .select("id", "email", "username", "name", "password", "is_owner", "totp_enabled", "totp_secret", "totp_backup_codes"),
-      ) as UserRow | null
+          .select("id", "email", "username", "name", "password", "is_owner", "totp_enabled", "totp_secret", "totp_backup_codes", "deleted_at"),
+      ) as (UserRow & { deleted_at: string | null }) | null
 
       // Always run a verify, even when the user doesn't exist, so the
       // response timing doesn't leak account existence. The decoy hash is a
@@ -257,6 +257,16 @@ export const authRoutes = (db: Connection, secret: string) => {
       if (!verifyOk) {
         logEvent(db, { userId: user.id, event: "login.fail", metadata: { reason: "bad_password" }, ip, userAgent: ua })
         return json(c, 401, { error: "Invalid credentials" })
+      }
+      // If the account is mid-grace-window, reject login. The user has the
+      // cancel link in their email — they should restore via that, not by
+      // logging in (which could be an attacker who triggered the deletion).
+      if (user.deleted_at) {
+        logEvent(db, { userId: user.id, event: "login.fail", metadata: { reason: "account_deleted" }, ip, userAgent: ua })
+        return json(c, 403, {
+          error: "Account is scheduled for deletion. Click the cancel link in your email to restore it.",
+          account_deleted: true,
+        })
       }
 
       if (user.totp_enabled) {

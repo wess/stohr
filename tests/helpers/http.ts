@@ -3,6 +3,8 @@ import { router } from "@atlas/server"
 import { authRoutes } from "../../src/auth/index.ts"
 import { mfaRoutes } from "../../src/auth/mfa.ts"
 import { sessionRoutes } from "../../src/auth/sessions.ts"
+import { passwordRoutes } from "../../src/auth/password.ts"
+import { deletionRoutes } from "../../src/auth/deletion.ts"
 import { userRoutes } from "../../src/users/index.ts"
 import { folderRoutes } from "../../src/folders/index.ts"
 import { fileRoutes } from "../../src/files/index.ts"
@@ -23,6 +25,7 @@ import { oauthTokenRoutes, oauthRevokeRoutes } from "../../src/oauth/token.ts"
 import { oauthDiscoveryRoutes } from "../../src/oauth/discovery.ts"
 import { deviceAuthorizeRoutes } from "../../src/oauth/device.ts"
 import type { StorageHandle } from "../../src/storage/index.ts"
+import type { Emailer, EmailMessage } from "../../src/email/index.ts"
 
 export const fakeStore: StorageHandle = {
   endpoint: "http://localhost",
@@ -32,22 +35,40 @@ export const fakeStore: StorageHandle = {
   secretKey: "x",
 } as unknown as StorageHandle
 
+// Captures sent emails for assertion in tests. Cleared per-test by setup
+// (truncateAll doesn't touch this; tests that care should pull and reset).
+export const sentEmails: EmailMessage[] = []
+export const resetSentEmails = () => {
+  sentEmails.length = 0
+}
+export const fakeEmailer: Emailer = {
+  enabled: true,
+  send: async (msg) => {
+    sentEmails.push(msg)
+    return { ok: true, id: `test-${sentEmails.length}` }
+  },
+}
+
+export const TEST_APP_URL = "http://test.local"
+
 export const buildApp = (db: Connection, secret: string) => {
   return router(
     ...authRoutes(db, secret),
+    ...passwordRoutes(db, fakeEmailer, TEST_APP_URL),
     ...mfaRoutes(db, secret),
     ...sessionRoutes(db, secret),
-    ...userRoutes(db, secret, fakeStore),
+    ...deletionRoutes(db, secret),
+    ...userRoutes(db, secret, fakeStore, fakeEmailer, TEST_APP_URL),
     ...folderRoutes(db, secret, fakeStore),
     ...fileRoutes(db, secret, fakeStore),
     ...shareRoutes(db, secret, fakeStore),
     ...trashRoutes(db, secret, fakeStore),
     ...searchRoutes(db, secret),
     ...inviteRoutes(db, secret),
-    ...collabRoutes(db, secret),
+    ...collabRoutes(db, secret, fakeEmailer, TEST_APP_URL),
     ...publicRoutes(db, secret, fakeStore),
     ...waitlistRoutes(db),
-    ...adminRoutes(db, secret),
+    ...adminRoutes(db, secret, fakeEmailer, TEST_APP_URL),
     ...paymentsRoutes(db, secret),
     ...s3KeyRoutes(db, secret),
     ...appRoutes(db, secret),

@@ -44,8 +44,13 @@ export const passwordRoutes = (db: Connection, emailer: Emailer, appUrl: string)
       }
 
       const user = await db.one(
-        from("users").where(q => q("email").equals(email)).select("id", "name", "email"),
+        from("users")
+          .where(q => q("email").equals(email))
+          .where(q => q("deleted_at").isNull())
+          .select("id", "name", "email"),
       ) as { id: number; name: string; email: string } | null
+      // Don't email a reset link to a soft-deleted account — and stay silent
+      // either way to avoid leaking which addresses are scheduled for deletion.
       if (!user) return ok
 
       const fullToken = generateResetToken()

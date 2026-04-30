@@ -7,6 +7,7 @@ import { requireAuth } from "../auth/guard.ts"
 import { fetchObject } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { decideInline } from "../security/inline.ts"
+import { checkRate, clientIp } from "../security/ratelimit.ts"
 
 const APP_TOKEN_PREFIX = "stohr_pat_"
 const MAX_EXPIRES_SECONDS = 30 * 24 * 60 * 60
@@ -227,6 +228,19 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
       // history, server access logs, and Referer, so we never accept the
       // password via ?p=.
       if (share.password_hash) {
+        // Throttle wrong-password attempts before bcrypt-verify so a short
+        // user-set password isn't trivially brute-forceable. Two buckets so
+        // a single IP can't lock out other viewers, and a token-rotating
+        // attacker still hits the per-share cap.
+        const ip = clientIp(c.request)
+        const ipRate = await checkRate(db, `share:pw:ip:${ip}`, 30, 900)
+        if (!ipRate.ok) {
+          return json(c, 429, { error: "Too many attempts", retry_after: ipRate.retryAfterSeconds })
+        }
+        const tokRate = await checkRate(db, `share:pw:tok:${share.id}`, 10, 900)
+        if (!tokRate.ok) {
+          return json(c, 429, { error: "Too many attempts", retry_after: tokRate.retryAfterSeconds })
+        }
         const provided = c.request.headers.get("x-share-password") ?? ""
         if (!provided || !(await verify(provided, share.password_hash))) {
           return json(c, 401, { error: "Password required", password_required: true })

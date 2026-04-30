@@ -29,6 +29,7 @@ import { actionRoutes } from "./actions/index.ts"
 import { userActionRoutes } from "./actions/user/index.ts"
 import { passwordRoutes, sweepExpiredPasswordResets } from "./auth/password.ts"
 import { passkeyRoutes, sweepExpiredWebauthnChallenges } from "./auth/passkeys.ts"
+import { deletionRoutes, sweepDeletedAccounts } from "./auth/deletion.ts"
 import { contactRoutes } from "./contact/index.ts"
 import { createStorage } from "./storage/index.ts"
 import { createEmailer } from "./email/index.ts"
@@ -78,7 +79,8 @@ const fetch = router(
   ...mfaRoutes(db, config.secret),
   ...passkeyRoutes(db, config.secret, { rpId: config.rpId, rpName: config.rpName, rpOrigin: config.rpOrigin }),
   ...sessionRoutes(db, config.secret),
-  ...userRoutes(db, config.secret, store),
+  ...deletionRoutes(db, config.secret),
+  ...userRoutes(db, config.secret, store, emailer, config.appUrl),
   ...folderRoutes(db, config.secret, store),
   ...fileRoutes(db, config.secret, store),
   ...shareRoutes(db, config.secret, store),
@@ -122,16 +124,21 @@ const sweepDeviceCodes = guardedSweep("device_codes", () => sweepExpiredDeviceCo
 const sweepRefreshTokens = guardedSweep("refresh_tokens", () => sweepExpiredRefreshTokens(db))
 const sweepPasswordResets = guardedSweep("password_resets", () => sweepExpiredPasswordResets(db))
 const sweepWebauthn = guardedSweep("webauthn_challenges", () => sweepExpiredWebauthnChallenges(db))
+const sweepDeletions = guardedSweep("deleted_accounts", () => sweepDeletedAccounts(db, store))
 setInterval(() => { void sweepAuthCodes() }, 5 * 60 * 1000)
 setInterval(() => { void sweepDeviceCodes() }, 5 * 60 * 1000)
 setInterval(() => { void sweepRefreshTokens() }, 60 * 60 * 1000)
 setInterval(() => { void sweepPasswordResets() }, 60 * 60 * 1000)
 setInterval(() => { void sweepWebauthn() }, 5 * 60 * 1000)
+// Account hard-delete sweep — runs hourly. The grace window is 24h, so
+// hourly precision is more than sufficient.
+setInterval(() => { void sweepDeletions() }, 60 * 60 * 1000)
 void sweepAuthCodes()
 void sweepDeviceCodes()
 void sweepRefreshTokens()
 void sweepPasswordResets()
 void sweepWebauthn()
+void sweepDeletions()
 
 // Production refuses to start with the default SECRET — JWTs signed with a
 // known value would be forgeable by anyone. In development we just warn so

@@ -19,7 +19,15 @@ type UserRow = {
   username: string
   name: string
   is_owner: boolean
+  deleted_at?: string | null
 }
+
+// Accounts scheduled for deletion (deleted_at IS NOT NULL) must reject every
+// auth path during the 24h grace window — otherwise an attacker with a
+// stolen OAuth access token (or a forgotten PAT) could keep using the account
+// up to the hard-delete sweep.
+const ACCOUNT_DELETED_ERROR =
+  "Account is scheduled for deletion. Click the cancel link in your email to restore it."
 
 type RequireAuthOptions = {
   secret: string
@@ -52,10 +60,13 @@ export const requireAuth = (opts: RequireAuthOptions): PipeFn =>
       const user = await opts.db.one(
         from("users")
           .where(q => q("id").equals(app.user_id))
-          .select("id", "email", "username", "name", "is_owner"),
+          .select("id", "email", "username", "name", "is_owner", "deleted_at"),
       ) as UserRow | null
       if (!user) {
         return halt(conn, 401, { error: "App token references a missing user" })
+      }
+      if (user.deleted_at) {
+        return halt(conn, 403, { error: ACCOUNT_DELETED_ERROR })
       }
       void opts.db.execute(
         from("apps").where(q => q("id").equals(app.id)).update({ last_used_at: raw("NOW()") }),
@@ -96,6 +107,16 @@ export const requireAuth = (opts: RequireAuthOptions): PipeFn =>
           })
         }
       }
+      // Reject deleted users even if their access token is still inside its
+      // 1h TTL. One PK lookup; cheap relative to the JWT verify above.
+      if (typeof payload.id === "number") {
+        const u = await opts.db.one(
+          from("users").where(q => q("id").equals(payload.id)).select("deleted_at"),
+        ) as { deleted_at: string | null } | null
+        if (!u || u.deleted_at) {
+          return halt(conn, 403, { error: ACCOUNT_DELETED_ERROR })
+        }
+      }
       return assign(conn, {
         auth: {
           ...payload,
@@ -112,6 +133,17 @@ export const requireAuth = (opts: RequireAuthOptions): PipeFn =>
         return halt(conn, 401, { error: "Session revoked. Sign in again." })
       }
       touchSession(opts.db, jti)
+    }
+    // Defense in depth — sessions are revoked when scheduleDeletion runs, so
+    // an active session for a deleted user shouldn't exist, but if it does
+    // (race or session-less PAT-style call) we still reject it.
+    if (typeof payload?.id === "number") {
+      const u = await opts.db.one(
+        from("users").where(q => q("id").equals(payload.id)).select("deleted_at"),
+      ) as { deleted_at: string | null } | null
+      if (u?.deleted_at) {
+        return halt(conn, 403, { error: ACCOUNT_DELETED_ERROR })
+      }
     }
 
     return assign(conn, { auth: { ...payload, jti } })

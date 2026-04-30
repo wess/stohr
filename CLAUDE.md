@@ -21,7 +21,7 @@ TypeScript + Bun server + React 19 (client) + Postgres + S3-compatible object st
 
 ### Monorepo shape
 
-Root `package.json` declares `workspaces: ["atlas/packages/*"]` and depends on `@atlas/{auth,cli,config,db,migrate,server,storage}` via `workspace:*`. The `atlas/` directory in the working tree is **empty** — the Atlas packages are resolved from `bun.lock` / external source, not from local sources. Don't try to edit `@atlas/*` packages here; treat them as vendor libraries.
+Root `package.json` declares `workspaces: ["libs/atlas/packages/*"]` and depends on `@atlas/{auth,cli,config,db,migrate,server,storage}` via `workspace:*`. `libs/atlas/` is a **git submodule** pointing to `https://github.com/wess/atlas.git` — treat it as vendor source, don't edit it here. To pull upstream changes, run `git -C libs/atlas pull` then commit the bumped pointer in this repo.
 
 ### Request pipeline
 
