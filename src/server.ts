@@ -39,6 +39,8 @@ const config = defineConfig({
   port: env("PORT", { parse: Number, default: "3000" }),
   secret: env("SECRET", { default: "dev-secret-change-me" }),
   databaseUrl: env("DATABASE_URL", { default: "postgres://postgres:postgres@localhost:5432/stohr" }),
+  storageDriver: env("STORAGE_DRIVER", { default: "s3" }),
+  storageLocalDir: env("STORAGE_LOCAL_DIR", { default: "./.stohr/blobs" }),
   s3Endpoint: env("S3_ENDPOINT", { default: "http://localhost:4000" }),
   s3Bucket: env("S3_BUCKET", { default: "stohr" }),
   s3Region: env("S3_REGION", { default: "us-east-1" }),
@@ -59,13 +61,16 @@ const config = defineConfig({
 })
 
 const db = connect({ driver: "postgres", url: config.databaseUrl })
-const store = createStorage({
-  endpoint: config.s3Endpoint,
-  bucket: config.s3Bucket,
-  region: config.s3Region,
-  accessKey: config.s3AccessKey,
-  secretKey: config.s3SecretKey,
-})
+const store = config.storageDriver === "local"
+  ? createStorage({ driver: "local", dir: config.storageLocalDir })
+  : createStorage({
+      driver: "s3",
+      endpoint: config.s3Endpoint,
+      bucket: config.s3Bucket,
+      region: config.s3Region,
+      accessKey: config.s3AccessKey,
+      secretKey: config.s3SecretKey,
+    })
 const emailer = createEmailer({
   apiKey: config.resendApiKey,
   from: config.resendFrom,
@@ -166,4 +171,7 @@ Bun.serve({
 })
 
 console.log(`[stohr] api on http://localhost:${config.port}`)
-console.log(`[stohr] storage endpoint: ${config.s3Endpoint} (encryption-at-rest is the provider's responsibility — see SECURITY.md)`)
+const storageInfo = config.storageDriver === "local"
+  ? `local (${config.storageLocalDir})`
+  : `s3 (${config.s3Endpoint})`
+console.log(`[stohr] storage: ${storageInfo} (encryption-at-rest is the provider's responsibility — see SECURITY.md)`)

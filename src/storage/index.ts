@@ -1,28 +1,31 @@
 import { randomBytes } from "node:crypto"
-import { createStore, download, presign, remove, upload } from "@atlas/storage"
-import type { Store } from "@atlas/storage"
+import { createS3Driver, type S3Config } from "./s3/index.ts"
+import { createLocalDriver, type LocalConfig } from "./local/index.ts"
 
-export type StorageHandle = Store
+export type StorageDriver = {
+  put(key: string, body: Blob | Uint8Array | string, contentType?: string): Promise<void>
+  get(key: string): Promise<Response>
+  drop(key: string): Promise<void>
+}
 
-export const createStorage = (opts: {
-  endpoint: string
-  bucket: string
-  region?: string
-  accessKey: string
-  secretKey: string
-}): StorageHandle => createStore(opts)
+export type StorageHandle = StorageDriver
 
-export const put = (store: StorageHandle, key: string, body: Blob | Uint8Array | string, contentType?: string) =>
-  upload(store, { key, body, contentType })
+export type StorageConfig =
+  | ({ driver: "s3" } & S3Config)
+  | ({ driver: "local" } & LocalConfig)
 
-export const fetchObject = (store: StorageHandle, key: string) =>
-  download(store, key)
+export const createStorage = (cfg: StorageConfig): StorageHandle => {
+  if (cfg.driver === "s3") return createS3Driver(cfg)
+  if (cfg.driver === "local") return createLocalDriver(cfg)
+  throw new Error(`Unknown storage driver: ${(cfg as { driver: string }).driver}`)
+}
 
-export const drop = (store: StorageHandle, key: string) =>
-  remove(store, key)
+export const put = (h: StorageHandle, key: string, body: Blob | Uint8Array | string, contentType?: string) =>
+  h.put(key, body, contentType)
 
-export const signedUrl = (store: StorageHandle, key: string, expiresSeconds = 900) =>
-  presign(store, key, { expires: expiresSeconds, method: "GET" })
+export const fetchObject = (h: StorageHandle, key: string) => h.get(key)
+
+export const drop = (h: StorageHandle, key: string) => h.drop(key)
 
 export const makeKey = (userId: number, name: string) => {
   const stamp = Date.now().toString(36)
