@@ -119,7 +119,9 @@ cp .env.example .env
 #   APP_URL=https://your.tld
 #   RP_ID=your.tld
 #   RP_ORIGIN=https://your.tld
-#   S3_*             (your S3-compatible provider credentials)
+#   STORAGE_DRIVER   (s3 or local; default s3)
+#   S3_*             (when STORAGE_DRIVER=s3 — your provider credentials)
+#   STORAGE_LOCAL_DIR (when STORAGE_DRIVER=local — must be a persistent volume)
 #   RESEND_API_KEY   (or leave blank for console-output dev mode)
 #   TRUSTED_PROXIES=172.16.0.0/12   (covers the docker bridge)
 docker compose up -d --build
@@ -164,7 +166,7 @@ For zero-downtime swaps, `docker compose up -d --build --no-deps api web` builds
 Stohr persists state in two places:
 
 - **Postgres** — user accounts, sessions, file metadata, audit log, OAuth grants. Lives in the `pgdata` volume on the droplet.
-- **S3-compatible bucket** — file blobs and thumbnails. Lives in your provider (Spaces, S3, MinIO, etc.).
+- **Blob storage** — file blobs and thumbnails. Either an S3-compatible bucket (`STORAGE_DRIVER=s3`, lives in your provider — Spaces, S3, MinIO, etc.) or a local directory (`STORAGE_DRIVER=local`, lives at `STORAGE_LOCAL_DIR` on the API host — make sure it's a persistent volume and back it up alongside Postgres).
 
 A reasonable cadence:
 

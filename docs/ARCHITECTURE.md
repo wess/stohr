@@ -70,7 +70,7 @@ src/
     inline.ts           — inline-Content-Type allowlist for downloads
     owner.ts            — DB-backed `is_owner` guard
   permissions/          — unified folder/file access resolver
-  storage/              — only module that talks to @atlas/storage
+  storage/              — pluggable blob backends (s3/, local/) behind a StorageDriver interface
   email/                — Resend integration + transactional templates
   actions/              — folder-action dispatch + built-in registry
   util/                 — small helpers (token, username)
@@ -130,7 +130,16 @@ Audit events (`audit_events` table) are emitted from auth, MFA, sessions, passwo
 
 ## Storage
 
-`src/storage/index.ts` is the only module that talks to `@atlas/storage`. Every blob is keyed `u<userId>/<timestamp><rand>/<sanitized-name>`. Deleting a file requires deleting the DB row **and** the storage object — purges and account-deletion always do both.
+`src/storage/index.ts` defines a small `StorageDriver` interface (`put / get / drop`) and a `createStorage(config)` dispatcher. Two drivers ship today:
+
+- **`s3`** — wraps `@atlas/storage`; works against AWS S3, DigitalOcean Spaces, Cloudflare R2, MinIO, RustFS, Backblaze B2, or anything else that speaks SigV4.
+- **`local`** — writes blobs to disk under `STORAGE_LOCAL_DIR` using `Bun.write` / `Bun.file`. Single-host only; share the directory across replicas (NFS / EFS) if you need to.
+
+`STORAGE_DRIVER` env picks one at startup. Adding a new backend is one new file in `src/storage/<name>/index.ts` and a case in the dispatcher — every consumer keeps calling the same `put` / `fetchObject` / `drop` re-exports.
+
+**All file CRUD goes through the API.** Clients never get presigned URLs or direct-to-bucket access; the driver interface intentionally omits `signedUrl` so that contract is enforced at the type level.
+
+Every blob is keyed `u<userId>/<timestamp><rand>/<sanitized-name>`. Deleting a file requires deleting the DB row **and** the storage object — purges and account-deletion always do both.
 
 ## SPA routing
 

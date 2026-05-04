@@ -17,7 +17,7 @@ No test, lint, or build scripts are defined. Type-checking runs implicitly via `
 
 ## Stack and architecture
 
-TypeScript + Bun server + React 19 (client) + Postgres + S3-compatible object store. All code is functional (no classes) per repo convention.
+TypeScript + Bun server + React 19 (client) + Postgres + pluggable blob storage (S3-compatible bucket or local disk). All code is functional (no classes) per repo convention.
 
 ### Monorepo shape
 
@@ -28,7 +28,7 @@ Root `package.json` declares `workspaces: ["libs/atlas/packages/*"]` and depends
 `src/server.ts` is the composition root. It:
 1. Builds a typed config via `@atlas/config`'s `defineConfig` + `env(...)` helpers
 2. Opens a Postgres `Connection` via `@atlas/db#connect`
-3. Builds a `StorageHandle` via `src/storage/index.ts#createStorage` (thin wrapper over `@atlas/storage`)
+3. Builds a `StorageHandle` via `src/storage/index.ts#createStorage` — picks a driver from `STORAGE_DRIVER` (`s3` or `local`)
 4. Runs migrations from `./migrations` via `@atlas/migrate#migrate.up`
 5. Registers routes from each feature module
 
@@ -54,7 +54,15 @@ File versioning: uploading a file with the same `name` into the same folder arch
 
 ### Storage
 
-`src/storage/index.ts` is the only module that talks to `@atlas/storage`. It exposes `put`, `fetchObject`, `drop`, `signedUrl`, and `makeKey(userId, name)`. Storage keys have the shape `u<userId>/<timestamp><rand>/<sanitized-name>`. When you delete DB rows that reference storage, always call `drop(store, key)` afterwards (wrapped in `Promise.allSettled` — we tolerate storage errors rather than failing the API call, since the DB row is already gone).
+`src/storage/` is the only place blob backends are touched. Layout:
+
+- `src/storage/index.ts` — defines the `StorageDriver` interface (`put / get / drop`), the discriminated `StorageConfig`, and `createStorage(config)` dispatcher. Re-exports `put`, `fetchObject`, `drop`, `makeKey(userId, name)` for consumers — no consumer should ever import a driver directly.
+- `src/storage/s3/index.ts` — S3-compatible driver (wraps `@atlas/storage`).
+- `src/storage/local/index.ts` — disk-backed driver (single host; uses `Bun.write` / `Bun.file` under `STORAGE_LOCAL_DIR`, with a path-traversal guard).
+
+Adding a new backend is a new file in this directory plus a case in the `createStorage` dispatcher and the `StorageConfig` union. **All file CRUD must go through the API** — never expose presigned URLs or direct-to-bucket access to clients. The interface deliberately omits `signedUrl` to keep that contract enforceable.
+
+Storage keys have the shape `u<userId>/<timestamp><rand>/<sanitized-name>`. When you delete DB rows that reference storage, always call `drop(store, key)` afterwards (wrapped in `Promise.allSettled` — we tolerate storage errors rather than failing the API call, since the DB row is already gone).
 
 ### Web client
 

@@ -15,7 +15,15 @@
 | `SECRET` | `dev-secret-change-me` | JWT + session signing key. **Must** be at least 32 chars in production. Generate with `openssl rand -hex 32` |
 | `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/stohr` | Postgres connection string |
 
-### Object storage (any S3-compatible provider)
+### Blob storage
+
+Stohr ships two storage drivers. All file CRUD always goes through the API regardless of which one is selected — clients never read or write the bucket / disk directly.
+
+| var | default | purpose |
+| --- | --- | --- |
+| `STORAGE_DRIVER` | `s3` | Either `s3` (any S3-compatible provider) or `local` (disk-backed; single host only) |
+
+#### `STORAGE_DRIVER=s3` — S3-compatible provider
 
 | var | default | purpose |
 | --- | --- | --- |
@@ -24,6 +32,12 @@
 | `S3_REGION` | `us-east-1` | Region used for SigV4 signing. Most providers accept any string, AWS does not |
 | `S3_ACCESS_KEY` | `rustfsadmin` | Access key |
 | `S3_SECRET_KEY` | `rustfsadmin` | Secret key |
+
+#### `STORAGE_DRIVER=local` — disk-backed (single-host)
+
+| var | default | purpose |
+| --- | --- | --- |
+| `STORAGE_LOCAL_DIR` | `./.stohr/blobs` | Directory blobs are written to. Resolved relative to the API's working directory; **must** sit on a persistent volume in production. Not safe for multi-host deploys — point your replicas at the same shared filesystem (NFS, EFS, etc.) or use `s3` |
 
 ### Public URLs (must match what browsers see)
 
@@ -52,7 +66,7 @@ These three must be set together. A passkey created against one `RP_ID` cannot b
 
 | var | default | purpose |
 | --- | --- | --- |
-| `MAX_UPLOAD_BYTES` | `1073741824` (1 GiB) | Hard cap on a single request body. Bun buffers the body and `@atlas/storage` re-buffers it to compute SigV4 — this is effectively a per-upload memory ceiling |
+| `MAX_UPLOAD_BYTES` | `1073741824` (1 GiB) | Hard cap on a single request body. Bun buffers the body in memory; with `STORAGE_DRIVER=s3` the `@atlas/storage` driver re-buffers it to compute the SigV4 payload hash, so this is effectively a per-upload memory ceiling. The `local` driver streams to disk after Bun's initial buffer |
 | `TRUSTED_PROXIES` | (empty) | Comma-separated IPv4 addresses or CIDRs allowed to set `X-Forwarded-For` / `X-Real-IP`. With Docker Compose set this to `172.16.0.0/12` (covers the bridge). Leave empty for direct-to-API traffic. Untrusted XFF is ignored; the socket peer is used instead |
 
 ### Compose-only

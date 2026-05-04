@@ -24,11 +24,18 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/stohr
       SECRET: ${SECRET}
-      S3_ENDPOINT: ${S3_ENDPOINT}
-      S3_BUCKET: ${S3_BUCKET}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-s3}
+      # Used when STORAGE_DRIVER=local. The named `blobs` volume below is
+      # mounted at /data/blobs unconditionally — empty / unused if you stay
+      # on the s3 driver. Override STORAGE_LOCAL_DIR if you bind-mount a
+      # different path.
+      STORAGE_LOCAL_DIR: ${STORAGE_LOCAL_DIR:-/data/blobs}
+      # Used when STORAGE_DRIVER=s3.
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-}
       S3_REGION: ${S3_REGION:-us-east-1}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
-      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       APP_URL: ${APP_URL:-http://localhost:3001}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM: ${RESEND_FROM:-Stohr <onboarding@resend.dev>}
@@ -40,8 +47,12 @@ services:
       # cannot pin or spoof rate-limit buckets. Compose default networks live
       # in 172.16.0.0/12.
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-172.16.0.0/12}
-      # RAM ceiling per concurrent upload (Bun + SigV4 hashing both buffer).
+      # RAM ceiling per concurrent upload. With STORAGE_DRIVER=s3, Bun and
+      # SigV4 hashing both buffer; with STORAGE_DRIVER=local the buffer
+      # only lives until it lands on disk.
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-1073741824}
+    volumes:
+      - blobs:/data/blobs
     depends_on:
       postgres:
         condition: service_healthy
@@ -78,3 +89,4 @@ volumes:
   pgdata:
   caddydata:
   caddyconfig:
+  blobs:

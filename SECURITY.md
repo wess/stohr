@@ -120,14 +120,15 @@ This means a Postgres dump or read-replica leak does not yield usable invite cod
 
 ## Encryption at rest
 
-**Stohr does not encrypt file bytes at the application layer.** Encryption-at-rest is the responsibility of the object store. Recommended setups:
+**Stohr does not encrypt file bytes at the application layer.** Encryption-at-rest is the responsibility of the storage backend. Recommended setups:
 
-| Provider | Encryption at rest |
-| -------- | ------------------ |
-| DigitalOcean Spaces | AES-256 by default for every object — nothing to configure |
-| AWS S3 | Enable bucket default encryption (SSE-S3 / SSE-KMS) in the bucket settings |
-| MinIO (self-hosted) | Set `MINIO_KMS_AUTO_ENCRYPTION=on` and configure a KMS key |
-| RustFS / generic S3 | Confirm the provider's encryption-at-rest behavior; otherwise enable disk-level encryption (LUKS, FileVault, etc.) on the host |
+| Backend | Encryption at rest |
+| ------- | ------------------ |
+| DigitalOcean Spaces (`s3`) | AES-256 by default for every object — nothing to configure |
+| AWS S3 (`s3`) | Enable bucket default encryption (SSE-S3 / SSE-KMS) in the bucket settings |
+| MinIO self-hosted (`s3`) | Set `MINIO_KMS_AUTO_ENCRYPTION=on` and configure a KMS key |
+| RustFS / generic S3 (`s3`) | Confirm the provider's encryption-at-rest behavior; otherwise enable disk-level encryption (LUKS, FileVault, etc.) on the host |
+| Local disk (`local`) | No application-layer encryption. Put `STORAGE_LOCAL_DIR` on a LUKS / FileVault / dm-crypt / EBS-encrypted volume |
 
 JWT secrets, password hashes, TOTP secrets, PAT hashes, invite-token hashes, password-reset hashes, OAuth client-secret hashes, and refresh-token hashes all live in Postgres — encrypt the database volume at rest as well. DigitalOcean managed Postgres encrypts at rest by default; self-hosted Postgres should sit on an encrypted filesystem.
 
@@ -142,14 +143,16 @@ Setting it wrong has real consequences:
 
 ## Upload memory ceiling
 
-`MAX_UPLOAD_BYTES` (default 1 GiB) is the hard cap on a single request body. Bun buffers the body and `@atlas/storage` re-buffers it to compute the SigV4 payload hash, so this is effectively a per-upload memory ceiling. Plan for direct-to-S3 presigned PUTs in a future release to remove the ceiling.
+`MAX_UPLOAD_BYTES` (default 1 GiB) is the hard cap on a single request body. Bun buffers the body in memory before the handler runs; with `STORAGE_DRIVER=s3` the `@atlas/storage` driver re-buffers it again to compute the SigV4 payload hash, so this is effectively a per-upload memory ceiling. The `local` driver streams to disk after Bun's initial buffer.
+
+Direct-to-bucket presigned PUTs are intentionally not supported — all file CRUD goes through the API so authorization, quota, and audit checks always apply.
 
 ## What still needs work
 
 - **Application-layer encryption** for TOTP secrets and (eventually) file-level E2E
 - **Bucket-default-encryption assertion** at API startup (probe the bucket and warn if the provider does not advertise encryption)
 - **External pen test / bug bounty** — recommended before public launch
-- **Direct-to-S3 presigned uploads** to remove the in-API buffering ceiling
+- **Streaming uploads** (write each chunk straight to the storage driver as Bun receives it) to remove the in-memory buffering ceiling without giving up the API-only CRUD invariant
 
 ## Reporting issues
 
