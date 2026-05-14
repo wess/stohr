@@ -9,7 +9,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  Subscription? _sub;
+  Usage? _usage;
   String? _err;
 
   @override
@@ -20,8 +20,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _load() async {
     try {
-      final s = await api.subscription();
-      if (mounted) setState(() => _sub = s);
+      final u = await api.usage();
+      if (mounted) setState(() => _usage = u);
     } on StohrError catch (e) {
       if (mounted) setState(() => _err = e.message);
     }
@@ -73,8 +73,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Center(child: Text('@${user.username}', style: theme.textTheme.bodySmall)),
             const SizedBox(height: 24),
           ],
-          if (_sub != null)
-            _StorageCard(sub: _sub!, formatGb: _gb)
+          if (_usage != null)
+            _StorageCard(usage: _usage!, formatGb: _gb)
           else if (_err != null)
             ListTile(title: Text(_err!, style: const TextStyle(color: Colors.redAccent))),
           const Divider(height: 32),
@@ -108,15 +108,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
 }
 
 class _StorageCard extends StatelessWidget {
-  final Subscription sub;
+  final Usage usage;
   final String Function(int) formatGb;
-  const _StorageCard({required this.sub, required this.formatGb});
+  const _StorageCard({required this.usage, required this.formatGb});
 
   @override
   Widget build(BuildContext context) {
-    final used = sub.usedBytes.toDouble();
-    final quota = sub.quotaBytes.toDouble();
-    final pct = quota > 0 ? (used / quota).clamp(0.0, 1.0) : 0.0;
+    final used = usage.usedBytes.toDouble();
+    final quota = usage.quotaBytes.toDouble();
+    // A quota of 0 means unlimited — the owner sets per-user caps in Admin.
+    final unlimited = quota <= 0;
+    final pct = unlimited ? 0.0 : (used / quota).clamp(0.0, 1.0);
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -131,24 +133,26 @@ class _StorageCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Text(sub.tier.toUpperCase(), style: theme.textTheme.titleSmall),
+                Text('Storage', style: theme.textTheme.titleSmall),
                 const Spacer(),
-                Text('${formatGb(sub.usedBytes)} / ${formatGb(sub.quotaBytes)}',
-                    style: theme.textTheme.bodySmall),
+                Text(
+                  unlimited
+                      ? '${formatGb(usage.usedBytes)} used'
+                      : '${formatGb(usage.usedBytes)} / ${formatGb(usage.quotaBytes)}',
+                  style: theme.textTheme.bodySmall,
+                ),
               ],
             ),
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: pct,
-                minHeight: 8,
-                backgroundColor: theme.colorScheme.surfaceContainerHighest,
-              ),
-            ),
-            if (sub.status != null) ...[
+            if (!unlimited) ...[
               const SizedBox(height: 10),
-              Text('Status: ${sub.status}', style: theme.textTheme.bodySmall),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: pct,
+                  minHeight: 8,
+                  backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                ),
+              ),
             ],
           ],
         ),

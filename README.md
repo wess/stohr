@@ -1,6 +1,6 @@
 # Stohr
 
-Self-hostable cloud storage. Photo galleries, multi-user collaboration, public sharing, an S3-compatible API, OAuth for third-party apps, MFA + WebAuthn passkeys, password reset, session management, and built-in subscriptions.
+Self-hostable cloud storage. Photo galleries, multi-user collaboration, public sharing, an S3-compatible API, OAuth for third-party apps, MFA + WebAuthn passkeys, password reset, session management.
 
 Bun + React + Postgres + S3-compatible blob store.
 
@@ -12,8 +12,8 @@ Bun + React + Postgres + S3-compatible blob store.
 - **Auth** — email + password, TOTP 2FA, WebAuthn passkeys, password reset, full session list with per-device revoke.
 - **OAuth provider** — third-party apps integrate via authorization-code with PKCE, refresh-token rotation, device flow.
 - **S3-compatible API** — point any S3 SDK or `s3cmd`/`rclone` at Stohr; reuses your account quota.
-- **Subscriptions** — built-in Lemon Squeezy integration with tier quotas and admin override.
-- **Admin** — invite issuance, audit log, user/owner management, OAuth client registry, payment configuration.
+- **Storage quotas** — optional per-user storage caps the owner sets from the admin panel.
+- **Admin** — invite issuance, audit log, user/owner management, OAuth client registry, per-user storage caps.
 
 ## Quick start
 
@@ -32,7 +32,7 @@ The first signup becomes the owner. After that, signup is invite-only.
 
 ## Going further
 
-Full docs live in [`docs/`](docs/README.md) — architecture, every endpoint, deploy recipes, the S3-compatible API, SDKs, OAuth, payments, admin panel.
+Full docs live in [`docs/`](docs/README.md) — architecture, every endpoint, deploy recipes, the S3-compatible API, SDKs, OAuth, admin panel.
 
 - [Configuration reference](docs/CONFIGURATION.md) — every env var
 - [Deploy guide](docs/DEPLOY.md) — DigitalOcean, App Platform, manual Docker

@@ -126,30 +126,27 @@ class Share {
       );
 }
 
-class Subscription {
-  final String tier;
+class Usage {
   final int quotaBytes;
   final int usedBytes;
-  final String? status;
-  final String? renewsAt;
-  final bool hasSubscription;
+  final int activeBytes;
+  final int trashBytes;
+  final int versionBytes;
 
-  Subscription({
-    required this.tier,
+  Usage({
     required this.quotaBytes,
     required this.usedBytes,
-    required this.status,
-    required this.renewsAt,
-    required this.hasSubscription,
+    required this.activeBytes,
+    required this.trashBytes,
+    required this.versionBytes,
   });
 
-  factory Subscription.fromJson(Map<String, dynamic> j) => Subscription(
-        tier: j['tier'] as String,
+  factory Usage.fromJson(Map<String, dynamic> j) => Usage(
         quotaBytes: (j['quota_bytes'] as num).toInt(),
         usedBytes: (j['used_bytes'] as num).toInt(),
-        status: j['status'] as String?,
-        renewsAt: j['renews_at'] as String?,
-        hasSubscription: (j['has_subscription'] as bool?) ?? false,
+        activeBytes: (j['active_bytes'] as num).toInt(),
+        trashBytes: (j['trash_bytes'] as num).toInt(),
+        versionBytes: (j['version_bytes'] as num).toInt(),
       );
 }
 

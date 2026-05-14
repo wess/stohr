@@ -39,6 +39,11 @@ bun test tests/auth.test.ts
 - `sessions.test.ts` — JWT `jti` issuance, list/revoke/revoke-others, password-change cascade
 - `shares.test.ts` — `expires_in` required + capped, password gate, expired auto-delete, burn-on-view atomic claim
 - `apps.test.ts` — PAT mint, list (no token re-shown), authenticate, revoke
+- `account_deletion.test.ts` — soft-delete, login during the 24h grace window, `/account/restore`, hard-delete sweep
+- `discoverability.test.ts` — `/users/search` + `/u/:username` privacy, the `discoverable` toggle, `GET /me`
+- `oauth.test.ts` — client registration, auth-code + PKCE flow, token endpoint, refresh rotation + reuse detection, scope guards, discovery
+- `oauth_device.test.ts` — device authorize + polling lifecycle (RFC 8628), discovery
+- `quotas.test.ts` — signup quota defaults, usage breakdown, `/me/usage`, admin-set storage caps
 
 ## What's deliberately not covered yet
 

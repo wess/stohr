@@ -80,13 +80,12 @@ export type Invite = {
   created_at: string
 }
 
-export type Subscription = {
-  tier: string
+export type Usage = {
   quota_bytes: number
   used_bytes: number
-  status: string | null
-  renews_at: string | null
-  has_subscription: boolean
+  active_bytes: number
+  trash_bytes: number
+  version_bytes: number
 }
 
 export type S3AccessKey = {

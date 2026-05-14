@@ -78,15 +78,11 @@ These are read by `compose.yaml` and aren't seen by the API directly.
 | `POSTGRES_PASSWORD` | (empty) | Password for the bundled Postgres container |
 | `DOMAIN` | (empty) | Public hostname Caddy serves on. Caddy auto-provisions Let's Encrypt when this is a real domain |
 
-### Payments (not env vars)
-
-Lemon Squeezy keys, plan variant IDs, webhook secret, and live/test mode live in the `payment_config` table and are configured via Admin → Payments. See [PAYMENTS.md](PAYMENTS.md).
-
 ## Email is required in production
 
 Three flows depend on outbound email:
 
-- **Invites** (Settings → Invites and Admin → Invite requests). Without email the invite link is only visible to the inviter at creation; the recipient never gets a notification.
+- **Invites** (Settings → Invites and Admin → Invites). Without email the invite link is only visible to the inviter at creation; the recipient never gets a notification.
 - **Password reset** (`/password/forgot`). The reset link is only delivered by email.
 - **Collaboration** (Sharing folders/files with someone by email). The recipient gets a one-click "join" email.
 
@@ -134,15 +130,10 @@ Spaces, MinIO, RustFS, AWS S3, and Backblaze B2 all work — anything that speak
 
 ## Bootstrap flow
 
-On a fresh database, the first signup auto-bypasses the invite gate and is flagged `is_owner = true`. Subsequent signups require a valid invite token (mintable from Settings → Invites or by promoting an invite request in the Admin panel).
+On a fresh database, the first signup auto-bypasses the invite gate and is flagged `is_owner = true`. Subsequent signups require a valid invite token (mintable from Settings → Invites or Admin → Invites).
 
 ## Quotas
 
-Per-user storage caps come from the `users.storage_quota_bytes` column, which is set by the tier-flip logic in `src/payments/index.ts` whenever a Lemon Squeezy webhook fires. Defaults:
+Per-user storage caps live in the `users.storage_quota_bytes` column. It defaults to `0`, which means **unlimited**. The owner sets a cap for any user from **Admin → Users → Set quota** (`POST /admin/users/:id/quota`).
 
-- Free: 5 GB
-- Personal: 50 GB
-- Pro: 250 GB
-- Studio: 1 TB
-
-The cap is enforced at upload time (see `src/files/index.ts`) — an over-quota upload returns **402 Payment Required** with a JSON body `{ error, quota_bytes, used_bytes, attempted_bytes, breakdown }`. Concurrent uploads from the same user are rolled back if the post-write usage check exceeds quota.
+The cap is enforced at upload time (see `src/files/index.ts` and the S3-compatible API) — an over-quota upload returns **402 Payment Required** with a JSON body `{ error, quota_bytes, used_bytes, attempted_bytes, breakdown }`. Concurrent uploads from the same user are rolled back if the post-write usage check exceeds the cap.

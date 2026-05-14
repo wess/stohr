@@ -11,7 +11,7 @@ import type {
   ResourceKind,
   S3AccessKey,
   Share,
-  Subscription,
+  Usage,
   User,
 } from "./types.ts"
 
@@ -93,7 +93,7 @@ export const createClient = (options: ClientOptions = {}) => {
         json<AuthResult>("PATCH", "/me", patch),
       changePassword: (current: string, next: string) =>
         json<{ ok: true }>("POST", "/me/password", { current_password: current, new_password: next }),
-      subscription: () => json<Subscription>("GET", "/me/subscription"),
+      usage: () => json<Usage>("GET", "/me/usage"),
     },
 
     folders: {

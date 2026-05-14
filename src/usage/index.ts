@@ -7,7 +7,7 @@ export type UsageBreakdown = {
   trash: number
   /** Bytes in archived prior versions. */
   versions: number
-  /** active + trash + versions — what billing actually charges for. */
+  /** active + trash + versions — what a storage cap is measured against. */
   total: number
 }
 
@@ -37,8 +37,9 @@ export const computeUsage = async (db: Connection, userId: number): Promise<Usag
 
 /**
  * Quota check for a write that would add `incomingBytes` to the user's storage.
- * Returns null if allowed, or a structured error payload if it would exceed quota.
- * A quota of 0 (or negative) means unlimited.
+ * Returns null if allowed, or a structured error payload if it would exceed the
+ * cap. The cap is the per-user `storage_quota_bytes` column — set by the owner
+ * in Admin. A quota of 0 (or negative) means unlimited.
  */
 export const checkQuota = async (
   db: Connection,

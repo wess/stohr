@@ -74,6 +74,17 @@ final class StohrTests: XCTestCase {
         }
     }
 
+    func testUsageReturnsStorageUsage() async throws {
+        let json = """
+        {"quota_bytes":0,"used_bytes":1234,"active_bytes":1000,"trash_bytes":200,"version_bytes":34}
+        """
+        let session = MockSession([(200, json.data(using: .utf8)!)])
+        let client = StohrClient(baseURL: URL(string: "https://test.local/api")!, token: "t", session: session)
+        let usage = try await client.usage()
+        XCTAssertEqual(usage.quotaBytes, 0)
+        XCTAssertEqual(usage.usedBytes, 1234)
+    }
+
     func testCreateS3Key() async throws {
         let json = """
         {"id":1,"access_key":"AKIA","secret_key":"shhh","name":"ci","created_at":"n","last_used_at":null}

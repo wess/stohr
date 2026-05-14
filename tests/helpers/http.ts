@@ -14,9 +14,7 @@ import { searchRoutes } from "../../src/search/index.ts"
 import { inviteRoutes } from "../../src/invites/index.ts"
 import { collabRoutes } from "../../src/collabs/index.ts"
 import { publicRoutes } from "../../src/public/index.ts"
-import { waitlistRoutes } from "../../src/waitlist/index.ts"
 import { adminRoutes } from "../../src/admin/index.ts"
-import { paymentsRoutes } from "../../src/payments/index.ts"
 import { s3KeyRoutes } from "../../src/s3keys/index.ts"
 import { appRoutes } from "../../src/apps/index.ts"
 import { oauthClientRoutes } from "../../src/oauth/clients.ts"
@@ -67,9 +65,7 @@ export const buildApp = (db: Connection, secret: string) => {
     ...inviteRoutes(db, secret),
     ...collabRoutes(db, secret, fakeEmailer, TEST_APP_URL),
     ...publicRoutes(db, secret, fakeStore),
-    ...waitlistRoutes(db),
-    ...adminRoutes(db, secret, fakeEmailer, TEST_APP_URL),
-    ...paymentsRoutes(db, secret),
+    ...adminRoutes(db, secret),
     ...s3KeyRoutes(db, secret),
     ...appRoutes(db, secret),
     ...oauthClientRoutes(db, secret),

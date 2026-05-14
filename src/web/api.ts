@@ -89,15 +89,6 @@ export const checkInvite = async (token: string) => {
   return res.json()
 }
 
-export const requestInvite = async (input: { email: string; name?: string; reason?: string }) => {
-  const res = await fetch(`${BASE}/invite-requests`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  })
-  return res.json() as Promise<{ ok?: boolean; error?: string }>
-}
-
 export type ContactMessageStatus = "new" | "read" | "handled" | "spam"
 
 export type ContactMessage = {
@@ -273,18 +264,12 @@ export const shareMeta = async (token: string) => {
   }>
 }
 
-export const shareDownloadUrl = (token: string) => `${BASE}/s/${token}`
-export const shareInlineUrl = (token: string) => `${BASE}/s/${token}?inline=1`
-
 export const fetchShare = async (token: string, password?: string, inline = false) => {
   const url = `${BASE}/s/${token}${inline ? "?inline=1" : ""}`
   const headers: Record<string, string> = {}
   if (password) headers["x-share-password"] = password
   return fetch(url, { headers })
 }
-
-export const getMe = () =>
-  jsonReq("GET", "/me")
 
 export const updateProfile = async (patch: { name?: string; email?: string; username?: string }) => {
   const data = await jsonReq("PATCH", "/me", patch)
@@ -371,21 +356,6 @@ export const removeFolderCollab = (id: number, collabId: number) =>
 export const removeFileCollab = (id: number, collabId: number) =>
   jsonReq("DELETE", `/files/${id}/collaborators/${collabId}`)
 
-export const userSearch = (q: string) =>
-  jsonReq("GET", `/users/search?q=${encodeURIComponent(q)}`)
-
-export const adminListInviteRequests = (status: "pending" | "invited" | "dismissed" | "all" = "pending") =>
-  jsonReq("GET", `/admin/invite-requests?status=${status}`)
-
-export const adminInviteFromRequest = (id: number) =>
-  jsonReq("POST", `/admin/invite-requests/${id}/invite`, {})
-
-export const adminDismissRequest = (id: number) =>
-  jsonReq("POST", `/admin/invite-requests/${id}/dismiss`)
-
-export const adminDeleteRequest = (id: number) =>
-  jsonReq("DELETE", `/admin/invite-requests/${id}`)
-
 export const adminListUsers = () =>
   jsonReq("GET", "/admin/users")
 
@@ -451,29 +421,11 @@ export const adminListAuditEvents = (filters: { event?: string; userId?: number;
   return jsonReq("GET", `/admin/audit${tail ? `?${tail}` : ""}`)
 }
 
-export const getMySubscription = () =>
-  jsonReq("GET", "/me/subscription")
+export const getMyUsage = () =>
+  jsonReq("GET", "/me/usage")
 
-export const startCheckout = (tier: "personal" | "pro" | "studio", period: "monthly" | "yearly" = "monthly") =>
-  jsonReq("POST", `/me/checkout?tier=${tier}&period=${period}`)
-
-export const adminGetPaymentConfig = () =>
-  jsonReq("GET", "/admin/payments/config")
-
-export const adminSavePaymentConfig = (cfg: Record<string, unknown>) =>
-  jsonReq("PUT", "/admin/payments/config", cfg)
-
-export const adminListSubscriptions = () =>
-  jsonReq("GET", "/admin/payments/subscriptions")
-
-export const adminSetUserTier = (id: number, tier: "free" | "personal" | "pro" | "studio") =>
-  jsonReq("POST", `/admin/payments/users/${id}/tier`, { tier })
-
-export const adminListPaymentEvents = () =>
-  jsonReq("GET", "/admin/payments/events")
-
-export const adminAutoSetupPayments = (input: { api_key: string; webhook_url: string; mode: "test" | "live" }) =>
-  jsonReq("POST", "/admin/payments/autosetup", input)
+export const adminSetUserQuota = (id: number, quotaBytes: number) =>
+  jsonReq("POST", `/admin/users/${id}/quota`, { quota_bytes: quotaBytes })
 
 export const listS3Keys = () =>
   jsonReq("GET", "/me/s3-keys")
@@ -498,7 +450,6 @@ export const getPublicFolder = async (username: string, folderId: number) => {
   return res.json()
 }
 
-export const publicFileUrl = (id: number) => `${BASE}/p/files/${id}`
 export const publicFileInlineUrl = (id: number) => `${BASE}/p/files/${id}?inline=1`
 export const publicThumbUrl = (id: number) => `${BASE}/p/files/${id}/thumb`
 
@@ -508,20 +459,6 @@ export type ActionEventName =
   | "file.moved.in" | "file.moved.out"
   | "folder.created" | "folder.updated" | "folder.deleted"
   | "folder.moved.in" | "folder.moved.out"
-
-export type ActionRegistryEntry = {
-  slug: string
-  name: string
-  description: string
-  version: string
-  author: { name: string; url?: string | null }
-  homepage?: string | null
-  icon?: string | null
-  permissions: string[]
-  events: ActionEventName[]
-  subjects: ("file" | "folder")[]
-  config_schema: Record<string, unknown>
-}
 
 export type FolderActionRow = {
   id: number
@@ -534,22 +471,6 @@ export type FolderActionRow = {
   updated_at: string
 }
 
-export type FolderActionRun = {
-  id: number
-  folder_action_id: number
-  triggered_event: string
-  subject_kind: string
-  subject_id: number
-  status: "succeeded" | "failed" | "skipped"
-  started_at: string
-  finished_at: string | null
-  error: string | null
-  result: Record<string, unknown> | null
-}
-
-export const listActionRegistry = () =>
-  jsonReq("GET", "/actions/registry") as Promise<{ actions: ActionRegistryEntry[]; total: number }>
-
 export const listFolderActions = (folderId: number) =>
   jsonReq("GET", `/folders/${folderId}/actions`) as Promise<FolderActionRow[]>
 
@@ -561,9 +482,6 @@ export const updateFolderAction = (folderId: number, actionId: number, patch: { 
 
 export const deleteFolderAction = (folderId: number, actionId: number) =>
   jsonReq("DELETE", `/folders/${folderId}/actions/${actionId}`) as Promise<{ deleted?: number; error?: string }>
-
-export const listFolderActionRuns = (folderId: number, limit = 50) =>
-  jsonReq("GET", `/folders/${folderId}/actions/runs?limit=${limit}`) as Promise<FolderActionRun[]>
 
 /* User-built Actions (Action Builder) */
 

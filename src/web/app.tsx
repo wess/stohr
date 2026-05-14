@@ -39,7 +39,6 @@ import {
   Settings as SettingsIcon,
   Smartphone,
   Sun,
-  Share2,
   Terminal,
   Trash2,
   Upload as UploadIcon,
@@ -3956,7 +3955,7 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
                 <BookOpen size={14} strokeWidth={1.75} />
                 <div className="help-menu-text">
                   <div className="help-menu-title">Documentation</div>
-                  <div className="help-menu-sub">Architecture, deploy, OAuth, payments</div>
+                  <div className="help-menu-sub">Architecture, deploy, OAuth, actions</div>
                 </div>
                 <ExternalLink size={12} strokeWidth={1.75} className="help-menu-ext" />
               </a>
@@ -3964,7 +3963,7 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
                 <MessageSquare size={14} strokeWidth={1.75} />
                 <div className="help-menu-text">
                   <div className="help-menu-title">Contact us</div>
-                  <div className="help-menu-sub">Bugs, feature requests, billing</div>
+                  <div className="help-menu-sub">Bugs, feature requests, questions</div>
                 </div>
                 <ExternalLink size={12} strokeWidth={1.75} className="help-menu-ext" />
               </a>
@@ -4010,67 +4009,52 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
   )
 }
 
-type Subscription = {
-  tier: string
+type Usage = {
   quota_bytes: number
   used_bytes: number
-  active_bytes?: number
-  trash_bytes?: number
-  version_bytes?: number
-  status: string | null
-  renews_at: string | null
-  has_subscription: boolean
+  active_bytes: number
+  trash_bytes: number
+  version_bytes: number
 }
 
-const SubscriptionPanel: React.FC = () => {
-  const [sub, setSub] = useState<Subscription | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState("")
+const UsagePanel: React.FC = () => {
+  const [usage, setUsage] = useState<Usage | null>(null)
 
   const load = async () => {
-    const data = await api.getMySubscription()
-    if (!data.error) setSub(data)
+    const data = await api.getMyUsage()
+    if (!data.error) setUsage(data)
   }
   useEffect(() => { load() }, [])
 
-  const upgrade = async (tier: "personal" | "pro" | "studio") => {
-    setBusy(true); setError("")
-    const res = await api.startCheckout(tier, "monthly")
-    setBusy(false)
-    if (res.error || !res.checkout_url) {
-      setError(res.error ?? "Could not start checkout")
-      return
-    }
-    window.location.href = res.checkout_url
-  }
-
-  if (!sub) {
+  if (!usage) {
     return (
       <section className="settings-card">
-        <h3>Subscription</h3>
+        <h3>Storage</h3>
         <div style={{ color: "var(--muted)", fontSize: 14 }}>Loading…</div>
       </section>
     )
   }
 
-  const unlimited = sub.quota_bytes <= 0
-  const pct = unlimited ? 0 : Math.min(100, (sub.used_bytes / sub.quota_bytes) * 100)
-  const tierLabel = unlimited ? "Owner" : sub.tier.charAt(0).toUpperCase() + sub.tier.slice(1)
+  const unlimited = usage.quota_bytes <= 0
+  const pct = unlimited ? 0 : Math.min(100, (usage.used_bytes / usage.quota_bytes) * 100)
 
   return (
     <section className="settings-card">
-      <h3>Subscription</h3>
+      <h3>Storage</h3>
       <div className="sub-current">
         <div className="sub-tier-row">
           <div>
-            <div className="sub-tier">{tierLabel}</div>
-            {sub.status && <div className="sub-status">{sub.status}{sub.renews_at ? ` · renews ${new Date(sub.renews_at).toLocaleDateString()}` : ""}</div>}
-            {unlimited && <div className="sub-status">Operator account — no storage cap</div>}
+            <div className="sub-tier">{unlimited ? "No storage cap" : "Storage cap"}</div>
+            <div className="sub-status">
+              {unlimited
+                ? "Bounded only by the server's disk."
+                : "Cap set by the instance owner."}
+            </div>
           </div>
           <div className="sub-usage-text">
-            {formatBytes(sub.used_bytes)}
+            {formatBytes(usage.used_bytes)}
             <span style={{ color: "var(--muted)" }}>
-              {unlimited ? " used" : ` of ${formatBytes(sub.quota_bytes)}`}
+              {unlimited ? " used" : ` of ${formatBytes(usage.quota_bytes)}`}
             </span>
           </div>
         </div>
@@ -4079,44 +4063,12 @@ const SubscriptionPanel: React.FC = () => {
             <div className="sub-fill" style={{ width: `${pct}%`, background: pct > 90 ? "var(--danger)" : "var(--brand)" }} />
           </div>
         )}
-        {(sub.active_bytes !== undefined) && (
-          <div className="sub-breakdown">
-            <span>Active <strong>{formatBytes(sub.active_bytes)}</strong></span>
-            <span>Trash <strong>{formatBytes(sub.trash_bytes ?? 0)}</strong></span>
-            <span>Versions <strong>{formatBytes(sub.version_bytes ?? 0)}</strong></span>
-          </div>
-        )}
-      </div>
-
-      {sub.tier === "free" && !unlimited && (
-        <>
-          <div style={{ marginTop: 16, color: "var(--muted)", fontSize: 13 }}>Upgrade for more storage:</div>
-          <div className="sub-upgrade-grid">
-            <button disabled={busy} onClick={() => upgrade("personal")}>
-              <div className="sub-up-tier">Personal</div>
-              <div className="sub-up-meta">50 GB · $6/mo</div>
-            </button>
-            <button className="primary" disabled={busy} onClick={() => upgrade("pro")}>
-              <div className="sub-up-tier">Pro</div>
-              <div className="sub-up-meta">250 GB · $14/mo</div>
-            </button>
-            <button disabled={busy} onClick={() => upgrade("studio")}>
-              <div className="sub-up-tier">Studio</div>
-              <div className="sub-up-meta">1 TB · $34/mo</div>
-            </button>
-          </div>
-        </>
-      )}
-
-      {sub.tier !== "free" && sub.has_subscription && (
-        <div style={{ marginTop: 16 }}>
-          <a href="https://app.lemonsqueezy.com/my-orders" target="_blank" rel="noreferrer">
-            <button>Manage subscription ↗</button>
-          </a>
+        <div className="sub-breakdown">
+          <span>Active <strong>{formatBytes(usage.active_bytes)}</strong></span>
+          <span>Trash <strong>{formatBytes(usage.trash_bytes)}</strong></span>
+          <span>Versions <strong>{formatBytes(usage.version_bytes)}</strong></span>
         </div>
-      )}
-
-      {error && <div className="msg err" style={{ marginTop: 12 }}>{error}</div>}
+      </div>
     </section>
   )
 }
@@ -5142,7 +5094,7 @@ const InvitesPanel: React.FC = () => {
   )
 }
 
-type SettingsTab = "profile" | "subscription" | "security" | "developer" | "invites" | "account"
+type SettingsTab = "profile" | "storage" | "security" | "developer" | "invites" | "account"
 
 const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => void }> = ({ onProfileUpdate, onAccountDeleted }) => {
   const current = api.getUser()
@@ -5204,7 +5156,7 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
 
   const tabs: Array<{ id: SettingsTab; label: string }> = [
     { id: "profile", label: "Profile" },
-    { id: "subscription", label: "Subscription" },
+    { id: "storage", label: "Storage" },
     { id: "security", label: "Security" },
     { id: "developer", label: "Developer" },
     { id: "invites", label: "Invites" },
@@ -5271,7 +5223,7 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
             </>
           )}
 
-          {tab === "subscription" && <SubscriptionPanel />}
+          {tab === "storage" && <UsagePanel />}
 
           {tab === "security" && (
             <>
@@ -5323,21 +5275,11 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
   )
 }
 
-type AdminInviteRequest = {
-  id: number
-  email: string
-  name: string | null
-  reason: string | null
-  status: "pending" | "invited" | "dismissed"
-  processed_at: string | null
-  created_at: string
-}
-
-type AdminSection = "requests" | "users" | "invites" | "payments" | "stats" | "audit" | "contact"
+type AdminSection = "users" | "invites" | "stats" | "audit" | "contact"
 
 const AdminView: React.FC = () => {
   const me = api.getUser()
-  const [section, setSection] = useState<AdminSection>("requests")
+  const [section, setSection] = useState<AdminSection>("users")
 
   if (!me?.is_owner) {
     return (
@@ -5355,117 +5297,19 @@ const AdminView: React.FC = () => {
       </div>
       <div className="content">
         <div className="admin-sections">
-          <button className={section === "requests" ? "active" : ""} onClick={() => setSection("requests")}>Requests</button>
           <button className={section === "users" ? "active" : ""} onClick={() => setSection("users")}>Users</button>
           <button className={section === "invites" ? "active" : ""} onClick={() => setSection("invites")}>Invites</button>
           <button className={section === "contact" ? "active" : ""} onClick={() => setSection("contact")}>Contact</button>
-          <button className={section === "payments" ? "active" : ""} onClick={() => setSection("payments")}>Payments</button>
           <button className={section === "stats" ? "active" : ""} onClick={() => setSection("stats")}>Stats</button>
           <button className={section === "audit" ? "active" : ""} onClick={() => setSection("audit")}>Audit</button>
         </div>
-        {section === "requests" && <AdminRequests />}
         {section === "users" && <AdminUsers meId={me.id} />}
         {section === "invites" && <AdminInvites />}
         {section === "contact" && <AdminContact />}
-        {section === "payments" && <AdminPayments />}
         {section === "stats" && <AdminStats />}
         {section === "audit" && <AdminAudit />}
       </div>
     </div>
-  )
-}
-
-const AdminRequests: React.FC = () => {
-  const [tab, setTab] = useState<"pending" | "invited" | "dismissed">("pending")
-  const [rows, setRows] = useState<AdminInviteRequest[]>([])
-  const [busy, setBusy] = useState<number | null>(null)
-  const [invited, setInvited] = useState<{ id: number; email: string; token: string } | null>(null)
-
-  const load = async () => {
-    const data = await api.adminListInviteRequests(tab)
-    setRows(Array.isArray(data) ? data : [])
-  }
-  useEffect(() => { load() }, [tab])
-
-  const sendInvite = async (id: number) => {
-    setBusy(id)
-    const res = await api.adminInviteFromRequest(id)
-    setBusy(null)
-    if (res.error) return alert(res.error)
-    setInvited({ id, email: res.email, token: res.invite_token })
-    await load()
-  }
-
-  const dismiss = async (id: number) => {
-    if (!confirm("Dismiss this request?")) return
-    setBusy(id)
-    const res = await api.adminDismissRequest(id)
-    setBusy(null)
-    if (res.error) return alert(res.error)
-    await load()
-  }
-
-  const remove = async (id: number) => {
-    if (!confirm("Permanently delete this request?")) return
-    setBusy(id)
-    const res = await api.adminDeleteRequest(id)
-    setBusy(null)
-    if (res.error) return alert(res.error)
-    await load()
-  }
-
-  const inviteUrl = invited ? `${window.location.origin}/signup?invite=${invited.token}` : ""
-
-  return (
-    <section className="settings-card">
-      <h3>Invite requests</h3>
-      <div className="admin-tabs">
-        <button className={tab === "pending" ? "active" : ""} onClick={() => setTab("pending")}>Pending</button>
-        <button className={tab === "invited" ? "active" : ""} onClick={() => setTab("invited")}>Invited</button>
-        <button className={tab === "dismissed" ? "active" : ""} onClick={() => setTab("dismissed")}>Dismissed</button>
-      </div>
-
-      {invited && (
-        <div className="msg ok" style={{ marginTop: 12 }}>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>Invite minted for {invited.email}</div>
-          <div className="share-link" style={{ margin: "4px 0" }}>{inviteUrl}</div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => navigator.clipboard.writeText(inviteUrl)}>Copy link</button>
-            <button onClick={() => setInvited(null)}>Done</button>
-          </div>
-        </div>
-      )}
-
-      {rows.length === 0 && (
-        <div style={{ marginTop: 16, color: "var(--muted)", fontSize: 14 }}>No {tab} requests.</div>
-      )}
-
-      <div className="admin-list">
-        {rows.map(r => (
-          <div key={r.id} className="admin-row">
-            <div className="admin-row-main">
-              <div className="admin-row-line">
-                <strong>{r.email}</strong>
-                {r.name && <span className="admin-row-name">· {r.name}</span>}
-                <span className="admin-row-when">{new Date(r.created_at).toLocaleDateString()}</span>
-              </div>
-              {r.reason && <div className="admin-row-reason">{r.reason}</div>}
-            </div>
-            <div className="admin-row-actions">
-              {r.status === "pending" && (
-                <>
-                  <button className="primary" disabled={busy === r.id} onClick={() => sendInvite(r.id)}>Send invite</button>
-                  <button disabled={busy === r.id} onClick={() => dismiss(r.id)}>Dismiss</button>
-                </>
-              )}
-              {r.status !== "pending" && (
-                <button className="danger" disabled={busy === r.id} onClick={() => remove(r.id)}>Delete</button>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
   )
 }
 
@@ -5475,6 +5319,7 @@ type AdminUser = {
   email: string
   name: string
   is_owner: boolean
+  storage_quota_bytes: number
   storage_bytes: number
   file_count: number
   created_at: string
@@ -5510,6 +5355,21 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
     await load()
   }
 
+  const setQuota = async (u: AdminUser) => {
+    const currentGb = u.storage_quota_bytes > 0
+      ? String(Math.round((u.storage_quota_bytes / 1024 ** 3) * 100) / 100)
+      : "0"
+    const input = prompt(`Storage cap for @${u.username}, in GB (0 = unlimited):`, currentGb)
+    if (input === null) return
+    const gb = Number(input.trim())
+    if (!Number.isFinite(gb) || gb < 0) return alert("Enter a non-negative number of GB.")
+    setBusy(u.id)
+    const res = await api.adminSetUserQuota(u.id, Math.round(gb * 1024 ** 3))
+    setBusy(null)
+    if (res.error) return alert(res.error)
+    await load()
+  }
+
   return (
     <section className="settings-card">
       <h3>Users <span className="admin-count">({users.length})</span></h3>
@@ -5528,9 +5388,12 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
               </div>
               <div className="admin-row-reason">
                 {formatBytes(u.storage_bytes)} · {u.file_count} file{u.file_count === 1 ? "" : "s"}
+                {" · "}
+                {u.storage_quota_bytes > 0 ? `${formatBytes(u.storage_quota_bytes)} cap` : "no cap"}
               </div>
             </div>
             <div className="admin-row-actions">
+              <button disabled={busy === u.id} onClick={() => setQuota(u)}>Set quota</button>
               <button disabled={busy === u.id || u.id === meId} onClick={() => toggleOwner(u)}>
                 {u.is_owner ? "Revoke owner" : "Make owner"}
               </button>
@@ -5604,479 +5467,6 @@ const AdminInvites: React.FC = () => {
           </div>
         ))}
       </div>
-    </section>
-  )
-}
-
-type AutoSetupResult = {
-  store: { id: string; name: string; slug: string; url: string }
-  webhook: { id: string; url: string } | null
-  webhook_error: string | null
-  plans: Record<string, { monthly: string | null; yearly: string | null; product_name: string | null }>
-  unmatched_products: string[]
-}
-
-const TIER_DETAILS: Record<"personal" | "pro" | "studio", { label: string; storage: string; monthly: string; yearly: string }> = {
-  personal: { label: "Personal", storage: "50 GB", monthly: "$6", yearly: "$60" },
-  pro: { label: "Pro", storage: "250 GB", monthly: "$14", yearly: "$140" },
-  studio: { label: "Studio", storage: "1 TB", monthly: "$34", yearly: "$340" },
-}
-
-const AutoSetupCard: React.FC<{ webhookUrl: string; mode: "test" | "live"; onSetup: () => void }> = ({ webhookUrl, mode, onSetup }) => {
-  const [apiKey, setApiKey] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<AutoSetupResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [storesAvailable, setStoresAvailable] = useState<string[] | null>(null)
-
-  const run = async () => {
-    if (!apiKey.trim()) { setError("Paste your Lemon Squeezy API key"); return }
-    setBusy(true); setError(null); setStoresAvailable(null)
-    const res = await api.adminAutoSetupPayments({
-      api_key: apiKey.trim(),
-      webhook_url: webhookUrl,
-      mode,
-    })
-    setBusy(false)
-    if (res.error) {
-      if (Array.isArray(res.stores)) {
-        setStoresAvailable(res.stores.map((s: any) => s.name))
-      }
-      setError(res.error)
-      return
-    }
-    setResult(res as AutoSetupResult)
-    onSetup()
-  }
-
-  if (result) {
-    const todo: Array<{ tier: "personal" | "pro" | "studio"; missing: string[] }> = []
-    for (const tier of ["personal", "pro", "studio"] as const) {
-      const p = result.plans[tier]!
-      const missing: string[] = []
-      if (!p.product_name) {
-        missing.push(`Create product "${tier.charAt(0).toUpperCase() + tier.slice(1)}"`)
-      }
-      if (!p.monthly) missing.push(`Add monthly variant at ${TIER_DETAILS[tier].monthly}`)
-      if (!p.yearly) missing.push(`Add yearly variant at ${TIER_DETAILS[tier].yearly}`)
-      if (missing.length > 0) todo.push({ tier, missing })
-    }
-    return (
-      <div className="autosetup-result">
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-          <div className="autosetup-check">✓</div>
-          <div>
-            <div style={{ fontWeight: 600 }}>Connected to {result.store.name}</div>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>{result.store.url}</div>
-          </div>
-        </div>
-        <div className="autosetup-grid">
-          {(["personal", "pro", "studio"] as const).map(tier => {
-            const p = result.plans[tier]!
-            const ok = !!p.monthly || !!p.yearly
-            return (
-              <div key={tier} className={`autosetup-tier ${ok ? "ok" : "warn"}`}>
-                <div className="autosetup-tier-name">{tier}</div>
-                <div className="autosetup-tier-status">
-                  {p.product_name ? p.product_name : "Not found"}
-                </div>
-                <div className="autosetup-tier-periods">
-                  <span className={p.monthly ? "yes" : "no"}>monthly {p.monthly ? "✓" : "—"}</span>
-                  <span className={p.yearly ? "yes" : "no"}>yearly {p.yearly ? "✓" : "—"}</span>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-        <div style={{ marginTop: 12, fontSize: 13 }}>
-          {result.webhook && <div className="msg ok">Webhook created at {result.webhook.url}</div>}
-          {result.webhook_error && (
-            <div className="msg err">
-              Webhook creation failed: {result.webhook_error}<br />
-              <span style={{ fontSize: 12, opacity: 0.85 }}>Add it manually in Lemon Squeezy → Settings → Webhooks pointing at <code>{webhookUrl}</code>, then paste the signing secret below.</span>
-            </div>
-          )}
-          {result.unmatched_products.length > 0 && (
-            <div className="msg" style={{ background: "var(--bg)", border: "1px solid var(--border)", padding: "10px 12px", borderRadius: 6, marginTop: 8, fontSize: 13 }}>
-              Unmatched products (rename to "Personal", "Pro", or "Studio" to map them): {result.unmatched_products.join(", ")}
-            </div>
-          )}
-          {todo.length > 0 && (
-            <div className="msg" style={{ background: "var(--err-bg)", border: "1px solid var(--err-border)", color: "var(--err-fg)", padding: "12px 14px", borderRadius: 6, marginTop: 8, fontSize: 13 }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>
-                Lemon Squeezy doesn't allow API product creation — finish these in their dashboard, then re-run:
-              </div>
-              <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.5 }}>
-                {todo.map(t => (
-                  <li key={t.tier}>
-                    <strong style={{ textTransform: "capitalize" }}>{t.tier}</strong>: {t.missing.join("; ")}
-                  </li>
-                ))}
-              </ul>
-              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>
-                Make sure to mark products and variants as <strong>Published</strong> (not Draft).
-              </div>
-            </div>
-          )}
-        </div>
-        <div style={{ marginTop: 12 }}>
-          <button onClick={() => setResult(null)}>Run again</button>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="autosetup-card">
-      <div className="autosetup-head">
-        <div className="autosetup-title">Auto-setup with API key</div>
-        <div className="autosetup-sub">
-          Paste your Lemon Squeezy API key — we'll detect your store, map Personal/Pro/Studio products to tiers, and register the webhook.
-        </div>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <input
-          type="password"
-          placeholder="Your Lemon Squeezy API key (Settings → API)"
-          value={apiKey}
-          onChange={e => setApiKey(e.target.value)}
-        />
-        {error && (
-          <div className="msg err">
-            {error}
-            {storesAvailable && storesAvailable.length > 0 && (
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
-                Found stores: {storesAvailable.join(", ")}
-              </div>
-            )}
-          </div>
-        )}
-        <div>
-          <button className="primary" disabled={busy || !apiKey.trim()} onClick={run}>
-            {busy ? "Connecting…" : "Run auto-setup"}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-type PaymentConfigForm = {
-  mode: "test" | "live"
-  store_id: string
-  store_url: string
-  api_key: string
-  webhook_secret: string
-  live_webhook_secret: string
-  api_key_set: boolean
-  webhook_secret_set: boolean
-  live_webhook_secret_set: boolean
-  tier_personal_monthly: string
-  tier_personal_yearly: string
-  tier_pro_monthly: string
-  tier_pro_yearly: string
-  tier_studio_monthly: string
-  tier_studio_yearly: string
-  live_tier_personal_monthly: string
-  live_tier_personal_yearly: string
-  live_tier_pro_monthly: string
-  live_tier_pro_yearly: string
-  live_tier_studio_monthly: string
-  live_tier_studio_yearly: string
-}
-
-type AdminSubscription = {
-  id: number
-  username: string
-  email: string
-  tier: string
-  subscription_status: string | null
-  subscription_renews_at: string | null
-  ls_subscription_id: string | null
-  ls_customer_id: string | null
-}
-
-type LsEventRow = {
-  id: number
-  event_name: string
-  signature_valid: boolean
-  user_id: number | null
-  ls_subscription_id: string | null
-  error: string | null
-  received_at: string
-}
-
-const AdminPayments: React.FC = () => {
-  const [tab, setTab] = useState<"connection" | "plans" | "subscriptions" | "events">("connection")
-  const [cfg, setCfg] = useState<PaymentConfigForm | null>(null)
-  const [subs, setSubs] = useState<AdminSubscription[]>([])
-  const [events, setEvents] = useState<LsEventRow[]>([])
-  const [saving, setSaving] = useState(false)
-  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
-
-  const loadCfg = async () => {
-    const data = await api.adminGetPaymentConfig()
-    if (!data.error) {
-      setCfg({
-        mode: data.mode === "live" ? "live" : "test",
-        store_id: data.store_id ?? "",
-        store_url: data.store_url ?? "",
-        api_key: "",
-        webhook_secret: "",
-        live_webhook_secret: "",
-        api_key_set: !!data.api_key_set,
-        webhook_secret_set: !!data.webhook_secret_set,
-        live_webhook_secret_set: !!data.live_webhook_secret_set,
-        tier_personal_monthly: data.tier_personal_monthly ?? "",
-        tier_personal_yearly: data.tier_personal_yearly ?? "",
-        tier_pro_monthly: data.tier_pro_monthly ?? "",
-        tier_pro_yearly: data.tier_pro_yearly ?? "",
-        tier_studio_monthly: data.tier_studio_monthly ?? "",
-        tier_studio_yearly: data.tier_studio_yearly ?? "",
-        live_tier_personal_monthly: data.live_tier_personal_monthly ?? "",
-        live_tier_personal_yearly: data.live_tier_personal_yearly ?? "",
-        live_tier_pro_monthly: data.live_tier_pro_monthly ?? "",
-        live_tier_pro_yearly: data.live_tier_pro_yearly ?? "",
-        live_tier_studio_monthly: data.live_tier_studio_monthly ?? "",
-        live_tier_studio_yearly: data.live_tier_studio_yearly ?? "",
-      })
-    }
-  }
-
-  const setMode = async (mode: "test" | "live") => {
-    if (!cfg || cfg.mode === mode) return
-    setCfg({ ...cfg, mode })
-    await api.adminSavePaymentConfig({ mode })
-  }
-  const loadSubs = async () => {
-    const data = await api.adminListSubscriptions()
-    setSubs(Array.isArray(data) ? data : [])
-  }
-  const loadEvents = async () => {
-    const data = await api.adminListPaymentEvents()
-    setEvents(Array.isArray(data) ? data : [])
-  }
-
-  useEffect(() => {
-    if (tab === "connection" || tab === "plans") loadCfg()
-    if (tab === "subscriptions") loadSubs()
-    if (tab === "events") loadEvents()
-  }, [tab])
-
-  const save = async (patch: Partial<PaymentConfigForm>) => {
-    if (!cfg) return
-    setSaving(true); setMsg(null)
-    const body: Record<string, unknown> = { ...patch }
-    if (patch.api_key === "" || patch.api_key?.includes("…")) delete body.api_key
-    if (patch.webhook_secret === "" || patch.webhook_secret?.includes("…")) delete body.webhook_secret
-    const res = await api.adminSavePaymentConfig(body)
-    setSaving(false)
-    if (res.error) return setMsg({ kind: "err", text: res.error })
-    setMsg({ kind: "ok", text: "Saved" })
-    await loadCfg()
-  }
-
-  const setTier = async (id: number, tier: "free" | "personal" | "pro" | "studio") => {
-    if (!confirm(`Set tier to ${tier}?`)) return
-    const res = await api.adminSetUserTier(id, tier)
-    if (res.error) return alert(res.error)
-    await loadSubs()
-  }
-
-  const webhookUrl = `${window.location.origin}/api/lemonsqueezy/webhook`
-
-  return (
-    <section className="settings-card">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
-        <h3 style={{ marginBottom: 0 }}>Payments <span className="admin-count">Lemon Squeezy</span></h3>
-        {cfg && (
-          <div className="mode-toggle" role="tablist" aria-label="Mode">
-            <button
-              className={cfg.mode === "test" ? "active" : ""}
-              onClick={() => setMode("test")}
-              role="tab"
-              aria-selected={cfg.mode === "test"}
-            >Test</button>
-            <button
-              className={cfg.mode === "live" ? "active" : ""}
-              onClick={() => setMode("live")}
-              role="tab"
-              aria-selected={cfg.mode === "live"}
-            >Live</button>
-          </div>
-        )}
-      </div>
-      <div className="admin-tabs">
-        <button className={tab === "connection" ? "active" : ""} onClick={() => setTab("connection")}>Connection</button>
-        <button className={tab === "plans" ? "active" : ""} onClick={() => setTab("plans")}>Plans</button>
-        <button className={tab === "subscriptions" ? "active" : ""} onClick={() => setTab("subscriptions")}>Subscriptions</button>
-        <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Events</button>
-      </div>
-
-      {msg && <div className={`msg ${msg.kind}`} style={{ marginTop: 12 }}>{msg.text}</div>}
-
-      {tab === "connection" && cfg && (
-        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>
-            Configuring <strong style={{ color: "var(--text)" }}>{cfg.mode}</strong> mode. Switch the toggle above to configure the other.
-          </div>
-          <AutoSetupCard webhookUrl={webhookUrl} mode={cfg.mode} onSetup={loadCfg} />
-          <div style={{ borderTop: "1px solid var(--border)", paddingTop: 16, fontSize: 13, color: "var(--muted)" }}>
-            Or configure manually:
-          </div>
-          <div>
-            <label>Webhook URL (paste into Lemon Squeezy)</label>
-            <div className="share-link">{webhookUrl}</div>
-            <button onClick={() => navigator.clipboard.writeText(webhookUrl)} style={{ marginTop: 6 }}>Copy</button>
-          </div>
-          <div>
-            <label>Store URL <span style={{ color: "var(--muted)", fontWeight: 400 }}>(shared between modes)</span></label>
-            <input value={cfg.store_url} onChange={e => setCfg({ ...cfg, store_url: e.target.value })} placeholder="https://your-store.lemonsqueezy.com" />
-          </div>
-          <div>
-            <label>Store ID <span style={{ color: "var(--muted)", fontWeight: 400 }}>(shared between modes)</span></label>
-            <input value={cfg.store_id} onChange={e => setCfg({ ...cfg, store_id: e.target.value })} placeholder="e.g. 12345" />
-          </div>
-          <div>
-            <label>API Key <span style={{ color: "var(--muted)", fontWeight: 400 }}>(shared){cfg.api_key_set && " — set, leave blank to keep current"}</span></label>
-            <input type="password" value={cfg.api_key} onChange={e => setCfg({ ...cfg, api_key: e.target.value })} placeholder={cfg.api_key_set ? "•••• (unchanged)" : "Your Lemon Squeezy API key"} />
-          </div>
-          <div>
-            <label>
-              Webhook Secret ({cfg.mode})
-              {(cfg.mode === "test" ? cfg.webhook_secret_set : cfg.live_webhook_secret_set) && <span style={{ color: "var(--muted)", fontWeight: 400 }}> — set, leave blank to keep current</span>}
-            </label>
-            {cfg.mode === "test" ? (
-              <input type="password" value={cfg.webhook_secret} onChange={e => setCfg({ ...cfg, webhook_secret: e.target.value })} placeholder={cfg.webhook_secret_set ? "•••• (unchanged)" : "test webhook signing secret"} />
-            ) : (
-              <input type="password" value={cfg.live_webhook_secret} onChange={e => setCfg({ ...cfg, live_webhook_secret: e.target.value })} placeholder={cfg.live_webhook_secret_set ? "•••• (unchanged)" : "live webhook signing secret"} />
-            )}
-          </div>
-          <div className="settings-actions">
-            <button className="primary" disabled={saving} onClick={() => save({
-              store_url: cfg.store_url,
-              store_id: cfg.store_id,
-              api_key: cfg.api_key,
-              webhook_secret: cfg.mode === "test" ? cfg.webhook_secret : undefined,
-              live_webhook_secret: cfg.mode === "live" ? cfg.live_webhook_secret : undefined,
-            })}>{saving ? "Saving…" : "Save connection"}</button>
-          </div>
-        </div>
-      )}
-
-      {tab === "plans" && cfg && (() => {
-        const prefix = cfg.mode === "live" ? "live_tier" : "tier"
-        const fieldKey = (tier: string, period: "monthly" | "yearly") => `${prefix}_${tier}_${period}` as keyof PaymentConfigForm
-        const valueOf = (tier: string, period: "monthly" | "yearly") => (cfg as any)[fieldKey(tier, period)] ?? ""
-        return (
-          <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ color: "var(--muted)", fontSize: 13 }}>
-              <strong style={{ color: "var(--text)", textTransform: "capitalize" }}>{cfg.mode}</strong> mode plans. Switch the toggle above to edit the other set.
-            </div>
-            {(["personal", "pro", "studio"] as const).map(tier => {
-              const monthlyId = valueOf(tier, "monthly")
-              const yearlyId = valueOf(tier, "yearly")
-              const details = TIER_DETAILS[tier]
-              return (
-                <div key={tier} className="plan-card">
-                  <div className="plan-head">
-                    <div>
-                      <div className="plan-name">{details.label}</div>
-                      <div className="plan-storage">{details.storage}</div>
-                    </div>
-                  </div>
-                  <div className="plan-periods">
-                    {(["monthly", "yearly"] as const).map(period => {
-                      const id = period === "monthly" ? monthlyId : yearlyId
-                      const display = period === "monthly" ? `${details.monthly}/mo` : `${details.yearly}/yr`
-                      return (
-                        <div key={period} className={`plan-period ${id ? "ok" : "missing"}`}>
-                          <div className="plan-period-head">
-                            <span className="plan-period-label">{period}</span>
-                            <span className={`plan-period-status ${id ? "ok" : "missing"}`}>
-                              {id ? "✓ Linked" : "Not linked"}
-                            </span>
-                          </div>
-                          <div className="plan-price">{display}</div>
-                          <input
-                            value={id}
-                            onChange={e => setCfg({ ...cfg, [fieldKey(tier, period)]: e.target.value } as any)}
-                            placeholder="LS variant ID"
-                            spellCheck={false}
-                          />
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )
-            })}
-            <div className="settings-actions">
-              <button className="primary" disabled={saving} onClick={() => {
-                const patch: Record<string, unknown> = {}
-                for (const t of ["personal", "pro", "studio"] as const) {
-                  patch[fieldKey(t, "monthly")] = valueOf(t, "monthly")
-                  patch[fieldKey(t, "yearly")] = valueOf(t, "yearly")
-                }
-                save(patch as Partial<PaymentConfigForm>)
-              }}>{saving ? "Saving…" : "Save plans"}</button>
-            </div>
-          </div>
-        )
-      })()}
-
-      {tab === "subscriptions" && (
-        <div style={{ marginTop: 16 }}>
-          {subs.length === 0 && <div style={{ color: "var(--muted)", fontSize: 14 }}>No active subscriptions yet.</div>}
-          <div className="admin-list">
-            {subs.map(s => (
-              <div key={s.id} className="admin-row">
-                <div className="admin-row-main">
-                  <div className="admin-row-line">
-                    <strong>@{s.username}</strong>
-                    <span className="admin-row-name">{s.email}</span>
-                    <span className="admin-pill admin-pill-owner">{s.tier}</span>
-                    {s.subscription_status && <span className="admin-pill">{s.subscription_status}</span>}
-                    {s.subscription_renews_at && <span className="admin-row-when">renews {new Date(s.subscription_renews_at).toLocaleDateString()}</span>}
-                  </div>
-                </div>
-                <div className="admin-row-actions">
-                  <select value={s.tier} onChange={e => setTier(s.id, e.target.value as any)} style={{ padding: "6px 8px", border: "1px solid var(--border)", borderRadius: 6, background: "var(--panel)", color: "var(--text)", fontSize: 12 }}>
-                    <option value="free">free</option>
-                    <option value="personal">personal</option>
-                    <option value="pro">pro</option>
-                    <option value="studio">studio</option>
-                  </select>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {tab === "events" && (
-        <div style={{ marginTop: 16 }}>
-          {events.length === 0 && <div style={{ color: "var(--muted)", fontSize: 14 }}>No webhook events yet.</div>}
-          <div className="admin-list">
-            {events.map(e => (
-              <div key={e.id} className="admin-row">
-                <div className="admin-row-main">
-                  <div className="admin-row-line">
-                    <strong>{e.event_name}</strong>
-                    <span className={`admin-pill ${e.signature_valid ? "admin-pill-used" : ""}`} style={{ background: e.signature_valid ? undefined : "var(--err-bg)", color: e.signature_valid ? undefined : "var(--err-fg)", borderColor: e.signature_valid ? undefined : "var(--err-border)" }}>
-                      {e.signature_valid ? "verified" : "bad signature"}
-                    </span>
-                    {e.user_id && <span className="admin-row-name">user #{e.user_id}</span>}
-                    {e.ls_subscription_id && <span className="admin-row-name">sub {e.ls_subscription_id}</span>}
-                    <span className="admin-row-when">{new Date(e.received_at).toLocaleString()}</span>
-                  </div>
-                  {e.error && <div className="admin-row-reason" style={{ color: "var(--danger)" }}>{e.error}</div>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </section>
   )
 }
@@ -6361,101 +5751,6 @@ const AdminStats: React.FC = () => {
   )
 }
 
-const InviteRequestForm: React.FC = () => {
-  const [email, setEmail] = useState("")
-  const [name, setName] = useState("")
-  const [reason, setReason] = useState("")
-  const [status, setStatus] = useState<"idle" | "submitting" | "success">("idle")
-  const [error, setError] = useState("")
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (status === "submitting") return
-    if (!email.trim()) { setError("Email is required"); return }
-
-    setStatus("submitting")
-    setError("")
-    try {
-      const res = await api.requestInvite({
-        email: email.trim(),
-        name: name.trim() || undefined,
-        reason: reason.trim() || undefined,
-      })
-      if (!res.ok) {
-        setError(res.error ?? "Something went wrong. Try again?")
-        setStatus("idle")
-        return
-      }
-      setStatus("success")
-    } catch {
-      setError("Network error. Try again?")
-      setStatus("idle")
-    }
-  }
-
-  if (status === "success") {
-    return (
-      <div className="lp-invite-card lp-invite-success">
-        <div className="lp-invite-check" aria-hidden="true">✓</div>
-        <h3>You're on the list</h3>
-        <p>We'll email <strong>{email}</strong> when there's space. No spam, ever.</p>
-      </div>
-    )
-  }
-
-  return (
-    <form className="lp-invite-card" onSubmit={submit}>
-      <div className="lp-invite-head">
-        <h3>Request an invite</h3>
-        <p>We'll email you when there's space.</p>
-      </div>
-
-      <label className="lp-field">
-        <span>Email</span>
-        <input
-          type="email"
-          required
-          autoComplete="email"
-          placeholder="you@example.com"
-          value={email}
-          onChange={e => setEmail(e.target.value)}
-        />
-      </label>
-
-      <label className="lp-field">
-        <span>Name <span className="lp-field-opt">(optional)</span></span>
-        <input
-          type="text"
-          autoComplete="name"
-          placeholder="What should we call you?"
-          value={name}
-          onChange={e => setName(e.target.value)}
-        />
-      </label>
-
-      <label className="lp-field">
-        <span>Why? <span className="lp-field-opt">(optional)</span></span>
-        <textarea
-          rows={3}
-          placeholder="What are you hoping to use stohr for?"
-          value={reason}
-          onChange={e => setReason(e.target.value)}
-        />
-      </label>
-
-      {error && <div className="lp-invite-error" role="alert">{error}</div>}
-
-      <button
-        type="submit"
-        className="lp-btn lp-btn-primary lp-btn-block lp-btn-lg"
-        disabled={status === "submitting"}
-      >
-        {status === "submitting" ? "Sending…" : "Request invite"}
-      </button>
-    </form>
-  )
-}
-
 const HeroMock: React.FC = () => (
   <div className="lp-mock lp-mock-hero" aria-hidden="true">
     <div className="lp-mock-chrome">
@@ -6650,13 +5945,6 @@ const FEATURES: Feature[] = [
     body: <>Flip on public access and get a clean <code>/p/you/123</code> URL anyone can browse — no signup wall, no upsells, no email capture before they see your work.</>,
     visual: <LinkMock />,
   },
-  {
-    num: "05",
-    eyebrow: "Self-host",
-    title: <>Self-host <em>or</em> hosted.</>,
-    body: <>Same code on both sides. Run it yourself on a $6 droplet with one command, or let us host it. Migrate either way whenever you want — your files are S3-compatible.</>,
-    visual: <TerminalMock />,
-  },
 ]
 
 const LandingPage: React.FC = () => {
@@ -6684,41 +5972,37 @@ const LandingPage: React.FC = () => {
 
   return (
     <div className="lp">
-      <div className="lp-banner" role="status">
-        <span className="lp-banner-pulse" aria-hidden="true" />
-        Currently in <em>beta</em> — invite only
-      </div>
       <header className="lp-nav">
         <a href="/" className="lp-brand"><Logo /></a>
         <nav className="lp-nav-links">
           <a href="#features">Features</a>
-          <a href="#pricing">Pricing</a>
-          <a href="#beta">Beta</a>
+          <a href="#self-host">Self-host</a>
           <a href="/developers">Developers</a>
           <a href="#contact">Contact</a>
           <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer">GitHub</a>
         </nav>
         <div className="lp-nav-cta">
           <a href="/login" className="lp-link">Sign in</a>
-          <a href="#beta" className="lp-btn lp-btn-primary">Get an invite</a>
+          <a href="/signup" className="lp-btn lp-btn-primary">Get started</a>
         </div>
       </header>
 
       <section className="lp-hero">
         <div className="lp-hero-text">
-          <p className="lp-eyebrow">Self-hostable cloud storage</p>
+          <p className="lp-eyebrow">Open-source cloud storage</p>
           <h1>
             Your files.<br />
             <em>Your storage.</em><br />
             Your rules.
           </h1>
           <p className="lp-lede">
-            Photo galleries, scriptable folders, public sharing — without the
-            surveillance, the upsells, or the dark patterns. Run it on a $6
-            droplet, or pay us to.
+            Photo galleries, scriptable folders, public sharing, an
+            S3-compatible API — without the surveillance, the upsells, or
+            the dark patterns. Free and open source; run it yourself on a
+            $6 droplet.
           </p>
           <div className="lp-cta-row">
-            <a href="#beta" className="lp-btn lp-btn-primary lp-btn-lg">Get on the beta list</a>
+            <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer" className="lp-btn lp-btn-primary lp-btn-lg"><Github size={16} strokeWidth={2} /> View on GitHub</a>
             <a href="#features" className="lp-btn lp-btn-ghost lp-btn-lg">See what's inside <ChevronRight size={16} strokeWidth={2} /></a>
           </div>
         </div>
@@ -6732,7 +6016,7 @@ const LandingPage: React.FC = () => {
           <Github size={16} strokeWidth={1.75} /> github.com/wess/stohr
         </a>
         <span className="lp-trust-item">Apache 2.0</span>
-        <span className="lp-trust-item">$6/mo droplet</span>
+        <span className="lp-trust-item">Self-hosted</span>
         <span className="lp-trust-item">S3-compatible</span>
         <span className="lp-trust-item">Bun · React · Postgres</span>
       </section>
@@ -6741,7 +6025,7 @@ const LandingPage: React.FC = () => {
         <header className="lp-section-head">
           <p className="lp-eyebrow">Features</p>
           <h2>Built for the way <em>you</em> store.</h2>
-          <p className="lp-section-lede">Five things that make Stohr feel different the moment you start using it.</p>
+          <p className="lp-section-lede">Four things that make Stohr feel different the moment you start using it.</p>
         </header>
 
         <div className="lp-feature-rows">
@@ -6763,103 +6047,57 @@ const LandingPage: React.FC = () => {
         </div>
       </section>
 
-      <section className="lp-beta" id="beta">
-        <div className="lp-beta-text">
-          <p className="lp-eyebrow">Beta · invite only</p>
-          <h2>Get on the <em>list</em>.</h2>
-          <p className="lp-section-lede">
-            We're rolling access out in waves so we can support every account
-            properly. No spam, no marketing emails — we'll write once when
-            there's space.
-          </p>
-          <ul className="lp-beta-points">
-            <li><Check size={14} strokeWidth={2.5} /> Free tier on day one</li>
-            <li><Check size={14} strokeWidth={2.5} /> Migrate out anytime — files are S3-compatible</li>
-            <li><Check size={14} strokeWidth={2.5} /> Self-host stays open source forever</li>
-          </ul>
-        </div>
-        <div className="lp-beta-form">
-          <InviteRequestForm />
-        </div>
-      </section>
-
-      <section className="lp-pricing" id="pricing">
+      <section className="lp-features" id="self-host">
         <header className="lp-section-head">
-          <p className="lp-eyebrow">Pricing</p>
-          <h2>Pay for storage. <em>Not features.</em></h2>
-          <p className="lp-section-lede">Every plan includes everything you saw above. The only thing that changes between tiers is how much room you get.</p>
+          <p className="lp-eyebrow">Self-host</p>
+          <h2>Yours to <em>run</em>.</h2>
+          <p className="lp-section-lede">
+            One command brings up the API and the web app. Postgres for
+            metadata, any S3-compatible bucket — or local disk — for the
+            bytes. Apache 2.0, no telemetry, no accounts but the ones you
+            create.
+          </p>
         </header>
 
-        <div className="lp-tiers">
-          <article className="lp-tier">
-            <header className="lp-tier-head">Free</header>
-            <div className="lp-price"><span className="lp-amount">$0</span></div>
-            <div className="lp-storage">5 GB</div>
-            <a href="#beta" className="lp-btn lp-btn-ghost lp-btn-block">Start free</a>
-            <ul>
-              <li>Photo galleries</li>
-              <li>Action folders</li>
-              <li>Public sharing</li>
-            </ul>
-          </article>
-
-          <article className="lp-tier">
-            <header className="lp-tier-head">Personal</header>
-            <div className="lp-price"><span className="lp-amount">$6</span><span className="lp-period">/mo</span></div>
-            <div className="lp-storage">50 GB</div>
-            <a href="#beta" className="lp-btn lp-btn-primary lp-btn-block">Choose Personal</a>
-            <ul>
-              <li>Everything in Free</li>
-              <li>Unlimited collaborators</li>
-              <li>Version history</li>
-            </ul>
-          </article>
-
-          <article className="lp-tier lp-tier-pop">
-            <header className="lp-tier-head">Pro <span className="lp-pop">popular</span></header>
-            <div className="lp-price"><span className="lp-amount">$14</span><span className="lp-period">/mo</span></div>
-            <div className="lp-storage">250 GB</div>
-            <a href="#beta" className="lp-btn lp-btn-primary lp-btn-block">Choose Pro</a>
-            <ul>
-              <li>Everything in Personal</li>
-              <li>Custom domains <em>(soon)</em></li>
-              <li>Priority support</li>
-            </ul>
-          </article>
-
-          <article className="lp-tier">
-            <header className="lp-tier-head">Studio</header>
-            <div className="lp-price"><span className="lp-amount">$34</span><span className="lp-period">/mo</span></div>
-            <div className="lp-storage">1 TB</div>
-            <a href="#beta" className="lp-btn lp-btn-primary lp-btn-block">Choose Studio</a>
-            <ul>
-              <li>Everything in Pro</li>
-              <li>API access</li>
-              <li>Direct line for issues</li>
-            </ul>
+        <div className="lp-feature-rows">
+          <article className="lp-feature-row">
+            <div className="lp-feature-text">
+              <div className="lp-feature-tag">
+                <span className="lp-feature-eyebrow">Quick start</span>
+              </div>
+              <h3>Up in three commands.</h3>
+              <p>
+                Clone the repo, copy <code>.env.example</code>, run{" "}
+                <code>bun run dev</code>. The first account you create becomes
+                the owner; everyone after is invite-only. Ship it to a droplet
+                with the included <code>compose.yaml</code> and Caddy config.
+              </p>
+              <div className="lp-cta-row">
+                <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer" className="lp-btn lp-btn-primary lp-btn-lg"><Github size={16} strokeWidth={2} /> Get the source</a>
+                <a href="https://github.com/wess/stohr/tree/main/docs" target="_blank" rel="noreferrer" className="lp-btn lp-btn-ghost lp-btn-lg">Read the docs <ChevronRight size={16} strokeWidth={2} /></a>
+              </div>
+            </div>
+            <div className="lp-feature-vis">
+              <TerminalMock />
+            </div>
           </article>
         </div>
-
-        <p className="lp-pricing-foot">
-          Yearly: $60 / $140 / $340 — saves two months. Cancel anytime. <strong>Self-host stays free, forever.</strong>
-        </p>
       </section>
 
       <footer className="lp-footer">
         <div className="lp-footer-brand">
           <Logo />
-          <span>Self-hostable cloud storage.</span>
+          <span>Open-source cloud storage.</span>
         </div>
         <div className="lp-footer-cols">
           <div>
             <h4>Product</h4>
             <a href="#features">Features</a>
-            <a href="#pricing">Pricing</a>
-            <a href="#beta">Beta access</a>
+            <a href="#self-host">Self-host</a>
+            <a href="/developers">Developers</a>
           </div>
           <div>
             <h4>Open source</h4>
-            <a href="/developers">Developers</a>
             <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer">GitHub</a>
             <a href="https://github.com/wess/stohr/blob/main/LICENSE" target="_blank" rel="noreferrer">Apache 2.0</a>
             <a href="https://github.com/wess/stohr/tree/main/docs" target="_blank" rel="noreferrer">Docs</a>
@@ -6867,7 +6105,7 @@ const LandingPage: React.FC = () => {
           <div>
             <h4>Account</h4>
             <a href="/login">Sign in</a>
-            <a href="#beta">Request invite</a>
+            <a href="/signup">Create account</a>
             <a href="#contact">Contact us</a>
           </div>
         </div>
@@ -7110,13 +6348,13 @@ const folders = await r.json()`}</CodeBlock>
             </thead>
             <tbody>
               <tr><td><code>/auth</code></td><td><code>POST /signup</code>, <code>POST /login</code>, <code>POST /login/mfa</code>, <code>/login/passkey/*</code>, <code>/password/forgot</code></td></tr>
-              <tr><td><code>/me</code></td><td>profile, sessions, MFA, passkeys, PATs, S3 keys, subscription, OAuth apps</td></tr>
+              <tr><td><code>/me</code></td><td>profile, sessions, MFA, passkeys, PATs, S3 keys, storage usage, OAuth apps</td></tr>
               <tr><td><code>/folders</code></td><td>list, CRUD, soft-delete, restore, purge, collaborators, action attachments</td></tr>
               <tr><td><code>/files</code></td><td>list/search, multipart upload, download, thumbnails, versions, collaborators</td></tr>
               <tr><td><code>/shares</code></td><td>create / list / revoke; public read at <code>/s/:token</code> (no auth)</td></tr>
               <tr><td><code>/invites</code></td><td>mint / list / revoke; public check at <code>/invites/:token/check</code></td></tr>
               <tr><td><code>/oauth</code></td><td>authorize / token / revoke / device flow / discovery</td></tr>
-              <tr><td><code>/admin</code></td><td>owner-only: users, payments, audit, OAuth clients</td></tr>
+              <tr><td><code>/admin</code></td><td>owner-only: users, invites, audit, OAuth clients</td></tr>
               <tr><td><code>/p</code></td><td>public folders &amp; files (no auth)</td></tr>
               <tr><td><code>/s3</code></td><td>S3-compatible bucket — see <a href="https://github.com/wess/stohr/blob/main/docs/S3.md" target="_blank" rel="noreferrer">S3.md</a></td></tr>
             </tbody>
@@ -7231,10 +6469,6 @@ const folders = await r.json()`}</CodeBlock>
           <a className="devp-card devp-card-link" href="https://github.com/wess/stohr/blob/main/docs/S3.md" target="_blank" rel="noreferrer">
             <h3>S3-compatible API</h3>
             <p>Point <code>aws-cli</code>, <code>boto3</code>, <code>rclone</code> at Stohr; reuse your account quota.</p>
-          </a>
-          <a className="devp-card devp-card-link" href="https://github.com/wess/stohr/blob/main/docs/PAYMENTS.md" target="_blank" rel="noreferrer">
-            <h3>Payments</h3>
-            <p>Lemon Squeezy auto-setup, tier wiring, webhook handling.</p>
           </a>
           <a className="devp-card devp-card-link" href="https://github.com/wess/stohr/blob/main/SECURITY.md" target="_blank" rel="noreferrer">
             <h3>Security model</h3>

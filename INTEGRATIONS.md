@@ -87,7 +87,7 @@ Implementation notes: pdf.js in the browser is the cheapest path for PDF preview
 | Version history | ✓ | ✓ | **have** | — |
 | Soft-delete trash | ✓ | ✓ | **have** | — |
 | Auto-purge trash after N days | ✓ | ✓ | **missing** | P1 |
-| Per-user storage quotas | ✓ | ✓ | **have** (per-tier `storage_quota_bytes`; enforced at upload; over-quota → `402` with structured body) | — |
+| Per-user storage quotas | ✓ | ✓ | **have** (owner-set per-user `storage_quota_bytes` cap (0 = unlimited); enforced at upload; over-quota → `402` with structured body) | — |
 | Chunked / resumable uploads | ✓ | ✓ | **missing** | P0 |
 | Deduplication (content-addressed storage) | ✓ | ✓ | **missing** | P2 |
 | Server-side encryption at rest (KMS) | ✓ | ✓ | **partial** (depends on S3 backend config — see [SECURITY.md](SECURITY.md)) | P1 |
@@ -129,7 +129,7 @@ Implementation notes: PATs and OAuth are already shipped, so Zapier/n8n/Make all
 | Hashed-at-rest invites and reset tokens | ✓ | ✓ | **have** (SHA-256 only; plaintext returned once at creation) | — |
 | Inline file XSS protection | — | — | **have** (MIME allowlist for `?inline=1`; SVG, HTML, XML force download as `application/octet-stream`) | — |
 | Trusted-proxy IP handling | — | — | **have** (`TRUSTED_PROXIES` env; XFF only honored from configured CIDRs) | — |
-| Admin console (user mgmt, org settings) | ✓ | ✓ | **have** (Admin panel: users, invites, payments, audit, OAuth clients, stats) | — |
+| Admin console (user mgmt, org settings) | ✓ | ✓ | **have** (Admin panel: users, invites, audit, OAuth clients, stats) | — |
 | Security headers (HSTS, COOP/CORP, etc.) | ✓ | ✓ | **have** (set on every response by `withSecurityHeaders`) | — |
 | DLP (data loss prevention) rules | ✓ | ✓ | **missing** | P2 |
 | Retention policies / legal hold | ✓ | ✓ | **missing** | P2 |

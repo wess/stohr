@@ -109,7 +109,7 @@ A periodic sweep (guarded against overlap) deletes expired share rows hourly; la
 
 ## Invite tokens
 
-Invites are stored as SHA-256 hashes (migration 00000032). The plaintext appears only in the response to `POST /invites` (or `POST /admin/invite-requests/:id/invite`) and in the email Stohr sends to the recipient. List/admin views show metadata but never the token.
+Invites are stored as SHA-256 hashes (migration 00000032). The plaintext appears only in the response to `POST /invites` and in the email Stohr sends to the recipient. List/admin views show metadata but never the token.
 
 This means a Postgres dump or read-replica leak does not yield usable invite codes.
 

@@ -87,7 +87,7 @@ public actor StohrClient {
     // ── me ────────────────────────────────────────────
 
     public func me() async throws -> User { try await send("GET", "me", expecting: User.self) }
-    public func subscription() async throws -> Subscription { try await send("GET", "me/subscription", expecting: Subscription.self) }
+    public func usage() async throws -> Usage { try await send("GET", "me/usage", expecting: Usage.self) }
 
     // ── folders ───────────────────────────────────────
 

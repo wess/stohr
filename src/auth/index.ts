@@ -8,7 +8,6 @@ import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
 import { logEvent } from "../security/audit.ts"
 import { verifyTotp } from "../security/totp.ts"
 import { issueSession } from "../security/sessions.ts"
-import { quotaFor } from "../payments/quotas.ts"
 
 type UserRow = {
   id: number
@@ -162,11 +161,9 @@ export const authRoutes = (db: Connection, secret: string) => {
       if (usernameTaken) return json(c, 409, { error: "Username already in use" })
 
       const hashed = await hash(password)
-      // Owner runs the instance and pays for the storage directly — no cap.
-      // Invited beta users get the Personal tier so they have realistic room
-      // while still being capped.
-      const tier = isFirstUser ? "free" : "personal"
-      const quota = isFirstUser ? 0 : quotaFor(tier)
+      // New accounts have no storage cap (storage_quota_bytes defaults to 0,
+      // meaning unlimited). The owner can set a per-user cap from
+      // Admin → Users if they want one.
       const inserted = await db.execute(
         from("users")
           .insert({
@@ -175,8 +172,6 @@ export const authRoutes = (db: Connection, secret: string) => {
             username,
             password: hashed,
             is_owner: isFirstUser,
-            tier,
-            storage_quota_bytes: quota,
           })
           .returning("id", "email", "username", "name", "is_owner"),
       ) as Array<AuthUser>

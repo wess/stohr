@@ -25,7 +25,7 @@ auth     login(identity, password)            → { token, user }
 
 me       get()                                → User
          update(patch)                        → User
-         subscription()                       → Subscription
+         usage()                              → Usage
          changePassword(current, next)
 
 folders  list(parentId?)                      → Folder[]

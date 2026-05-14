@@ -62,6 +62,18 @@ class ClientTest {
     }
 
     @Test
+    fun usageReturnsStorageUsage() = runTest {
+        val engine = jsonEngine(
+            HttpStatusCode.OK,
+            """{"quota_bytes":0,"used_bytes":1234,"active_bytes":1000,"trash_bytes":200,"version_bytes":34}"""
+        )
+        val client = StohrClient(baseUrl = "https://test.local/api", token = "t", engine = engine)
+        val usage = client.usage()
+        assertEquals(0, usage.quotaBytes)
+        assertEquals(1234, usage.usedBytes)
+    }
+
+    @Test
     fun createS3Key() = runTest {
         val engine = jsonEngine(
             HttpStatusCode.OK,

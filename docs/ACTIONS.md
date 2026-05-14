@@ -107,7 +107,7 @@ Built-ins trust the host fully. The `permissions` array is metadata for future t
 
 Configuring (create / edit / delete) a folder's actions requires **owner** role on the folder. Listing actions and runs is allowed for any role with read access.
 
-Actions themselves run as the folder owner — file writes, quota usage, and storage keys all bill to the owner, not the user who triggered the event.
+Actions themselves run as the folder owner — file writes, quota usage, and storage keys are all attributed to the owner, not the user who triggered the event.
 
 ## API reference
 

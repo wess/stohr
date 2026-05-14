@@ -5,15 +5,14 @@ In-depth guides for installing, deploying, and integrating with Stohr.
 ## Guides
 
 - [**Architecture**](ARCHITECTURE.md) — what's in the box, how the pieces fit together, request lifecycle
-- [**Configuration**](CONFIGURATION.md) — every environment variable, email/WebAuthn setup, the `payment_config` row, runtime settings
+- [**Configuration**](CONFIGURATION.md) — every environment variable, email/WebAuthn setup, runtime settings
 - [**Deploy**](DEPLOY.md) — turn-key Droplet deploy, App Platform alternative, manual setup, post-deploy verification, troubleshooting, backups, rollback
 - [**REST API**](API.md) — every endpoint, grouped by resource; error codes, rate-limit responses, OAuth scopes
 - [**OAuth 2.0**](OAUTH.md) — Authorization Code + PKCE and Device Authorization Grant for third-party apps
 - [**Action folders**](ACTIONS.md) — folders that run actions on file/folder events; how to write a built-in
 - [**S3-compatible endpoints**](S3.md) — using Stohr with `aws-cli`, `boto3`, or any AWS SDK
 - [**SDKs**](SDKS.md) — TypeScript / Dart / Swift / Kotlin client libraries
-- [**Admin panel**](ADMIN.md) — owner-only operations: invite requests, users, payments, audit, OAuth clients
-- [**Payments**](PAYMENTS.md) — Lemon Squeezy setup, tier pricing, webhooks
+- [**Admin panel**](ADMIN.md) — owner-only operations: users, invites, audit, OAuth clients
 
 Cross-cutting:
 

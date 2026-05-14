@@ -76,20 +76,19 @@ public struct Share: Codable, Sendable {
     }
 }
 
-public struct Subscription: Codable, Sendable {
-    public let tier: String
+public struct Usage: Codable, Sendable {
     public let quotaBytes: Int
     public let usedBytes: Int
-    public let status: String?
-    public let renewsAt: String?
-    public let hasSubscription: Bool
+    public let activeBytes: Int
+    public let trashBytes: Int
+    public let versionBytes: Int
 
     enum CodingKeys: String, CodingKey {
-        case tier, status
         case quotaBytes = "quota_bytes"
         case usedBytes = "used_bytes"
-        case renewsAt = "renews_at"
-        case hasSubscription = "has_subscription"
+        case activeBytes = "active_bytes"
+        case trashBytes = "trash_bytes"
+        case versionBytes = "version_bytes"
     }
 }
 

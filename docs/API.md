@@ -106,15 +106,11 @@ PATs (`stohr_pat_…`) are long-lived bearer tokens for SDKs and native apps. Th
 | `POST` | `/me/apps` | `{ name, description? }` | `{ id, name, description, token_prefix, token, last_used_at, created_at }` |
 | `DELETE` | `/me/apps/:id` | — | `{ revoked }` |
 
-## Subscription / payments (auth required)
+## Storage usage (auth required)
 
 | method | path | body | returns |
 | --- | --- | --- | --- |
-| `GET` | `/payments/plans` | — | public tier + price list |
-| `GET` | `/me/subscription` | — | tier, quota, usage, renews_at |
-| `POST` | `/me/checkout?tier=&period=` | — | `{ checkout_url }` (Lemon Squeezy hosted) |
-
-`POST /lemonsqueezy/webhook` is the inbound webhook (HMAC-verified, no auth header).
+| `GET` | `/me/usage` | — | storage usage + the per-user cap: `{ quota_bytes, used_bytes, active_bytes, trash_bytes, version_bytes }` (`quota_bytes: 0` = unlimited) |
 
 ## S3 access keys (auth required)
 
@@ -160,7 +156,7 @@ See [S3.md](S3.md) for using the keys.
 | `DELETE` | `/files/:id/versions/:v` | delete archived |
 | `GET/POST/DELETE` | `/files/:id/collaborators[/:cid]` | collaborator CRUD |
 
-Re-uploading to the same `(folder, name)` archives the previous live version and increments `version`. Upload returns `402` if the new size would exceed the user's tier quota.
+Re-uploading to the same `(folder, name)` archives the previous live version and increments `version`. Upload returns `402` if the new size would exceed the user's storage quota.
 
 ## Shares (auth required, except the `/s/:token` reads)
 
@@ -226,10 +222,6 @@ If `identity` is an email and no user has it, the response includes `invite_toke
 
 Tokens are stored as SHA-256 hashes; the plaintext is only ever returned in the response to the create call. List/admin views show metadata only.
 
-## Invite requests (public)
-
-`POST /invite-requests` with `{ email, name?, reason? }` — adds to the waitlist visible in Admin → Requests.
-
 ## Action folders
 
 See [ACTIONS.md](ACTIONS.md) for the model, event list, and how to write a built-in.
@@ -270,22 +262,14 @@ All `/admin/*` routes require `auth.is_owner === true`.
 
 | method | path | notes |
 | --- | --- | --- |
-| `GET` | `/admin/invite-requests?status=` | list (`pending`/`invited`/`dismissed`) |
-| `POST` | `/admin/invite-requests/:id/invite` | mint email-bound invite |
-| `POST` | `/admin/invite-requests/:id/dismiss` | mark dismissed |
-| `DELETE` | `/admin/invite-requests/:id` | hard delete |
 | `GET` | `/admin/users` | all users + storage usage |
 | `POST` | `/admin/users/:id/owner` | toggle is_owner |
+| `POST` | `/admin/users/:id/quota` | set a per-user storage cap in bytes (0 = unlimited) |
 | `DELETE` | `/admin/users/:id` | delete user (cascades) |
 | `GET` | `/admin/invites?filter=` | system-wide invite list (`unused`/`used`/`all`) |
 | `DELETE` | `/admin/invites/:id` | revoke unused |
 | `GET` | `/admin/stats` | aggregate counts |
 | `GET` | `/admin/audit?event=&user_id=&limit=` | audit event log (max 500 per call) |
-| `GET/PUT` | `/admin/payments/config` | LS connection + plan IDs |
-| `POST` | `/admin/payments/autosetup` | auto-detect store/products/variants |
-| `GET` | `/admin/payments/subscriptions` | active subs |
-| `POST` | `/admin/payments/users/:id/tier` | manual tier override |
-| `GET` | `/admin/payments/events` | webhook event log |
 | `GET` | `/admin/oauth/clients` | registered OAuth apps |
 | `POST` | `/admin/oauth/clients` | register a new client (returns `client_secret` once if confidential) |
 | `PATCH` | `/admin/oauth/clients/:id` | edit name / redirect URIs / scopes / `is_official` |

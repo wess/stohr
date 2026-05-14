@@ -10,7 +10,7 @@ import {
 import { drop, fetchObject, makeKey, put as putStorage } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { normalizeUsername } from "../util/username.ts"
-import { checkQuota } from "../payments/usage.ts"
+import { checkQuota } from "../usage/index.ts"
 import { fireEvent } from "../actions/dispatch.ts"
 import type { FileRow, FolderRow } from "../permissions/index.ts"
 

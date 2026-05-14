@@ -1,18 +1,42 @@
+# Keep the build context small — only package.json, bun.lock, libs/, src/,
+# migrations/ and tsconfig.json are actually COPY'd into the image.
+
+# VCS + local
 .git
 .gitignore
-node_modules
+.DS_Store
+*.log
+
+# Secrets — never bake these into an image
 .env
 .env.local
 .env.*
-.DS_Store
-*.log
+
+# Installed deps (the image installs its own)
+node_modules
+
+# Not needed at runtime
 tests/
 docs/
 sdks/
-apps/desktop/
-apps/mobile/
+apps/
+scripts/
+biome.json
+
+# Deploy / tooling files (not part of the app)
+Dockerfile
+.dockerignore
+compose.yaml
+caddyfile
+.do/
+.omc/
+.remember/
+.claude/
+
+# Docs / meta
 README.md
 SECURITY.md
 INTEGRATIONS.md
-biome.json
-scripts/
+CLAUDE.md
+LICENSE
+NOTICE

@@ -36,7 +36,6 @@ const TABLES = [
   "audit_events",
   "rate_limits",
   "sessions",
-  "lemonsqueezy_events",
   "s3_access_keys",
   "apps",
   "shares",
@@ -45,8 +44,6 @@ const TABLES = [
   "folders",
   "collaborations",
   "invites",
-  "invite_requests",
-  "payment_config",
   "users",
 ]
 

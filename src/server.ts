@@ -14,9 +14,7 @@ import { searchRoutes } from "./search/index.ts"
 import { inviteRoutes } from "./invites/index.ts"
 import { collabRoutes } from "./collabs/index.ts"
 import { publicRoutes } from "./public/index.ts"
-import { waitlistRoutes } from "./waitlist/index.ts"
 import { adminRoutes } from "./admin/index.ts"
-import { paymentsRoutes } from "./payments/index.ts"
 import { s3KeyRoutes } from "./s3keys/index.ts"
 import { s3Routes } from "./s3/index.ts"
 import { appRoutes } from "./apps/index.ts"
@@ -94,10 +92,8 @@ const fetch = router(
   ...inviteRoutes(db, config.secret),
   ...collabRoutes(db, config.secret, emailer, config.appUrl),
   ...publicRoutes(db, config.secret, store),
-  ...waitlistRoutes(db),
   ...contactRoutes(db, config.secret),
-  ...adminRoutes(db, config.secret, emailer, config.appUrl),
-  ...paymentsRoutes(db, config.secret),
+  ...adminRoutes(db, config.secret),
   ...s3KeyRoutes(db, config.secret),
   ...s3Routes(db, store),
   ...appRoutes(db, config.secret),

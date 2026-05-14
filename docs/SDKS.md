@@ -15,7 +15,7 @@ All SDKs expose the same operations:
 
 ```
 auth        login, signup
-me          get, update, subscription, changePassword
+me          get, update, usage, changePassword
 folders     list, get, create, rename, move, delete
 files       list, get, upload, download, thumbnail, rename, move, delete, versions
 shares      list, create, delete

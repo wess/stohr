@@ -125,12 +125,14 @@ describe("shares + collaborators", () => {
   })
 })
 
-describe("subscription + s3 keys", () => {
-  test("subscription returns usage", async () => {
-    const { fn } = mockFetch([{ body: { tier: "pro", quota_bytes: 268435456000, used_bytes: 1024, status: "active", renews_at: "n", has_subscription: true } }])
+describe("usage + s3 keys", () => {
+  test("usage returns storage usage", async () => {
+    const { fn, calls } = mockFetch([{ body: { quota_bytes: 0, used_bytes: 1234, active_bytes: 1000, trash_bytes: 200, version_bytes: 34 } }])
     const c = createClient({ baseUrl: "https://test.local/api", fetch: fn, token: "t" })
-    const sub = await c.me.subscription()
-    expect(sub.tier).toBe("pro")
+    const usage = await c.me.usage()
+    expect(calls[0]!.url).toBe("https://test.local/api/me/usage")
+    expect(usage.quota_bytes).toBe(0)
+    expect(usage.used_bytes).toBe(1234)
   })
 
   test("create s3 key returns secret", async () => {

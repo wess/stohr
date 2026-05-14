@@ -103,8 +103,8 @@ class StohrClient {
   // ── me ──────────────────────────────────────────────
 
   Future<User> me() async => User.fromJson(await _json('GET', '/me') as Map<String, dynamic>);
-  Future<Subscription> subscription() async =>
-      Subscription.fromJson(await _json('GET', '/me/subscription') as Map<String, dynamic>);
+  Future<Usage> usage() async =>
+      Usage.fromJson(await _json('GET', '/me/usage') as Map<String, dynamic>);
 
   // ── folders ─────────────────────────────────────────
 

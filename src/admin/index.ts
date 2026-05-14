@@ -2,130 +2,22 @@ import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
-import { randomToken, sha256Hex } from "../util/token.ts"
-import type { Emailer } from "../email/index.ts"
-import { inviteEmail } from "../email/templates/invite.ts"
 import { ownerOnly } from "../security/owner.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
-type InviteRequest = {
-  id: number
-  email: string
-  name: string | null
-  reason: string | null
-  status: string
-  processed_at: string | null
-  processed_by: number | null
-  created_at: string
-}
-
-export const adminRoutes = (db: Connection, secret: string, emailer: Emailer, appUrl: string) => {
+export const adminRoutes = (db: Connection, secret: string) => {
   const ownerCheck = ownerOnly(db)
   const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck)
   const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)
 
   return [
-    get("/admin/invite-requests", guard(async (c) => {
-      const url = new URL(c.request.url)
-      const status = url.searchParams.get("status") ?? "pending"
-      const rows = await db.all(
-        from("invite_requests")
-          .where(q => status === "all" ? q("id").isNotNull() : q("status").equals(status))
-          .orderBy("created_at", "DESC")
-          .limit(200),
-      )
-      return json(c, 200, rows)
-    })),
-
-    post("/admin/invite-requests/:id/invite", authed(async (c) => {
-      const userId = authId(c)
-      const id = Number(c.params.id)
-      const row = await db.one(
-        from("invite_requests").where(q => q("id").equals(id)),
-      ) as InviteRequest | null
-      if (!row) return json(c, 404, { error: "Request not found" })
-      if (row.status !== "pending") return json(c, 409, { error: `Already ${row.status}` })
-
-      // Always issue a fresh invite token here. We can no longer reuse a
-      // pre-existing unused invite for the same email because the plaintext
-      // is not stored — only its hash. Issuing a new one supersedes the old
-      // (older invites for the same email remain valid until used or revoked,
-      // but the user is emailed only the fresh one).
-      const inviteToken = randomToken()
-      await db.execute(
-        from("invites").insert({
-          token_hash: sha256Hex(inviteToken),
-          email: row.email,
-          invited_by: userId,
-        }),
-      )
-
-      await db.execute(
-        from("invite_requests").where(q => q("id").equals(id)).update({
-          status: "invited",
-          processed_at: raw("NOW()"),
-          processed_by: userId,
-        }),
-      )
-
-      const inviter = await db.one(
-        from("users").where(q => q("id").equals(userId)).select("name", "username"),
-      ) as { name: string; username: string } | null
-      const signupUrl = `${appUrl.replace(/\/$/, "")}/signup?invite=${encodeURIComponent(inviteToken)}`
-      const tpl = inviteEmail({
-        inviterName: inviter?.name ?? inviter?.username ?? null,
-        email: row.email,
-        signupUrl,
-        note: row.reason,
-      })
-      const sendRes = await emailer.send({
-        to: row.email,
-        subject: tpl.subject,
-        html: tpl.html,
-        text: tpl.text,
-      })
-
-      return json(c, 200, {
-        id,
-        invite_token: inviteToken,
-        email: row.email,
-        email_sent: sendRes.ok,
-        email_error: sendRes.ok ? undefined : sendRes.error,
-      })
-    })),
-
-    post("/admin/invite-requests/:id/dismiss", guard(async (c) => {
-      const userId = authId(c)
-      const id = Number(c.params.id)
-      const row = await db.one(
-        from("invite_requests").where(q => q("id").equals(id)),
-      ) as InviteRequest | null
-      if (!row) return json(c, 404, { error: "Request not found" })
-      if (row.status !== "pending") return json(c, 409, { error: `Already ${row.status}` })
-
-      await db.execute(
-        from("invite_requests").where(q => q("id").equals(id)).update({
-          status: "dismissed",
-          processed_at: raw("NOW()"),
-          processed_by: userId,
-        }),
-      )
-      return json(c, 200, { dismissed: id })
-    })),
-
-    del("/admin/invite-requests/:id", guard(async (c) => {
-      const id = Number(c.params.id)
-      await db.execute(from("invite_requests").where(q => q("id").equals(id)).del())
-      return json(c, 200, { deleted: id })
-    })),
-
     get("/admin/users", guard(async (c) => {
       const users = await db.all(
         from("users")
-          .select("id", "username", "email", "name", "is_owner", "created_at")
+          .select("id", "username", "email", "name", "is_owner", "storage_quota_bytes", "created_at")
           .orderBy("created_at", "DESC"),
-      ) as Array<{ id: number; username: string; email: string; name: string; is_owner: boolean; created_at: string }>
+      ) as Array<{ id: number; username: string; email: string; name: string; is_owner: boolean; storage_quota_bytes: number | string; created_at: string }>
 
       const files = await db.all(
         from("files")
@@ -141,6 +33,7 @@ export const adminRoutes = (db: Connection, secret: string, emailer: Emailer, ap
 
       return json(c, 200, users.map(u => ({
         ...u,
+        storage_quota_bytes: Number(u.storage_quota_bytes),
         storage_bytes: usage.get(u.id)?.bytes ?? 0,
         file_count: usage.get(u.id)?.files ?? 0,
       })))
@@ -157,6 +50,26 @@ export const adminRoutes = (db: Connection, secret: string, emailer: Emailer, ap
         from("users").where(q => q("id").equals(id)).update({ is_owner: body.is_owner }),
       )
       return json(c, 200, { id, is_owner: body.is_owner })
+    })),
+
+    // Set a per-user storage cap in bytes. 0 means unlimited. This is the
+    // only knob — there are no tiers; the owner caps individual accounts.
+    post("/admin/users/:id/quota", authed(async (c) => {
+      const id = Number(c.params.id)
+      const body = c.body as { quota_bytes?: number; quotaBytes?: number }
+      const requested = body.quota_bytes ?? body.quotaBytes
+      if (typeof requested !== "number" || !Number.isFinite(requested) || requested < 0) {
+        return json(c, 422, { error: "quota_bytes must be a non-negative number (0 = unlimited)" })
+      }
+      const quota = Math.floor(requested)
+      const exists = await db.one(
+        from("users").where(q => q("id").equals(id)).select("id"),
+      ) as { id: number } | null
+      if (!exists) return json(c, 404, { error: "User not found" })
+      await db.execute(
+        from("users").where(q => q("id").equals(id)).update({ storage_quota_bytes: quota }),
+      )
+      return json(c, 200, { id, quota_bytes: quota })
     })),
 
     del("/admin/users/:id", guard(async (c) => {
@@ -216,9 +129,6 @@ export const adminRoutes = (db: Connection, secret: string, emailer: Emailer, ap
       const folders = await db.all(from("folders").where(q => q("deleted_at").isNull()).select("id")) as Array<{ id: number }>
       const files = await db.all(from("files").where(q => q("deleted_at").isNull()).select("size")) as Array<{ size: number | string }>
       const invitesAll = await db.all(from("invites").select("id", "used_at")) as Array<{ id: number; used_at: string | null }>
-      const requestsPending = await db.all(
-        from("invite_requests").where(q => q("status").equals("pending")).select("id"),
-      ) as Array<{ id: number }>
 
       const totalBytes = files.reduce((acc, f) => acc + Number(f.size), 0)
       const invitesUsed = invitesAll.filter(i => i.used_at).length
@@ -231,7 +141,6 @@ export const adminRoutes = (db: Connection, secret: string, emailer: Emailer, ap
         invites_total: invitesAll.length,
         invites_used: invitesUsed,
         invites_unused: invitesAll.length - invitesUsed,
-        requests_pending: requestsPending.length,
       })
     })),
 

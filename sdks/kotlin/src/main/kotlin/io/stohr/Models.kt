@@ -54,13 +54,12 @@ data class Share(
 )
 
 @Serializable
-data class Subscription(
-    val tier: String,
+data class Usage(
     @SerialName("quota_bytes") val quotaBytes: Long,
     @SerialName("used_bytes") val usedBytes: Long,
-    val status: String? = null,
-    @SerialName("renews_at") val renewsAt: String? = null,
-    @SerialName("has_subscription") val hasSubscription: Boolean = false,
+    @SerialName("active_bytes") val activeBytes: Long,
+    @SerialName("trash_bytes") val trashBytes: Long,
+    @SerialName("version_bytes") val versionBytes: Long,
 )
 
 @Serializable

@@ -103,6 +103,46 @@ The repo also includes `Dockerfile` + `.do/app.yaml` for App Platform. Trade-off
 # Add a Spaces bucket + key in Spaces dashboard, paste env vars in App Platform UI
 ```
 
+## Single-container Docker
+
+The `Dockerfile` builds one image that runs the API and the SPA web server together (via `src/start.ts`). The web server proxies `/api/*` to the API internally, so you only publish one port — handy for a PaaS that runs a single container, or any host where you'd rather skip Compose.
+
+You bring your own **Postgres**, and — if you want HTTPS — your own TLS terminator (this image has no Caddy). Migrations run automatically on API startup.
+
+```sh
+# The libs/atlas submodule must be checked out before building.
+git submodule update --init
+docker build -t stohr .
+
+docker run -d --name stohr -p 80:3001 \
+  -e SECRET="$(openssl rand -hex 32)" \
+  -e DATABASE_URL=postgres://user:pass@host:5432/stohr \
+  -e APP_URL=https://files.example.com \
+  -e RP_ID=files.example.com \
+  -e RP_ORIGIN=https://files.example.com \
+  -e STORAGE_DRIVER=s3 \
+  -e S3_ENDPOINT=… -e S3_BUCKET=… -e S3_REGION=… \
+  -e S3_ACCESS_KEY=… -e S3_SECRET_KEY=… \
+  -e RESEND_API_KEY=re_… -e RESEND_FROM='Stohr <noreply@files.example.com>' \
+  stohr
+```
+
+For disk-backed storage instead of S3, swap the `S3_*` vars for a mounted volume:
+
+```sh
+  -e STORAGE_DRIVER=local -v stohr-blobs:/data/blobs \
+```
+
+`NODE_ENV=production`, `PORT`, `WEB_PORT`, `API_URL`, and `STORAGE_LOCAL_DIR` are already baked into the image — you don't pass them. Put a reverse proxy (Caddy, nginx, your PaaS edge) in front for TLS, point it at `:3001`, and set `TRUSTED_PROXIES` to that proxy's address so `X-Forwarded-For` is honored. The container ships a `HEALTHCHECK` that hits `GET /api/setup` through the web proxy.
+
+Update by rebuilding and recreating:
+
+```sh
+git pull && git submodule update --init
+docker build -t stohr .
+docker rm -f stohr && docker run -d --name stohr … stohr
+```
+
 ## Manual / docker-compose
 
 `compose.yaml` defines `postgres + api + web + caddy`. On any host with Docker:

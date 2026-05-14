@@ -13,6 +13,6 @@ export type {
   ResourceKind,
   S3AccessKey,
   Share,
-  Subscription,
+  Usage,
   User,
 } from "./types.ts"

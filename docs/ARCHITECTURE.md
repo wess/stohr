@@ -24,13 +24,15 @@ A high-level walk-through of what's running and how it fits together.
                             └─────────────┘
 ```
 
-In production droplets, `compose.yaml` runs all four locally on the same host. In App Platform, Caddy is replaced by DO's edge.
+In production droplets, `compose.yaml` runs all four locally on the same host. In App Platform, Caddy is replaced by DO's edge. The `Dockerfile` can also run the API + web as a **single container** (via `src/start.ts`) — see [DEPLOY.md](DEPLOY.md); you bring your own Postgres and TLS terminator.
 
 ## Code layout
 
 ```
 src/
   server.ts             — composition root, Bun.serve + atlas router
+  start.ts              — production entry: runs the API + web together (the Docker image's CMD)
+  dev.ts                — local dev entry: API + web with --hot
   schema/index.ts       — TypeScript schema mirror for @atlas/db
   auth/
     index.ts            — signup / login / MFA challenge
@@ -47,10 +49,9 @@ src/
   trash/                — soft-deleted listing, restore, purge
   search/               — pg_trgm filename + filter-token search
   invites/              — invite-only signup tokens (hashed at rest)
-  waitlist/             — public invite request form
+  contact/              — public contact form + admin message review
   public/               — public folder + public file routes (no auth)
-  admin/                — owner-only: users, invites, audit, stats
-  payments/             — Lemon Squeezy hosted checkout + webhook + admin config
+  admin/                — owner-only: users, invites, audit, stats, contact
   apps/                 — personal access tokens (PATs) for SDKs / native apps
   oauth/
     authorize.ts        — /oauth/authorize/* (consent + code issuance) + sweep
@@ -70,6 +71,7 @@ src/
     inline.ts           — inline-Content-Type allowlist for downloads
     owner.ts            — DB-backed `is_owner` guard
   permissions/          — unified folder/file access resolver
+  usage/                — storage-usage + quota-check helpers
   storage/              — pluggable blob backends (s3/, local/) behind a StorageDriver interface
   email/                — Resend integration + transactional templates
   actions/              — folder-action dispatch + built-in registry
@@ -146,9 +148,9 @@ Every blob is keyed `u<userId>/<timestamp><rand>/<sanitized-name>`. Deleting a f
 `src/web/serve.ts` declares the routes Bun's HTML bundler should resolve to `index.html`:
 
 ```ts
-"/": index, "/s/:token": index, "/signup": index, "/login": index,
-"/app/*": index, "/p/:username/:folderId": index,
-"/oauth/authorize": index, "/pair": index,
+"/", "/s/:token", "/signup", "/login", "/developers", "/contact",
+"/app/*", "/p/:username/:folderId", "/oauth/authorize", "/pair",
+"/password/forgot", "/password/reset",
 ```
 
 Inside the SPA, `parseRoute(window.location)` returns a discriminated `Route` union; the App component dispatches:

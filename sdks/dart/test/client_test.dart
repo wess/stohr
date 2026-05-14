@@ -121,25 +121,24 @@ void main() {
     });
   });
 
-  group('subscription + s3 keys', () {
-    test('subscription returns usage', () async {
+  group('usage + s3 keys', () {
+    test('usage returns storage usage', () async {
       final client = StohrClient(
         baseUrl: 'https://test.local/api',
         token: 't',
         client: mockClient([
           {
-            'tier': 'pro',
-            'quota_bytes': 268435456000,
-            'used_bytes': 1024,
-            'status': 'active',
-            'renews_at': 'n',
-            'has_subscription': true,
+            'quota_bytes': 0,
+            'used_bytes': 1234,
+            'active_bytes': 1000,
+            'trash_bytes': 200,
+            'version_bytes': 34,
           }
         ]),
       );
-      final sub = await client.subscription();
-      expect(sub.tier, 'pro');
-      expect(sub.usedBytes, 1024);
+      final usage = await client.usage();
+      expect(usage.quotaBytes, 0);
+      expect(usage.usedBytes, 1234);
     });
 
     test('create s3 key returns secret', () async {

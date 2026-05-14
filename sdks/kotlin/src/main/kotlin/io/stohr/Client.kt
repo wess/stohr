@@ -95,9 +95,9 @@ class StohrClient(
         return json.decodeFromString(User.serializer(), assertOk(resp))
     }
 
-    suspend fun subscription(): Subscription {
-        val resp = http.get("$baseUrl/me/subscription") { authHeader()?.let { header(HttpHeaders.Authorization, it) } }
-        return json.decodeFromString(Subscription.serializer(), assertOk(resp))
+    suspend fun usage(): Usage {
+        val resp = http.get("$baseUrl/me/usage") { authHeader()?.let { header(HttpHeaders.Authorization, it) } }
+        return json.decodeFromString(Usage.serializer(), assertOk(resp))
     }
 
     // ── folders ───────────────────────────────────────

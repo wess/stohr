@@ -10,6 +10,7 @@ import { logEvent } from "../security/audit.ts"
 import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
 import type { Emailer } from "../email/index.ts"
 import { scheduleDeletion } from "../auth/deletion.ts"
+import { computeUsage } from "../usage/index.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 const authJti = (c: any): string | null => (c.assigns.auth as { jti?: string | null }).jti ?? null
@@ -31,6 +32,24 @@ export const userRoutes = (db: Connection, secret: string, _store: StorageHandle
       )
       if (!user) return json(c, 404, { error: "User not found" })
       return json(c, 200, user)
+    })),
+
+    // Storage usage + the per-user cap. `quota_bytes` of 0 means unlimited;
+    // the cap is set by the owner in Admin → Users.
+    get("/me/usage", guard(async (c) => {
+      const userId = authId(c)
+      const user = await db.one(
+        from("users").where(q => q("id").equals(userId)).select("storage_quota_bytes"),
+      ) as { storage_quota_bytes: number | string } | null
+      if (!user) return json(c, 404, { error: "User not found" })
+      const usage = await computeUsage(db, userId)
+      return json(c, 200, {
+        quota_bytes: Number(user.storage_quota_bytes),
+        used_bytes: usage.total,
+        active_bytes: usage.active,
+        trash_bytes: usage.trash,
+        version_bytes: usage.versions,
+      })
     })),
 
     patch("/me", authed(async (c) => {
