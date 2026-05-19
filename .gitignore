@@ -7,6 +7,7 @@ DO_MARKETPLACE.md
 INTEGRATIONS.md
 SECURITY.md
 
+sdks/swift/.build
 # dependencies (bun install)
 node_modules
 
@@ -80,3 +81,11 @@ pubspec.lock
 **/windows/flutter/generated_plugin_registrant.*
 **/windows/flutter/generated_plugins.cmake
 .remember
+
+# SDK build artifacts (sdks/swift, sdks/kotlin)
+.build/
+**/.build/
+Package.resolved
+**/Package.resolved
+.gradle/
+**/.gradle/

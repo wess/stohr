@@ -89,10 +89,10 @@ export const createClient = (options: ClientOptions = {}) => {
 
     me: {
       get: () => json<User>("GET", "/me"),
-      update: (patch: { name?: string; email?: string; username?: string }) =>
-        json<AuthResult>("PATCH", "/me", patch),
+      update: (patch: { name?: string; email?: string; username?: string; discoverable?: boolean }) =>
+        json<User & { token?: string }>("PATCH", "/me", patch),
       changePassword: (current: string, next: string) =>
-        json<{ ok: true }>("POST", "/me/password", { current_password: current, new_password: next }),
+        json<{ ok: true; revoked_other_sessions?: number }>("POST", "/me/password", { current_password: current, new_password: next }),
       usage: () => json<Usage>("GET", "/me/usage"),
     },
 
@@ -168,7 +168,7 @@ export const createClient = (options: ClientOptions = {}) => {
 
     shares: {
       list: () => json<Share[]>("GET", "/shares"),
-      create: (fileId: number, expiresInSeconds?: number) =>
+      create: (fileId: number, expiresInSeconds: number) =>
         json<Share>("POST", "/shares", { file_id: fileId, expires_in: expiresInSeconds }),
       delete: (id: number) => json<{ deleted: number }>("DELETE", `/shares/${id}`),
     },

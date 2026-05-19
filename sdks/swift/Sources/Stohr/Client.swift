@@ -158,8 +158,8 @@ public actor StohrClient {
 
     // ── shares ───────────────────────────────────────
 
-    public func createShare(fileId: Int, expiresInSeconds: Int? = nil) async throws -> Share {
-        struct Body: Encodable { let file_id: Int; let expires_in: Int? }
+    public func createShare(fileId: Int, expiresInSeconds: Int) async throws -> Share {
+        struct Body: Encodable { let file_id: Int; let expires_in: Int }
         return try await send("POST", "shares", body: Body(file_id: fileId, expires_in: expiresInSeconds), expecting: Share.self)
     }
 

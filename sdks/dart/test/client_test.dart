@@ -33,7 +33,7 @@ void main() {
           }
         ]),
       );
-      final res = await client.login('alice', 'secret');
+      final res = await client.login('alice', 'secret') as AuthResult;
       expect(res.token, 'tkn');
       expect(client.token, 'tkn');
     });

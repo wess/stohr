@@ -208,12 +208,17 @@ const folders = await r.json()`}</CodeBlock>
 
       <section className="devp-section" id="sdks">
         <h2>Official SDKs</h2>
-        <p className="devp-lede">All four wrap the same v1 REST API with idiomatic shapes per platform.</p>
+        <p className="devp-lede">
+          All four wrap the same v1 REST API with idiomatic shapes per
+          platform. TypeScript has the most complete surface today; the
+          others cover the happy path (auth, folders, files, shares, S3
+          keys) — see the operation matrix in the SDKs doc for the gaps.
+        </p>
         <div className="devp-grid-4">
           <a className="devp-card devp-card-link" href={`${REPO}/tree/main/sdks/typescript`} target="_blank" rel="noreferrer">
             <h3>TypeScript</h3>
             <p>Bun, Deno, Node 20+, browsers</p>
-            <p className="devp-tag">npm: stohr</p>
+            <p className="devp-tag">npm: @stohr/sdk</p>
           </a>
           <a className="devp-card devp-card-link" href={`${REPO}/tree/main/sdks/dart`} target="_blank" rel="noreferrer">
             <h3>Dart</h3>
@@ -222,17 +227,74 @@ const folders = await r.json()`}</CodeBlock>
           </a>
           <a className="devp-card devp-card-link" href={`${REPO}/tree/main/sdks/swift`} target="_blank" rel="noreferrer">
             <h3>Swift</h3>
-            <p>iOS 15+, macOS 12+</p>
+            <p>iOS 15+, macOS 12+, tvOS 15+, watchOS 8+</p>
             <p className="devp-tag">SwiftPM</p>
           </a>
           <a className="devp-card devp-card-link" href={`${REPO}/tree/main/sdks/kotlin`} target="_blank" rel="noreferrer">
             <h3>Kotlin</h3>
-            <p>Android, JVM</p>
-            <p className="devp-tag">Maven Central</p>
+            <p>Android (API 24+), JVM 17+</p>
+            <p className="devp-tag">io.stohr:stohr-sdk</p>
           </a>
         </div>
+
+        <h3 style={{ marginTop: 28 }}>Install</h3>
+        <CodeBlock lang="bash">{`# TypeScript
+bun add @stohr/sdk
+
+# Dart / Flutter
+dart pub add stohr
+
+# Swift Package Manager — in Package.swift:
+.package(url: "https://github.com/wess/stohr.git", from: "0.1.0")
+
+# Kotlin (Gradle)
+implementation("io.stohr:stohr-sdk:0.1.0")
+implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")`}</CodeBlock>
+
+        <h3 style={{ marginTop: 28 }}>Hello, stohr — every language</h3>
+        <CodeBlock lang="ts">{`import { createClient } from "@stohr/sdk"
+
+const stohr = createClient({ baseUrl: "https://stohr.io/api" })
+await stohr.auth.login("you@example.com", "your-password")
+
+const blob = new Blob(["hello, stohr"], { type: "text/plain" })
+const [uploaded] = await stohr.files.upload({ file: blob, name: "hello.txt" })`}</CodeBlock>
+
+        <CodeBlock lang="dart">{`import 'dart:typed_data';
+import 'package:stohr/stohr.dart';
+
+final client = StohrClient(baseUrl: 'https://stohr.io/api');
+await client.login('you@example.com', 'your-password');
+
+final bytes = Uint8List.fromList('hello, stohr'.codeUnits);
+await client.uploadFile(bytes: bytes, name: 'hello.txt');`}</CodeBlock>
+
+        <CodeBlock lang="swift">{`import Stohr
+
+let client = StohrClient(baseURL: URL(string: "https://stohr.io/api")!)
+_ = try await client.login(identity: "you@example.com", password: "your-password")
+
+let bytes = "hello, stohr".data(using: .utf8)!
+_ = try await client.uploadFile(data: bytes, name: "hello.txt")`}</CodeBlock>
+
+        <CodeBlock lang="kotlin">{`import io.stohr.StohrClient
+
+val client = StohrClient(baseUrl = "https://stohr.io/api")
+client.login("you@example.com", "your-password")
+
+client.uploadFile(
+    bytes = "hello, stohr".toByteArray(),
+    name = "hello.txt",
+)`}</CodeBlock>
+
         <p style={{ marginTop: 16 }}>
-          <strong>Heads up:</strong> WebAuthn / passkey endpoints and the password-reset flow are REST-only for now — they'll land in the SDKs in a follow-up.
+          <strong>Heads up:</strong> WebAuthn / passkey endpoints and the
+          password-reset flow are REST-only for now across all four SDKs —
+          they'll land in a follow-up. Until then, call <code>/me/passkeys/*</code>,{" "}
+          <code>/login/passkey/*</code>, and <code>/password/*</code> directly.
+        </p>
+        <p>
+          <a href="/docs/sdks">Full SDK reference + operation matrix →</a>
         </p>
       </section>
 

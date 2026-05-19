@@ -1,7 +1,6 @@
 package io.stohr
 
 import io.ktor.client.HttpClient
-import io.ktor.client.call.body
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -10,7 +9,6 @@ import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.get
 import io.ktor.client.request.header
-import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
@@ -22,12 +20,14 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.put
 
 class StohrClient(
     private val baseUrl: String = "https://stohr.io/api",
@@ -35,6 +35,7 @@ class StohrClient(
     engine: HttpClientEngine? = null,
 ) {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+    private val outJson = Json { encodeDefaults = true }
 
     private val http: HttpClient = if (engine != null) {
         HttpClient(engine) { install(ContentNegotiation) { json(json) } }
@@ -65,7 +66,7 @@ class StohrClient(
     suspend fun login(identity: String, password: String): AuthResult {
         val resp = http.post("$baseUrl/login") {
             contentType(ContentType.Application.Json)
-            setBody(buildJsonStr(mapOf("identity" to identity, "password" to password)))
+            setBody(jsonStr(mapOf("identity" to identity, "password" to password)))
         }
         val text = assertOk(resp)
         val parsed = json.decodeFromString<AuthResult>(AuthResult.serializer(), text)
@@ -76,11 +77,11 @@ class StohrClient(
     suspend fun signup(
         name: String, username: String, email: String, password: String, inviteToken: String? = null,
     ): AuthResult {
-        val body = mutableMapOf("name" to name, "username" to username, "email" to email, "password" to password)
+        val body = mutableMapOf<String, Any?>("name" to name, "username" to username, "email" to email, "password" to password)
         if (inviteToken != null) body["invite_token"] = inviteToken
         val resp = http.post("$baseUrl/signup") {
             contentType(ContentType.Application.Json)
-            setBody(buildJsonStr(body))
+            setBody(jsonStr(body))
         }
         val text = assertOk(resp)
         val parsed = json.decodeFromString<AuthResult>(AuthResult.serializer(), text)
@@ -109,17 +110,13 @@ class StohrClient(
     }
 
     suspend fun createFolder(name: String, parentId: Int? = null, kind: String? = null, isPublic: Boolean? = null): Folder {
-        val body = buildString {
-            append("{\"name\":${quote(name)}")
-            append(",\"parent_id\":${parentId ?: "null"}")
-            if (kind != null) append(",\"kind\":${quote(kind)}")
-            if (isPublic != null) append(",\"is_public\":$isPublic")
-            append("}")
-        }
+        val body = mutableMapOf<String, Any?>("name" to name, "parent_id" to parentId)
+        if (kind != null) body["kind"] = kind
+        if (isPublic != null) body["is_public"] = isPublic
         val resp = http.post("$baseUrl/folders") {
             authHeader()?.let { header(HttpHeaders.Authorization, it) }
             contentType(ContentType.Application.Json)
-            setBody(body)
+            setBody(jsonStr(body))
         }
         return json.decodeFromString(Folder.serializer(), assertOk(resp))
     }
@@ -166,16 +163,12 @@ class StohrClient(
 
     // ── shares ────────────────────────────────────────
 
-    suspend fun createShare(fileId: Int, expiresInSeconds: Int? = null): Share {
-        val body = buildString {
-            append("{\"file_id\":$fileId")
-            if (expiresInSeconds != null) append(",\"expires_in\":$expiresInSeconds")
-            append("}")
-        }
+    suspend fun createShare(fileId: Int, expiresInSeconds: Int): Share {
+        val body = mapOf<String, Any?>("file_id" to fileId, "expires_in" to expiresInSeconds)
         val resp = http.post("$baseUrl/shares") {
             authHeader()?.let { header(HttpHeaders.Authorization, it) }
             contentType(ContentType.Application.Json)
-            setBody(body)
+            setBody(jsonStr(body))
         }
         return json.decodeFromString(Share.serializer(), assertOk(resp))
     }
@@ -188,7 +181,7 @@ class StohrClient(
     }
 
     suspend fun createS3Key(name: String? = null): S3AccessKey {
-        val body = name?.let { "{\"name\":${quote(it)}}" } ?: "{}"
+        val body = if (name != null) jsonStr(mapOf("name" to name)) else "{}"
         val resp = http.post("$baseUrl/me/s3-keys") {
             authHeader()?.let { header(HttpHeaders.Authorization, it) }
             contentType(ContentType.Application.Json)
@@ -204,16 +197,18 @@ class StohrClient(
 
     fun close() = http.close()
 
-    private fun quote(s: String): String = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
-
-    private fun buildJsonStr(map: Map<String, Any?>): String =
-        map.entries.joinToString(",", prefix = "{", postfix = "}") { (k, v) ->
-            val value = when (v) {
-                null -> "null"
-                is String -> quote(v)
-                is Boolean, is Number -> v.toString()
-                else -> quote(v.toString())
+    private fun jsonStr(map: Map<String, Any?>): String {
+        val obj = buildJsonObject {
+            for ((k, v) in map) {
+                when (v) {
+                    null -> put(k, JsonNull)
+                    is String -> put(k, v)
+                    is Boolean -> put(k, v)
+                    is Number -> put(k, v)
+                    else -> put(k, v.toString())
+                }
             }
-            "${quote(k)}:$value"
         }
+        return outJson.encodeToString(JsonObject.serializer(), obj)
+    }
 }

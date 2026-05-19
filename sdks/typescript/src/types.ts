@@ -7,7 +7,14 @@ export type User = {
   created_at: string
 }
 
-export type AuthResult = User & { token: string }
+export type AuthResult = {
+  id: number
+  email: string
+  username: string
+  name: string
+  is_owner: boolean
+  token: string
+}
 
 export type Folder = {
   id: number

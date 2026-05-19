@@ -45,6 +45,28 @@ await client.login('you@example.com', 'password'); // identity = email or userna
 client.token = savedToken;                          // restore from storage
 ```
 
+## MFA-aware login
+
+`login()` returns either an `AuthResult` (success) or an `MfaChallenge` when TOTP is enabled on the account:
+
+```dart
+final result = await client.login('you@example.com', 'password');
+if (result is MfaChallenge) {
+  await client.loginMfa(mfaToken: result.mfaToken, code: '123456');
+}
+```
+
+## Sharing a file
+
+`expiresInSeconds` is required (the API rejects shares without a positive TTL — max 30 days).
+
+```dart
+final share = await client.createShare(file.id, expiresInSeconds: 60 * 60 * 24);
+print('https://stohr.io/s/${share.token}');
+```
+
+See [`docs/SDKS.md`](../../docs/SDKS.md) for the full operation matrix across all four official SDKs.
+
 ## Errors
 
 `StohrError` exposes `.status` and `.body` for inspection:

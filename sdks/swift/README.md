@@ -42,6 +42,17 @@ try await client.login(identity: "you@example.com", password: "secret")
 await client.setToken(savedToken)
 ```
 
+## Sharing a file
+
+`expiresInSeconds` is required (the API rejects shares without a positive TTL — max 30 days).
+
+```swift
+let share = try await client.createShare(fileId: file.id, expiresInSeconds: 60 * 60 * 24)
+print("https://stohr.io/s/\(share.token)")
+```
+
+See [`docs/SDKS.md`](../../docs/SDKS.md) for the full operation matrix across all four official SDKs.
+
 ## Errors
 
 `StohrError` carries `status` and `message`:

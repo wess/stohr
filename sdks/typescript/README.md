@@ -51,6 +51,17 @@ const t = stohr.getToken()
 The client groups operations by resource: `auth`, `me`, `folders`, `files`,
 `shares`, `collaborators`, `invites`, `s3Keys`, plus `sharedWithMe()`.
 
+See [`docs/SDKS.md`](../../docs/SDKS.md) for the full operation matrix across all four official SDKs.
+
+### Sharing a file
+
+`expiresInSeconds` is required (the API rejects shares without a positive TTL — max 30 days).
+
+```ts
+const share = await stohr.shares.create(fileId, 60 * 60 * 24)   // 1-day share
+console.log(`https://stohr.io/s/${share.token}`)
+```
+
 Errors throw `StohrError` with `.status` and `.body` for inspection:
 
 ```ts
