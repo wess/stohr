@@ -1,7 +1,10 @@
-# Cloudflare Pages config. Most projects don't need this — the dashboard
-# settings (build command / output dir) are sufficient. Included for users
-# who prefer to deploy via `wrangler pages deploy ./dist`.
+# Cloudflare Workers (Static Assets) config. Created from the unified
+# "Workers + Pages > Connect to Git" flow, which provisions a Workers
+# project (not a legacy Pages project). Deploy with `wrangler deploy`.
 
 name = "stohr"
-pages_build_output_dir = "./dist"
 compatibility_date = "2025-01-01"
+
+[assets]
+directory = "./dist"
+not_found_handling = "404-page"
