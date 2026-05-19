@@ -3,6 +3,9 @@
 docs/superpowers
 .envrc
 .claude
+DO_MARKETPLACE.md
+INTEGRATIONS.md
+SECURITY.md
 
 # dependencies (bun install)
 node_modules
