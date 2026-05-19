@@ -13,7 +13,7 @@ const SRC = path.resolve(ROOT, "src")
 const DIST = path.resolve(ROOT, "dist")
 const REPO_ROOT = path.resolve(ROOT, "..")
 
-const HTML_ENTRIES = ["index.html", "developers.html", "setup.html"]
+const HTML_ENTRIES = ["index.html", "developers.html", "setup.html", "federation.html", "webdav.html"]
 
 async function clean() {
   if (existsSync(DIST)) await rm(DIST, { recursive: true, force: true })

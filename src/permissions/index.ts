@@ -10,6 +10,9 @@ export type FolderRow = {
   name: string
   kind: string
   is_public: boolean
+  federation_id: number | null
+  federation_role: string | null
+  federation_quota_bytes: number | string
   deleted_at: string | null
   created_at: string
 }

@@ -4319,8 +4319,775 @@ const DeveloperPanel: React.FC = () => {
       <h3>Developer</h3>
       <S3KeysSection />
       <AppsSection />
+      <WebdavSection />
       {me?.is_owner && <OAuthClientsSection />}
     </section>
+  )
+}
+
+const WebdavSection: React.FC = () => {
+  const [status, setStatus] = useState<api.WebdavStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [justMinted, setJustMinted] = useState<string | null>(null)
+  const [instanceDisabled, setInstanceDisabled] = useState(false)
+
+  const load = async () => {
+    setError(null)
+    try {
+      const s = await api.getWebdav()
+      setStatus(s)
+      setInstanceDisabled(false)
+    } catch (e: any) {
+      const msg = e?.message ?? "Failed to load WebDAV settings"
+      // 503 from the gate ⇒ owner has WebDAV turned off on this instance
+      if (/disabled on this instance/i.test(msg)) setInstanceDisabled(true)
+      else setError(msg)
+      setStatus(null)
+    }
+  }
+
+  useEffect(() => { load() }, [])
+
+  const mint = async () => {
+    if (status?.enabled && !confirm("Generate a new WebDAV password? Any client using the current one will stop working until reconfigured.")) return
+    setBusy(true); setError(null)
+    try {
+      const res = await api.enableWebdav()
+      if (res.password) setJustMinted(res.password)
+      await load()
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to mint WebDAV password")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const disable = async () => {
+    if (!confirm("Disable WebDAV for your account? Clients using your current password will stop working immediately.")) return
+    setBusy(true); setError(null)
+    try {
+      await api.disableWebdav()
+      setJustMinted(null)
+      await load()
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to disable WebDAV")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Build a sensible default mount URL. The web SPA is on `WEB_PORT` but
+  // WebDAV is served by the API directly. Heuristically, the public URL
+  // users mount is the same origin they're hitting the SPA on (the SPA
+  // proxies /webdav through to the API).
+  const me = api.getUser()
+  const mountUrl = (() => {
+    if (typeof window === "undefined") return "https://your-stohr.example.com/webdav"
+    return `${window.location.origin}/webdav`
+  })()
+
+  return (
+    <div className="devp-section">
+      <h4>WebDAV</h4>
+      <div className="devp-section-desc">
+        Mount your Stohr account as a network drive from macOS Finder, Windows
+        Explorer, GNOME Files, or <code>rclone</code>. The password below is
+        separate from your account password and can be revoked any time.
+      </div>
+
+      {instanceDisabled && (
+        <div className="msg err" style={{ marginTop: 12 }}>
+          The instance owner has WebDAV turned off on this server. Ask them to
+          enable it in <strong>Admin → Settings</strong>.
+        </div>
+      )}
+
+      {!instanceDisabled && justMinted && (
+        <div className="msg ok" style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>
+            Your new WebDAV password — save it now, it won't be shown again
+          </div>
+          <div className="dev-secret">
+            <label>Password</label>
+            <div className="dev-secret-row">
+              <code>{justMinted}</code>
+              <button onClick={() => navigator.clipboard.writeText(justMinted)}>Copy</button>
+            </div>
+          </div>
+          <button onClick={() => setJustMinted(null)} style={{ marginTop: 8 }}>I've saved it</button>
+        </div>
+      )}
+
+      {!instanceDisabled && status && (
+        <>
+          <div className="webdav-status">
+            <div className="webdav-status-row">
+              <span className="webdav-status-label">Status</span>
+              <span className={status.enabled ? "webdav-status-on" : "webdav-status-off"}>
+                {status.enabled ? "Enabled" : "Not enabled"}
+              </span>
+            </div>
+            {status.last_used_at && (
+              <div className="webdav-status-row">
+                <span className="webdav-status-label">Last used</span>
+                <span>{new Date(status.last_used_at).toLocaleString()}</span>
+              </div>
+            )}
+            {status.updated_at && (
+              <div className="webdav-status-row">
+                <span className="webdav-status-label">Last password change</span>
+                <span>{new Date(status.updated_at).toLocaleString()}</span>
+              </div>
+            )}
+          </div>
+
+          {error && <div className="msg err" style={{ marginTop: 12 }}>{error}</div>}
+
+          <div className="settings-actions" style={{ justifyContent: "flex-start", marginTop: 12, gap: 8 }}>
+            <button className="primary" disabled={busy} onClick={mint}>
+              {status.enabled ? "Regenerate password" : "Enable WebDAV"}
+            </button>
+            {status.enabled && (
+              <button disabled={busy} onClick={disable}>Disable</button>
+            )}
+          </div>
+
+          {status.enabled && (
+            <div className="webdav-howto">
+              <div className="webdav-howto-title">Connect from macOS Finder</div>
+              <ol>
+                <li>Open Finder, press <kbd>⌘K</kbd> (or <strong>Go → Connect to Server…</strong>).</li>
+                <li>Enter the server URL: <code>{mountUrl}</code></li>
+                <li>Click <strong>Connect</strong>. When prompted, choose <strong>Registered User</strong>.</li>
+                <li>Username: <code>{me?.username ?? "<your-username>"}</code></li>
+                <li>Password: the <code>stohr_dav_…</code> token above (use <strong>Regenerate password</strong> if you've lost it).</li>
+                <li>Optional: check <strong>Remember this password in my keychain</strong>.</li>
+              </ol>
+              <div className="webdav-howto-foot">
+                Other clients (Windows Explorer, GNOME Files, <code>rclone</code>) are
+                covered in <a href="/docs/webdav" target="_blank" rel="noreferrer">the WebDAV docs</a>.
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Federation
+// ────────────────────────────────────────────────────────────────────────────
+
+const formatGB = (bytes: number | string): string => {
+  const n = Number(bytes)
+  if (!Number.isFinite(n) || n <= 0) return "0 GB"
+  return `${(n / (1024 * 1024 * 1024)).toFixed(n < 1024 * 1024 * 1024 ? 2 : 1)} GB`
+}
+
+const GB_TO_BYTES = 1024 * 1024 * 1024
+
+const FederationPanel: React.FC = () => {
+  const [feds, setFeds] = useState<api.FederationSummary[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [disabled, setDisabled] = useState(false)
+  const [selected, setSelected] = useState<number | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [showAccept, setShowAccept] = useState(false)
+  const [instance, setInstance] = useState<api.InstanceKeys | null>(null)
+
+  // jsonReq doesn't throw on non-2xx — 503 responses come back as
+  // `{ error: "..." }`. So a successful federation list is specifically an
+  // array; anything else means the owner has the feature off (or some other
+  // failure), and the tab should fall through to the disabled-state UI
+  // rather than try to render keys/members we don't have.
+  const isDisabledError = (payload: any): boolean =>
+    payload && typeof payload === "object" && typeof payload.error === "string" &&
+    /disabled on this instance/i.test(payload.error)
+
+  const load = async () => {
+    setError(null)
+    try {
+      const list = await api.listFederations() as unknown
+      if (Array.isArray(list)) {
+        setFeds(list as api.FederationSummary[])
+        setDisabled(false)
+        // Only fetch instance keys once we know the feature is on. The
+        // /me/federations/instance/keys endpoint shares the same gate, so
+        // calling it while disabled returns `{ error: "..." }` instead of
+        // the real shape — which used to crash the render.
+        try {
+          const keys = await api.getInstanceKeys() as unknown as Partial<api.InstanceKeys> & { error?: string }
+          if (keys && typeof keys === "object" && typeof keys.ed25519_pubkey === "string") {
+            setInstance(keys as api.InstanceKeys)
+          } else {
+            setInstance(null)
+          }
+        } catch { setInstance(null) }
+      } else if (isDisabledError(list)) {
+        setDisabled(true); setFeds(null); setInstance(null)
+      } else {
+        setError((list as any)?.error ?? "Failed to load federations")
+        setFeds(null); setInstance(null)
+      }
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load federations")
+      setFeds(null); setInstance(null)
+    }
+  }
+
+  useEffect(() => { load() }, [])
+
+  if (disabled) {
+    return (
+      <div className="settings-card">
+        <h3>Federation</h3>
+        <p style={{ color: "var(--muted)", fontSize: 13.5, margin: "8px 0 0", lineHeight: 1.55 }}>
+          Federation is turned off on this instance. Ask the owner to enable it in{" "}
+          <strong>Admin → Settings → Federation</strong>.
+        </p>
+      </div>
+    )
+  }
+
+  if (!feds) {
+    return (
+      <div className="settings-card">
+        <h3>Federation</h3>
+        <div style={{ color: "var(--muted)", fontSize: 14 }}>{error ?? "Loading…"}</div>
+      </div>
+    )
+  }
+
+  if (selected) {
+    return (
+      <FederationDetailView
+        id={selected}
+        onBack={() => { setSelected(null); load() }}
+      />
+    )
+  }
+
+  return (
+    <div className="settings-card">
+      <h3>Federation</h3>
+      <p style={{ color: "var(--muted)", fontSize: 13.5, margin: "0 0 14px", lineHeight: 1.55 }}>
+        Pair this Stohr instance with others in an invite-gated network. Members
+        pool storage and (in content-sharing mode) can browse each other's files.
+        See <a href="/docs/federation" target="_blank" rel="noreferrer">the docs</a> for
+        the full model.
+      </p>
+
+      {instance && (
+        <div className="fed-instance">
+          <div className="fed-instance-row">
+            <span className="fed-instance-label">This instance's pubkey</span>
+            <code>{instance.ed25519_pubkey.slice(0, 16)}…</code>
+          </div>
+          <div className="fed-instance-hint">
+            Share this fingerprint out-of-band with someone before they invite
+            you, so they can verify you're the right peer.
+          </div>
+        </div>
+      )}
+
+      {error && <div className="msg err" style={{ marginBottom: 12 }}>{error}</div>}
+
+      <div className="settings-actions" style={{ justifyContent: "flex-start", gap: 8, marginBottom: 16 }}>
+        <button className="primary" onClick={() => setShowCreate(true)}>Create federation</button>
+        <button onClick={() => setShowAccept(true)}>Accept invite</button>
+      </div>
+
+      {showCreate && (
+        <CreateFederationForm
+          onCancel={() => setShowCreate(false)}
+          onCreated={() => { setShowCreate(false); load() }}
+        />
+      )}
+
+      {showAccept && (
+        <AcceptInviteForm
+          onCancel={() => setShowAccept(false)}
+          onAccepted={() => { setShowAccept(false); load() }}
+        />
+      )}
+
+      {feds.length === 0 ? (
+        <div className="dev-empty">You're not a member of any federation yet.</div>
+      ) : (
+        <div className="fed-list">
+          {feds.map(f => (
+            <button
+              key={f.id}
+              className="fed-row"
+              onClick={() => setSelected(f.id)}
+            >
+              <div className="fed-row-main">
+                <div className="fed-row-name">
+                  {f.name}
+                  {f.local_member.is_admin && <span className="fed-pill fed-pill-admin">Admin</span>}
+                  <span className={`fed-pill fed-pill-${f.type === "content-sharing" ? "csh" : "spo"}`}>
+                    {f.type === "content-sharing" ? "Content-sharing" : "Space-offering"}
+                  </span>
+                  {f.local_member.status !== "active" && (
+                    <span className="fed-pill fed-pill-warn">{f.local_member.status}</span>
+                  )}
+                </div>
+                <div className="fed-row-meta">
+                  <code>{f.slug}</code>
+                  <span>·</span>
+                  <span>Contributing {formatGB(f.local_member.contributed_bytes)}</span>
+                  <span>·</span>
+                  <span>Used {formatGB(f.local_member.used_bytes)}</span>
+                </div>
+              </div>
+              <ChevronRight size={16} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const CreateFederationForm: React.FC<{ onCancel: () => void; onCreated: () => void }> = ({ onCancel, onCreated }) => {
+  const [slug, setSlug] = useState("")
+  const [name, setName] = useState("")
+  const [description, setDescription] = useState("")
+  const [type, setType] = useState<api.FederationType>("content-sharing")
+  const [replication, setReplication] = useState(3)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const submit = async () => {
+    setError(null)
+    setBusy(true)
+    try {
+      const res: any = await api.createFederation({
+        slug: slug.trim().toLowerCase(),
+        name: name.trim(),
+        description: description.trim() || undefined,
+        type,
+        replication_factor: replication,
+      })
+      if (res?.error) { setError(res.error); return }
+      onCreated()
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to create federation")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fed-form">
+      <label>Slug</label>
+      <input
+        value={slug}
+        onChange={e => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+        placeholder="my-friends"
+        autoCapitalize="off"
+      />
+      <div className="fed-form-hint">Lowercase letters, numbers, hyphens. Used internally to identify the federation across peers — can't change later.</div>
+
+      <label style={{ marginTop: 10 }}>Name</label>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="My friends" />
+
+      <label style={{ marginTop: 10 }}>Description <span className="lp-field-opt">(optional)</span></label>
+      <input value={description} onChange={e => setDescription(e.target.value)} placeholder="What's this federation for?" />
+
+      <label style={{ marginTop: 10 }}>Type</label>
+      <div className="fed-type-choice">
+        <label className={type === "content-sharing" ? "active" : ""}>
+          <input type="radio" name="fedtype" checked={type === "content-sharing"} onChange={() => setType("content-sharing")} />
+          <div>
+            <div className="fed-type-name">Content-sharing</div>
+            <div className="fed-type-desc">Members can browse and copy each other's files. Encrypted at rest with a shared group key; full replication on N peers.</div>
+          </div>
+        </label>
+        <label className={type === "space-offering" ? "active" : ""}>
+          <input type="radio" name="fedtype" checked={type === "space-offering"} onChange={() => setType("space-offering")} />
+          <div>
+            <div className="fed-type-name">Space-offering</div>
+            <div className="fed-type-desc">Pure capacity pooling. Peers host encrypted shards they can't read; only you can decrypt your own files.</div>
+          </div>
+        </label>
+      </div>
+
+      <label style={{ marginTop: 10 }}>Replication factor</label>
+      <input
+        type="number"
+        min={1}
+        max={16}
+        value={replication}
+        onChange={e => setReplication(Math.max(1, Math.min(16, Number(e.target.value) || 1)))}
+      />
+      <div className="fed-form-hint">How many peers hold each blob/shard. Higher = more durable, more storage cost. Default 3.</div>
+
+      {error && <div className="msg err" style={{ marginTop: 10 }}>{error}</div>}
+
+      <div className="settings-actions">
+        <button onClick={onCancel} disabled={busy}>Cancel</button>
+        <button className="primary" onClick={submit} disabled={busy || !slug || !name}>
+          {busy ? "Creating…" : "Create federation"}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const AcceptInviteForm: React.FC<{ onCancel: () => void; onAccepted: () => void }> = ({ onCancel, onAccepted }) => {
+  const [token, setToken] = useState("")
+  const [displayName, setDisplayName] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const submit = async () => {
+    setError(null); setBusy(true)
+    try {
+      const res: any = await api.acceptFederationInvite(token.trim(), displayName.trim() || undefined)
+      if (res?.error) { setError(res.error); return }
+      onAccepted()
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to accept invite")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fed-form">
+      <label>Invite token</label>
+      <textarea
+        value={token}
+        onChange={e => setToken(e.target.value)}
+        placeholder="Paste the invite token someone sent you (starts with eyJ…)"
+        rows={4}
+      />
+      <label style={{ marginTop: 10 }}>Display name <span className="lp-field-opt">(optional)</span></label>
+      <input
+        value={displayName}
+        onChange={e => setDisplayName(e.target.value)}
+        placeholder="How other members see you (e.g. wess@home)"
+      />
+      <div className="fed-form-hint">
+        Accepting reaches out to the introducer (the URL embedded in the token), exchanges keys,
+        and registers this instance as a member.
+      </div>
+      {error && <div className="msg err" style={{ marginTop: 10 }}>{error}</div>}
+      <div className="settings-actions">
+        <button onClick={onCancel} disabled={busy}>Cancel</button>
+        <button className="primary" onClick={submit} disabled={busy || !token.trim()}>
+          {busy ? "Pairing…" : "Accept invite"}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const FederationDetailView: React.FC<{ id: number; onBack: () => void }> = ({ id, onBack }) => {
+  const [fed, setFed] = useState<api.FederationDetail | null>(null)
+  const [members, setMembers] = useState<api.FederationMember[] | null>(null)
+  const [invites, setInvites] = useState<api.FederationInvite[] | null>(null)
+  const [usage, setUsage] = useState<api.FederationUsage | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [justMintedInvite, setJustMintedInvite] = useState<string | null>(null)
+  const [showContrib, setShowContrib] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const load = async () => {
+    try {
+      const [d, m, u] = await Promise.all([
+        api.getFederation(id),
+        api.listFederationMembers(id),
+        api.getFederationUsage(id),
+      ])
+      setFed(d); setMembers(m); setUsage(u)
+      if (d.is_admin) {
+        try { setInvites(await api.listFederationInvites(id)) } catch { setInvites(null) }
+      }
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load federation")
+    }
+  }
+
+  useEffect(() => { load() }, [id])
+
+  const mintInvite = async () => {
+    setBusy(true); setError(null)
+    try {
+      const res: any = await api.mintFederationInvite(id, 168)
+      if (res?.error) { setError(res.error); return }
+      setJustMintedInvite(res.token)
+      const list = await api.listFederationInvites(id).catch(() => null)
+      if (list) setInvites(list)
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to mint invite")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const leave = async () => {
+    if (!confirm(`Leave ${fed?.name ?? "this federation"}? You'll enter drain mode — your hosted blobs are re-replicated off this instance before disconnect.`)) return
+    setBusy(true)
+    try {
+      await api.leaveFederation(id)
+      onBack()
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to leave")
+      setBusy(false)
+    }
+  }
+
+  if (!fed || !members || !usage) {
+    return (
+      <div className="settings-card">
+        <button className="fed-back" onClick={onBack}>← Federations</button>
+        <div style={{ color: "var(--muted)", fontSize: 14 }}>{error ?? "Loading…"}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="settings-card">
+      <button className="fed-back" onClick={onBack}>← Federations</button>
+      <h3 style={{ marginTop: 12 }}>
+        {fed.name}
+        {fed.is_admin && <span className="fed-pill fed-pill-admin">Admin</span>}
+        <span className={`fed-pill fed-pill-${fed.type === "content-sharing" ? "csh" : "spo"}`}>
+          {fed.type === "content-sharing" ? "Content-sharing" : "Space-offering"}
+        </span>
+        {fed.status !== "active" && <span className="fed-pill fed-pill-warn">{fed.status}</span>}
+      </h3>
+      <div className="fed-row-meta" style={{ marginTop: 4 }}>
+        <code>{fed.slug}</code>
+        <span>·</span>
+        <span>Replication × {fed.replication_factor}</span>
+        {fed.erasure_k && fed.erasure_m && (
+          <>
+            <span>·</span>
+            <span>Erasure {fed.erasure_k}-of-{fed.erasure_m}</span>
+          </>
+        )}
+      </div>
+      {fed.description && (
+        <p style={{ color: "var(--text-soft)", fontSize: 13.5, margin: "12px 0 0", lineHeight: 1.55 }}>{fed.description}</p>
+      )}
+
+      {error && <div className="msg err" style={{ marginTop: 12 }}>{error}</div>}
+
+      {/* Usage */}
+      <div className="fed-usage">
+        <div className="fed-usage-row">
+          <span>Your contribution</span><strong>{formatGB(usage.contributed_bytes)}</strong>
+        </div>
+        <div className="fed-usage-row">
+          <span>Used</span><strong>{formatGB(usage.used_bytes)}</strong>
+        </div>
+        <div className="fed-usage-row">
+          <span>Your allowance</span>
+          <strong>
+            {formatGB(usage.allowance_bytes)}
+            {usage.quota_multiplier !== 1 && <span className="fed-usage-mult"> (×{usage.quota_multiplier})</span>}
+          </strong>
+        </div>
+        <div className="fed-usage-row">
+          <span>Available</span><strong>{formatGB(usage.available_bytes)}</strong>
+        </div>
+      </div>
+
+      {/* Contribution folder */}
+      <div className="fed-block">
+        <div className="fed-block-title">Contribution folder</div>
+        {usage.contributed_bytes > 0 ? (
+          <div className="fed-block-body" style={{ color: "var(--text-soft)", fontSize: 13 }}>
+            You're contributing {formatGB(usage.contributed_bytes)}. Adjust or release from{" "}
+            <a href="/app" onClick={(e) => { e.preventDefault(); alert("Find your federation folder in the files view; the row picker is shipping next.") }}>the files view</a>.
+          </div>
+        ) : (
+          <>
+            <div className="fed-block-body" style={{ color: "var(--text-soft)", fontSize: 13 }}>
+              You haven't designated a folder yet. Pick an existing folder and a quota cap —
+              that folder becomes the local mount-point for federation data.
+            </div>
+            {!showContrib && (
+              <button className="primary" style={{ marginTop: 10 }} onClick={() => setShowContrib(true)}>
+                Designate folder
+              </button>
+            )}
+            {showContrib && (
+              <ContributeForm
+                federationId={id}
+                onDone={() => { setShowContrib(false); load() }}
+                onCancel={() => setShowContrib(false)}
+              />
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Members */}
+      <div className="fed-block">
+        <div className="fed-block-title">Members ({members.length})</div>
+        <ul className="fed-member-list">
+          {members.map(m => (
+            <li key={m.id} className={m.status !== "active" ? "fed-member-inactive" : undefined}>
+              <div className="fed-member-pubkey">
+                <code>{m.peer_pubkey.slice(0, 16)}…</code>
+                {m.is_local && <span className="fed-pill fed-pill-csh">You</span>}
+                {m.is_admin && <span className="fed-pill fed-pill-admin">Admin</span>}
+                {m.status !== "active" && <span className="fed-pill fed-pill-warn">{m.status}</span>}
+              </div>
+              <div className="fed-member-meta">
+                {m.display_name && <span>{m.display_name} · </span>}
+                {m.peer_base_url}
+              </div>
+              <div className="fed-member-meta">
+                Contributing {formatGB(m.contributed_bytes)} · Used {formatGB(m.used_bytes)}
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* Invites — admin only */}
+      {fed.is_admin && (
+        <div className="fed-block">
+          <div className="fed-block-title">Invite tokens</div>
+          {justMintedInvite && (
+            <div className="msg ok" style={{ marginBottom: 12 }}>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                Invite token — send to the joiner, won't be shown again
+              </div>
+              <div className="dev-secret">
+                <div className="dev-secret-row">
+                  <code style={{ wordBreak: "break-all", whiteSpace: "pre-wrap" }}>{justMintedInvite}</code>
+                  <button onClick={() => navigator.clipboard.writeText(justMintedInvite)}>Copy</button>
+                </div>
+              </div>
+              <button onClick={() => setJustMintedInvite(null)} style={{ marginTop: 8 }}>I've sent it</button>
+            </div>
+          )}
+          <button className="primary" disabled={busy} onClick={mintInvite}>
+            {busy ? "Minting…" : "Mint new invite (7 days)"}
+          </button>
+          {invites && invites.length > 0 && (
+            <ul className="fed-invite-list">
+              {invites.map(inv => {
+                const used = !!inv.used_at
+                const expired = !used && new Date(inv.expires_at) < new Date()
+                return (
+                  <li key={inv.id}>
+                    <span className={used ? "fed-invite-used" : expired ? "fed-invite-expired" : "fed-invite-active"}>
+                      {used ? "Used" : expired ? "Expired" : "Active"}
+                    </span>
+                    <span> · expires {new Date(inv.expires_at).toLocaleString()}</span>
+                    {used && inv.used_by_pubkey && (
+                      <> · used by <code>{inv.used_by_pubkey.slice(0, 16)}…</code></>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Danger zone */}
+      <div className="fed-block">
+        <div className="fed-block-title">Leave federation</div>
+        <div className="fed-block-body" style={{ color: "var(--muted)", fontSize: 13, marginBottom: 10 }}>
+          Marks this instance as draining. The background sweep re-replicates blobs/shards you host onto other peers, then removes the membership.
+        </div>
+        <button onClick={leave} disabled={busy || fed.status !== "active"}>
+          {fed.status === "draining" ? "Already draining…" : fed.status === "left" ? "Left" : "Leave federation"}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+type RootFolderRow = { id: number; name: string; federation_id: number | null; federation_role: string | null }
+
+const ContributeForm: React.FC<{ federationId: number; onDone: () => void; onCancel: () => void }> = ({ federationId, onDone, onCancel }) => {
+  const [folders, setFolders] = useState<RootFolderRow[] | null>(null)
+  const [folderId, setFolderId] = useState<number | null>(null)
+  const [quotaGB, setQuotaGB] = useState(50)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [newFolderName, setNewFolderName] = useState("")
+
+  useEffect(() => {
+    api.listFolders(null)
+      .then((rs: any) => {
+        const eligible = (rs as RootFolderRow[]).filter(f => !f.federation_role)
+        setFolders(eligible)
+      })
+      .catch(e => setError(e?.message ?? "Couldn't list folders"))
+  }, [])
+
+  const submit = async () => {
+    setBusy(true); setError(null)
+    try {
+      let targetId = folderId
+      if (!targetId && newFolderName.trim()) {
+        const created: any = await api.createFolder(newFolderName.trim(), null)
+        if (created?.error) { setError(created.error); return }
+        targetId = created.id
+      }
+      if (!targetId) { setError("Pick an existing folder or create a new one"); return }
+      const quotaBytes = Math.floor(quotaGB * GB_TO_BYTES)
+      const res: any = await api.setFederationContribution(federationId, targetId, quotaBytes)
+      if (res?.error) { setError(res.error); return }
+      onDone()
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to designate folder")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fed-form" style={{ marginTop: 10 }}>
+      <label>Quota (GB)</label>
+      <input
+        type="number"
+        min={1}
+        value={quotaGB}
+        onChange={e => setQuotaGB(Math.max(1, Number(e.target.value) || 1))}
+      />
+      <div className="fed-form-hint">How much disk space this instance is offering to the federation. Floor is 0.1 GB.</div>
+
+      <label style={{ marginTop: 10 }}>Existing folder</label>
+      <select
+        value={folderId ?? ""}
+        onChange={e => setFolderId(e.target.value ? Number(e.target.value) : null)}
+      >
+        <option value="">— pick a folder —</option>
+        {(folders ?? []).map(f => (
+          <option key={f.id} value={f.id}>{f.name}</option>
+        ))}
+      </select>
+      <div className="fed-form-hint">Only root-level folders that aren't already tied to a federation are eligible.</div>
+
+      <label style={{ marginTop: 10 }}>Or create a new dedicated folder</label>
+      <input
+        value={newFolderName}
+        onChange={e => setNewFolderName(e.target.value)}
+        placeholder="e.g. Federation: friends"
+      />
+
+      {error && <div className="msg err" style={{ marginTop: 10 }}>{error}</div>}
+
+      <div className="settings-actions">
+        <button onClick={onCancel} disabled={busy}>Cancel</button>
+        <button className="primary" onClick={submit} disabled={busy || (!folderId && !newFolderName.trim())}>
+          {busy ? "Saving…" : "Designate folder"}
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -5077,7 +5844,7 @@ const InvitesPanel: React.FC = () => {
   )
 }
 
-type SettingsTab = "profile" | "storage" | "security" | "developer" | "invites" | "account"
+type SettingsTab = "profile" | "storage" | "security" | "developer" | "federation" | "invites" | "account"
 
 const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => void }> = ({ onProfileUpdate, onAccountDeleted }) => {
   const current = api.getUser()
@@ -5101,6 +5868,22 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
     setTheme(t)
     setThemePref(t)
   }
+
+  // Probe owner-controlled feature toggles once on mount. Hides the
+  // Federation tab when the owner has the feature off (per user request)
+  // rather than showing it with a "feature unavailable" message. If the
+  // probe itself fails we err on the side of hiding — clicking into a
+  // disabled tab would only show the same "ask the owner" copy anyway.
+  const [federationOn, setFederationOn] = useState<boolean>(false)
+  useEffect(() => {
+    api.federationAvailable().then(setFederationOn).catch(() => setFederationOn(false))
+  }, [])
+
+  // If a user lands on Federation but the owner has since disabled it,
+  // bounce them back to Profile so they don't sit on an empty tab.
+  useEffect(() => {
+    if (tab === "federation" && !federationOn) setTab("profile")
+  }, [tab, federationOn])
 
   const saveProfile = async () => {
     setProfileMsg(null)
@@ -5142,6 +5925,7 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
     { id: "storage", label: "Storage" },
     { id: "security", label: "Security" },
     { id: "developer", label: "Developer" },
+    ...(federationOn ? [{ id: "federation" as const, label: "Federation" }] : []),
     { id: "invites", label: "Invites" },
     { id: "account", label: "Account" },
   ]
@@ -5229,6 +6013,8 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
 
           {tab === "developer" && <DeveloperPanel />}
 
+          {tab === "federation" && federationOn && <FederationPanel />}
+
           {tab === "invites" && <InvitesPanel />}
 
           {tab === "account" && (
@@ -5258,7 +6044,7 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
   )
 }
 
-type AdminSection = "users" | "invites" | "stats" | "audit" | "contact"
+type AdminSection = "users" | "invites" | "stats" | "audit" | "contact" | "settings"
 
 const AdminView: React.FC = () => {
   const me = api.getUser()
@@ -5282,17 +6068,109 @@ const AdminView: React.FC = () => {
         <div className="admin-sections">
           <button className={section === "users" ? "active" : ""} onClick={() => setSection("users")}>Users</button>
           <button className={section === "invites" ? "active" : ""} onClick={() => setSection("invites")}>Invites</button>
+          <button className={section === "settings" ? "active" : ""} onClick={() => setSection("settings")}>Settings</button>
           <button className={section === "contact" ? "active" : ""} onClick={() => setSection("contact")}>Contact</button>
           <button className={section === "stats" ? "active" : ""} onClick={() => setSection("stats")}>Stats</button>
           <button className={section === "audit" ? "active" : ""} onClick={() => setSection("audit")}>Audit</button>
         </div>
         {section === "users" && <AdminUsers meId={me.id} />}
         {section === "invites" && <AdminInvites />}
+        {section === "settings" && <AdminSettings />}
         {section === "contact" && <AdminContact />}
         {section === "stats" && <AdminStats />}
         {section === "audit" && <AdminAudit />}
       </div>
     </div>
+  )
+}
+
+const SETTING_LABELS: Record<string, string> = {
+  webdav_enabled: "WebDAV",
+  federation_enabled: "Federation",
+}
+
+const AdminSettings: React.FC = () => {
+  const [rows, setRows] = useState<api.AdminSetting[] | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = () => {
+    api.adminGetSettings()
+      .then(setRows)
+      .catch(e => setError(e?.message ?? "Failed to load settings"))
+  }
+
+  useEffect(() => { load() }, [])
+
+  const toggle = async (key: string, next: boolean) => {
+    setBusy(key)
+    setError(null)
+    try {
+      await api.adminUpdateSettings({ [key]: next })
+      load()
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to update setting")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (!rows) {
+    return (
+      <section className="settings-card">
+        <h3>Instance settings</h3>
+        <div style={{ color: "var(--muted)", fontSize: 14 }}>{error ?? "Loading…"}</div>
+      </section>
+    )
+  }
+
+  return (
+    <section className="settings-card">
+      <h3>Instance settings</h3>
+      <p style={{ color: "var(--muted)", fontSize: 13.5, margin: "0 0 16px", lineHeight: 1.55 }}>
+        Owner-controlled feature toggles. Changes take effect immediately — no
+        restart needed. Disabling a feature blocks its routes for everyone;
+        existing data (federation memberships, WebDAV credentials) is preserved
+        and resumes when you turn it back on.
+      </p>
+      {error && (
+        <div style={{ color: "var(--danger, #c0392b)", fontSize: 13, marginBottom: 12 }}>{error}</div>
+      )}
+      <div className="admin-settings-list">
+        {rows.map(row => {
+          const label = SETTING_LABELS[row.key] ?? row.key
+          const current = row.value === true
+          return (
+            <div key={row.key} className="admin-setting-row">
+              <div className="admin-setting-meta">
+                <div className="admin-setting-name">{label}</div>
+                <div className="admin-setting-key">{row.key}</div>
+                <div className="admin-setting-desc">{row.description}</div>
+                {row.updated_at && (
+                  <div className="admin-setting-updated">
+                    Last changed {new Date(row.updated_at).toLocaleString()}
+                  </div>
+                )}
+              </div>
+              <div className="admin-setting-control">
+                <label className="admin-setting-toggle">
+                  <input
+                    type="checkbox"
+                    checked={current}
+                    disabled={busy === row.key}
+                    onChange={(e) => toggle(row.key, e.target.checked)}
+                  />
+                  <span className="admin-setting-track" aria-hidden="true">
+                    <span className="admin-setting-thumb" />
+                  </span>
+                  <span className="admin-setting-state">{current ? "On" : "Off"}</span>
+                </label>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
   )
 }
 

@@ -18,6 +18,13 @@ export const Footer: React.FC = () => (
         <a href="/docs/">Docs</a>
       </div>
       <div>
+        <h4>Features</h4>
+        <a href="/federation">Federation</a>
+        <a href="/webdav">WebDAV</a>
+        <a href="/docs/s3">S3-compatible API</a>
+        <a href="/docs/actions">Action folders</a>
+      </div>
+      <div>
         <h4>Open source</h4>
         <a href={REPO} target="_blank" rel="noreferrer">GitHub</a>
         <a href={`${REPO}/blob/main/LICENSE`} target="_blank" rel="noreferrer">Apache 2.0</a>

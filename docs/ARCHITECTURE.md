@@ -74,6 +74,9 @@ src/
   usage/                — storage-usage + quota-check helpers
   storage/              — pluggable blob backends (s3/, local/) behind a StorageDriver interface
   email/                — Resend integration + transactional templates
+  federation/           — invite-gated peer networks; pairing, signed transport, placement, erasure coding, drain (see FEDERATION.md)
+  webdav/               — RFC 4918 WebDAV server at /webdav (see WEBDAV.md). Owner-gated via admin settings
+  settings/             — DB-backed owner toggles (webdav_enabled, federation_enabled). Runtime gate, no restart needed
   actions/              — folder-action dispatch + built-in registry
   util/                 — small helpers (token, username)
   web/                  — single-file React SPA + serve.ts proxy
@@ -171,5 +174,7 @@ Started from `src/server.ts` on a `setInterval`. Each one is wrapped in a "runni
 - Expired password-reset tokens (1 h TTL) — every hour
 - Expired WebAuthn challenges (5 min TTL) — every 5 min
 - Expired share rows — every hour (started from `shareRoutes`)
+- Expired federation invites (7-day default TTL) — every hour
+- Federation drain re-replication — every 10 min; moves blobs off members marked `draining` until empty, then flips them to `left`
 
 All sweeps also run once at boot so the first request after restart doesn't see stale rows.

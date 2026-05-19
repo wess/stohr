@@ -38,10 +38,10 @@ export const Landing: React.FC = () => {
             Your rules.
           </h1>
           <p className="lp-lede">
-            Photo galleries, scriptable folders, public sharing, an
-            S3-compatible API — without the surveillance, the upsells, or
-            the dark patterns. Free and open source; run it yourself on a
-            $6 droplet.
+            Photo galleries, scriptable folders, encrypted federation with
+            friends, mount-as-a-drive WebDAV, an S3-compatible API — without
+            the surveillance, the upsells, or the dark patterns. Free and
+            open source; run it yourself on a $6 droplet.
           </p>
           <div className="lp-cta-row">
             <a href={REPO} target="_blank" rel="noreferrer" className="lp-btn lp-btn-primary lp-btn-lg"><Github size={16} strokeWidth={2} /> View on GitHub</a>
@@ -59,6 +59,8 @@ export const Landing: React.FC = () => {
         </a>
         <span className="lp-trust-item">Apache 2.0</span>
         <span className="lp-trust-item">Self-hosted</span>
+        <span className="lp-trust-item">Federated</span>
+        <span className="lp-trust-item">WebDAV</span>
         <span className="lp-trust-item">S3-compatible</span>
         <span className="lp-trust-item">Bun · React · Postgres</span>
       </section>

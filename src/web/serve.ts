@@ -38,6 +38,22 @@ Bun.serve({
       })
       return new Response(res.body, { status: res.status, headers: res.headers })
     }
+    // WebDAV pass-through. OS-level WebDAV clients (Finder, Explorer) connect
+    // to the public hostname (whatever Caddy terminates on), not the API
+    // port directly. They speak HTTP Basic — the API's WebDAV handler reads
+    // Authorization off the request, so we just forward headers verbatim.
+    // Methods include PROPFIND, MKCOL, MOVE, COPY in addition to standard
+    // GET/PUT/DELETE — they pass through fine because we don't constrain
+    // req.method here.
+    if (url.pathname === "/webdav" || url.pathname.startsWith("/webdav/")) {
+      const target = `${API}${url.pathname}${url.search}`
+      const res = await fetch(target, {
+        method: req.method,
+        headers: req.headers,
+        body: req.body,
+      })
+      return new Response(res.body, { status: res.status, headers: res.headers })
+    }
     return new Response("Not Found", { status: 404 })
   },
   development: isDev ? { hmr: true, console: true } : false,

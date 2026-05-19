@@ -93,6 +93,39 @@ body {
   --lp-accent: #5E81AC;
   --lp-warm: #D08770;
 
+  /* The marketing/docs site is always light-themed by design. The app SPA
+     (src/web) is what honors data-theme. Re-pin the global theme tokens to
+     light values inside .lp so .devp-* and .docs-* panels never end up
+     light-text-on-light-background when the OS reports dark mode. */
+  --bg: #E5E9F0;
+  --panel: #ECEFF4;
+  --panel-elev: #FFFFFF;
+  --border: #D8DEE9;
+  --border-strong: #C8D0DD;
+  --text: #2E3440;
+  --text-soft: #3B4252;
+  --muted: #4C566A;
+  --brand: #5E81AC;
+  --shadow: 0 1px 2px rgba(46, 52, 64, 0.04), 0 2px 6px rgba(46, 52, 64, 0.06);
+  --shadow-lg: 0 1px 2px rgba(46, 52, 64, 0.05), 0 12px 28px -10px rgba(46, 52, 64, 0.18);
+
+  /* CodeBlock on /developers (and inside any .devp-code on docs pages) reads
+     from --tk-*. In OS-dark mode the global [data-theme="dark"] flips these
+     to muted greys that look almost transparent on the .lp's pinned-light
+     panel — pin them back to the light palette here too. */
+  --tk-comment:     #738699;
+  --tk-string:      #A0552B;
+  --tk-number:      #8B5E96;
+  --tk-keyword:     #5E81AC;
+  --tk-builtin:     #4F7E91;
+  --tk-variable:    #4F7E91;
+  --tk-flag:        #8B5E96;
+  --tk-key:         #5E81AC;
+  --tk-punctuation: #4C566A;
+  --tk-operator:    #4C566A;
+
+  color-scheme: light;
+
   background: var(--lp-bg);
   color: var(--lp-ink);
   font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
@@ -374,6 +407,17 @@ body {
   border-radius: 4px;
   color: var(--lp-ink);
   border: 1px solid var(--lp-line);
+}
+.lp-feature-text kbd {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.82em;
+  background: var(--lp-bg);
+  padding: 1px 7px;
+  border-radius: 4px;
+  color: var(--lp-ink);
+  border: 1px solid var(--lp-line);
+  border-bottom-width: 2px;
+  font-weight: 500;
 }
 .lp-feature-vis {
   display: flex;
@@ -798,6 +842,354 @@ body {
 }
 .lp-mock-link-preview-text strong { font-weight: 600; }
 .lp-mock-link-preview-text span { font-size: 12px; color: var(--lp-muted); }
+
+/* ───────── Federation mock ───────── */
+
+.lp-mock-fed-stat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(94,129,172,0.10) 0%, rgba(94,129,172,0.04) 100%);
+  border: 1px solid rgba(94,129,172,0.22);
+  margin-bottom: 14px;
+}
+.lp-mock-fed-stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--lp-ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.lp-mock-fed-stat-label {
+  font-size: 12px;
+  color: var(--lp-muted);
+  margin-top: 4px;
+}
+.lp-mock-fed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--lp-ink);
+  color: #ECEFF4;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.lp-mock-fed-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lp-mock-fed-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: rgba(245, 239, 222, 0.45);
+  border: 1px solid var(--lp-line);
+  font-size: 13px;
+}
+.lp-mock-fed-host {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  color: var(--lp-ink);
+}
+.lp-mock-fed-host svg { color: var(--lp-muted); }
+.lp-mock-fed-meta {
+  font-size: 11.5px;
+  color: var(--lp-muted);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 540px) {
+  .lp-mock-fed-stat-value { font-size: 22px; }
+  .lp-mock-fed-list li { font-size: 12px; padding: 7px 9px; }
+}
+
+/* ───────── /federation + /webdav marketing pages (.fx-*) ───────── */
+
+/* "Learn more →" inline link inside the feature body copy on the landing
+   page — picks up the warm accent so it reads as a call-to-action without
+   needing its own button. */
+.lp-inline-more {
+  color: var(--lp-warm);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  margin-left: 4px;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s;
+}
+.lp-inline-more:hover { border-bottom-color: var(--lp-warm); }
+
+/* ── Hero "network" diagram on /federation ── */
+.fx-net {
+  position: relative;
+  width: 100%;
+  max-width: 540px;
+  aspect-ratio: 1;
+  background: #ffffff;
+  border: 1px solid var(--lp-line);
+  border-radius: 18px;
+  box-shadow: 0 1px 2px rgba(46, 52, 64, 0.05),
+              0 18px 40px -16px rgba(46, 52, 64, 0.22);
+  background-image:
+    radial-gradient(circle at 50% 50%, transparent 70px, var(--lp-line) 71px, transparent 72px),
+    radial-gradient(circle at 50% 50%, transparent 135px, var(--lp-line) 136px, transparent 137px);
+}
+.fx-net-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--lp-bg-2);
+  border: 1px solid var(--lp-line);
+  border-radius: 10px;
+  font-size: 11px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--lp-ink);
+  min-width: 92px;
+  text-align: center;
+  box-shadow: 0 4px 12px -4px rgba(46, 52, 64, 0.12);
+}
+.fx-net-node svg { color: var(--lp-accent); }
+.fx-net-center {
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--lp-ink);
+  color: #ECEFF4;
+  border-color: var(--lp-ink);
+  z-index: 2;
+}
+.fx-net-center svg { color: #ECEFF4; }
+.fx-net-n { top: 5%;  left: 50%; transform: translateX(-50%); }
+.fx-net-s { bottom: 5%; left: 50%; transform: translateX(-50%); }
+.fx-net-w { left: 5%;  top: 50%; transform: translateY(-50%); }
+.fx-net-e { right: 5%; top: 50%; transform: translateY(-50%); }
+.fx-net-pill {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: var(--lp-warm);
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+@media (max-width: 720px) {
+  .fx-net { max-width: 100%; }
+  .fx-net-node { min-width: 80px; font-size: 10px; padding: 6px 8px; }
+}
+
+/* ── Pitch / problem framing block ── */
+.fx-pitch {
+  max-width: 760px;
+  margin: 0 auto;
+}
+.fx-pitch h2 {
+  font-size: clamp(28px, 4vw, 44px);
+  margin: 0 0 16px;
+}
+.fx-pitch-lede {
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--lp-ink-soft);
+  margin: 0 0 16px;
+}
+.fx-pitch-lede:last-child { margin-bottom: 0; }
+
+/* ── Mode comparison cards ── */
+.fx-modes {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+  margin-top: 24px;
+}
+@media (min-width: 880px) {
+  .fx-modes { grid-template-columns: 1fr 1fr; }
+}
+.fx-mode-card {
+  background: var(--panel-elev);
+  border: 1px solid var(--lp-line);
+  border-radius: var(--radius);
+  padding: 24px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+}
+.fx-mode-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--lp-ink);
+  margin-bottom: 6px;
+}
+.fx-mode-head svg { color: var(--lp-accent); }
+.fx-mode-tag {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--lp-warm);
+  margin-bottom: 18px;
+}
+.fx-mode-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+.fx-mode-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14.5px;
+  color: var(--lp-ink-soft);
+  line-height: 1.5;
+}
+.fx-mode-list li svg {
+  color: #4F6E3B;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+.fx-mode-foot {
+  font-size: 13px;
+  color: var(--lp-muted);
+  padding-top: 14px;
+  border-top: 1px solid var(--lp-line);
+}
+.fx-mode-foot strong { color: var(--lp-ink); }
+
+.fx-mode-note {
+  max-width: 760px;
+  margin: 28px auto 0;
+  padding: 14px 18px;
+  border: 1px dashed var(--lp-line);
+  border-radius: 10px;
+  background: var(--lp-bg-2);
+  font-size: 14px;
+  color: var(--lp-ink-soft);
+  line-height: 1.55;
+}
+.fx-mode-note strong { color: var(--lp-ink); }
+
+/* ── How it works flow ── */
+.fx-flow {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+@media (min-width: 720px) {
+  .fx-flow { grid-template-columns: repeat(2, 1fr); }
+}
+@media (min-width: 1080px) {
+  .fx-flow { grid-template-columns: repeat(4, 1fr); }
+}
+.fx-flow-step {
+  background: var(--panel-elev);
+  border: 1px solid var(--lp-line);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+  position: relative;
+}
+.fx-flow-num {
+  font-family: "Inter", -apple-system, sans-serif;
+  font-feature-settings: "tnum";
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--lp-warm);
+  margin-bottom: 10px;
+}
+.fx-flow-step h4 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: var(--lp-ink);
+  letter-spacing: -0.01em;
+}
+.fx-flow-step p {
+  font-size: 14px;
+  color: var(--lp-ink-soft);
+  line-height: 1.55;
+  margin: 0;
+}
+
+/* ── Versus alternative comparison ── */
+.fx-vs {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+}
+@media (min-width: 720px) {
+  .fx-vs { grid-template-columns: 1fr 1fr; }
+}
+.fx-vs-col {
+  background: var(--panel-elev);
+  border: 1px solid var(--lp-line);
+  border-radius: var(--radius);
+  padding: 24px;
+  box-shadow: var(--shadow);
+}
+.fx-vs-col-good {
+  border-color: var(--lp-accent);
+  background: linear-gradient(180deg, rgba(94, 129, 172, 0.04) 0%, var(--panel-elev) 60%);
+}
+.fx-vs-head {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--lp-ink);
+  letter-spacing: -0.01em;
+  margin-bottom: 14px;
+}
+.fx-vs-col-good .fx-vs-head { color: var(--lp-accent); }
+.fx-vs-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fx-vs-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--lp-ink-soft);
+}
+.fx-vs-list li svg { flex-shrink: 0; margin-top: 4px; }
+.fx-vs-bad li svg { color: #B5685A; }
+.fx-vs-good li svg { color: #4F6E3B; }
 
 .lp-mock-term {
   padding: 0;

@@ -427,6 +427,185 @@ export const getMyUsage = () =>
 export const adminSetUserQuota = (id: number, quotaBytes: number) =>
   jsonReq("POST", `/admin/users/${id}/quota`, { quota_bytes: quotaBytes })
 
+export type AdminSetting = {
+  key: string
+  value: unknown
+  type: "boolean"
+  description: string
+  default: unknown
+  updated_by: number | null
+  updated_at: string | null
+}
+
+export const adminGetSettings = () =>
+  jsonReq("GET", "/admin/settings") as Promise<AdminSetting[]>
+
+export const adminUpdateSettings = (updates: Record<string, unknown>) =>
+  jsonReq("PATCH", "/admin/settings", updates)
+
+export type WebdavStatus = {
+  enabled: boolean
+  last_used_at: string | null
+  updated_at: string | null
+  password?: string  // only present on POST response
+}
+
+export const getWebdav = () =>
+  jsonReq("GET", "/me/webdav") as Promise<WebdavStatus>
+
+export const enableWebdav = () =>
+  jsonReq("POST", "/me/webdav", {}) as Promise<WebdavStatus>
+
+export const disableWebdav = () =>
+  jsonReq("DELETE", "/me/webdav") as Promise<{ disabled: boolean }>
+
+// ──────────────── Federation ────────────────
+
+export type FederationType = "content-sharing" | "space-offering"
+
+export type FederationSummary = {
+  id: number
+  slug: string
+  name: string
+  description: string | null
+  type: FederationType
+  public_key: string
+  replication_factor: number
+  erasure_k: number | null
+  erasure_m: number | null
+  quota_multiplier: string
+  created_at: string
+  local_member: {
+    is_admin: boolean
+    contributed_bytes: number | string
+    used_bytes: number | string
+    status: "active" | "draining" | "left"
+  }
+}
+
+export type FederationDetail = {
+  id: number
+  slug: string
+  name: string
+  description: string | null
+  type: FederationType
+  public_key: string
+  public_key_raw: string
+  replication_factor: number
+  erasure_k: number | null
+  erasure_m: number | null
+  quota_multiplier: string
+  is_admin: boolean
+  contributed_bytes: number
+  used_bytes: number
+  status: "active" | "draining" | "left"
+  created_at: string
+}
+
+export type FederationMember = {
+  id: number
+  peer_pubkey: string
+  peer_base_url: string
+  display_name: string | null
+  is_local: boolean
+  is_admin: boolean
+  contributed_bytes: number
+  used_bytes: number
+  status: "active" | "draining" | "left"
+  joined_at: string
+  last_seen_at: string | null
+}
+
+export type FederationInvite = {
+  id: number
+  expires_at: string
+  used_at: string | null
+  used_by_pubkey: string | null
+  created_by: number | null
+  created_at: string
+}
+
+export type FederationUsage = {
+  federation_id: number
+  contributed_bytes: number
+  used_bytes: number
+  quota_multiplier: number
+  allowance_bytes: number
+  available_bytes: number
+}
+
+export type InstanceKeys = {
+  ed25519_pubkey: string
+  x25519_pubkey: string
+}
+
+export const listFederations = () =>
+  jsonReq("GET", "/me/federations") as Promise<FederationSummary[]>
+
+export const createFederation = (input: {
+  slug: string
+  name: string
+  description?: string
+  type: FederationType
+  replication_factor?: number
+  erasure_k?: number
+  erasure_m?: number
+  quota_multiplier?: number
+}) =>
+  jsonReq("POST", "/me/federations", input)
+
+export const getFederation = (id: number) =>
+  jsonReq("GET", `/me/federations/${id}`) as Promise<FederationDetail>
+
+export const leaveFederation = (id: number) =>
+  jsonReq("DELETE", `/me/federations/${id}`)
+
+export const listFederationMembers = (id: number) =>
+  jsonReq("GET", `/me/federations/${id}/members`) as Promise<FederationMember[]>
+
+export const mintFederationInvite = (id: number, ttlHours?: number) =>
+  jsonReq("POST", `/me/federations/${id}/invites`, ttlHours ? { ttl_hours: ttlHours } : {}) as Promise<{ token: string; expires_at: string }>
+
+export const listFederationInvites = (id: number) =>
+  jsonReq("GET", `/me/federations/${id}/invites`) as Promise<FederationInvite[]>
+
+export const revokeFederationInvite = (id: number, inviteId: number) =>
+  jsonReq("DELETE", `/me/federations/${id}/invites/${inviteId}`)
+
+export const acceptFederationInvite = (token: string, displayName?: string) =>
+  jsonReq("POST", "/me/federations/accept", { invite: token, display_name: displayName })
+
+export const getFederationUsage = (id: number) =>
+  jsonReq("GET", `/me/federations/${id}/usage`) as Promise<FederationUsage>
+
+export const setFederationContribution = (id: number, folderId: number, quotaBytes: number) =>
+  jsonReq("POST", `/me/federations/${id}/folders/${folderId}/contribute`, { quota_bytes: quotaBytes })
+
+export const updateFederationContribution = (id: number, folderId: number, quotaBytes: number) =>
+  jsonReq("PATCH", `/me/federations/${id}/folders/${folderId}/contribute`, { quota_bytes: quotaBytes })
+
+export const releaseFederationContribution = (id: number, folderId: number) =>
+  jsonReq("DELETE", `/me/federations/${id}/folders/${folderId}/contribute`)
+
+export const createFederationMount = (id: number, name?: string, parentId?: number | null) =>
+  jsonReq("POST", `/me/federations/${id}/folders/mount`, { name, parent_id: parentId })
+
+export const getInstanceKeys = () =>
+  jsonReq("GET", "/me/federations/instance/keys") as Promise<InstanceKeys>
+
+// Lightweight "is this feature on for me?" probe. Returns true when the
+// owner has enabled the feature on the instance, false when they haven't.
+// Implementation: hit the list endpoint and look at the response shape.
+// A normal response is an array (possibly empty). A disabled feature
+// responds 503 with `{ error: "... disabled on this instance ..." }`, which
+// jsonReq surfaces as the parsed body (not an exception).
+export const federationAvailable = async (): Promise<boolean> => {
+  try {
+    const res = await jsonReq("GET", "/me/federations") as unknown
+    return Array.isArray(res)
+  } catch { return false }
+}
+
 export const listS3Keys = () =>
   jsonReq("GET", "/me/s3-keys")
 

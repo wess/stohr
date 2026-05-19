@@ -1294,6 +1294,462 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
   margin-top: 4px;
 }
 
+/* Admin → Settings — owner-controlled feature toggles. */
+.admin-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.admin-setting-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.admin-setting-meta { flex: 1; min-width: 0; }
+.admin-setting-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.admin-setting-key {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.admin-setting-desc {
+  font-size: 13px;
+  color: var(--text-soft);
+  line-height: 1.55;
+  margin-top: 8px;
+}
+.admin-setting-updated {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.admin-setting-control {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+.admin-setting-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.admin-setting-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+}
+.admin-setting-track {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--border-strong, var(--border));
+  transition: background 0.18s ease;
+  flex-shrink: 0;
+}
+.admin-setting-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.18s ease;
+}
+.admin-setting-toggle input:checked + .admin-setting-track {
+  background: var(--brand);
+}
+.admin-setting-toggle input:checked + .admin-setting-track .admin-setting-thumb {
+  transform: translateX(18px);
+}
+.admin-setting-toggle input:disabled + .admin-setting-track {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.admin-setting-state {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-soft);
+  min-width: 24px;
+}
+
+/* Settings → Developer → WebDAV — status block + connect instructions. */
+.webdav-status {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.webdav-status-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-soft);
+}
+.webdav-status-label {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11.5px;
+}
+.webdav-status-on {
+  color: var(--brand);
+  font-weight: 600;
+}
+.webdav-status-off {
+  color: var(--muted);
+  font-weight: 600;
+}
+.webdav-howto {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.webdav-howto-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.webdav-howto ol {
+  margin: 0;
+  padding-left: 22px;
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.webdav-howto ol li { margin-bottom: 4px; }
+.webdav-howto code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.webdav-howto kbd {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11.5px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--text);
+}
+.webdav-howto-foot {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.webdav-howto-foot a { color: var(--brand); text-decoration: none; }
+.webdav-howto-foot a:hover { text-decoration: underline; }
+
+/* Federation panel in Settings → Federation. */
+.fed-instance {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.fed-instance-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.fed-instance-label {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.fed-instance code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+.fed-instance-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+.fed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fed-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: var(--text);
+  transition: border-color 0.12s, background 0.12s;
+}
+.fed-row:hover { border-color: var(--brand); background: var(--panel); }
+.fed-row-main { flex: 1; min-width: 0; }
+.fed-row-name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.fed-row-meta {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.fed-row-meta code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11.5px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--text);
+}
+
+.fed-pill {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  display: inline-block;
+}
+.fed-pill-admin { background: var(--brand); color: #fff; }
+.fed-pill-csh   { background: rgba(94, 129, 172, 0.16); color: var(--brand); }
+.fed-pill-spo   { background: rgba(180, 142, 173, 0.18); color: #8E6E92; }
+.fed-pill-warn  { background: rgba(208, 135, 112, 0.18); color: #B5685A; }
+
+.fed-form {
+  margin-top: 14px;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.fed-form label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.fed-form input,
+.fed-form textarea,
+.fed-form select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+}
+.fed-form textarea { resize: vertical; min-height: 80px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+.fed-form-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.fed-type-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.fed-type-choice > label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  cursor: pointer;
+  margin: 0;
+  min-width: 0;
+}
+.fed-type-choice > label.active {
+  border-color: var(--brand);
+  background: var(--panel);
+}
+.fed-type-choice input[type="radio"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+/* Inner text column must opt into shrinking (default flex item min-width is
+   `auto`, which keeps the column at its intrinsic content width and pushes
+   long descriptions out the right edge of the card). */
+.fed-type-choice > label > div {
+  flex: 1;
+  min-width: 0;
+}
+.fed-type-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.fed-type-desc {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.fed-back {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+}
+.fed-back:hover { color: var(--text); }
+
+.fed-usage {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 24px;
+}
+.fed-usage-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+  color: var(--text-soft);
+  padding: 4px 0;
+}
+.fed-usage-row strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.fed-usage-mult {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.fed-block {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.fed-block-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.fed-block-body { line-height: 1.55; }
+.fed-block-body a { color: var(--brand); text-decoration: none; }
+.fed-block-body a:hover { text-decoration: underline; }
+
+.fed-member-list,
+.fed-invite-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fed-member-list li {
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.fed-member-inactive { opacity: 0.6; }
+.fed-member-pubkey {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.fed-member-pubkey code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+.fed-member-meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.fed-invite-list { margin-top: 12px; }
+.fed-invite-list li {
+  font-size: 12.5px;
+  color: var(--text-soft);
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.fed-invite-list li:first-child { border-top: none; }
+.fed-invite-active { color: var(--brand); font-weight: 600; }
+.fed-invite-used { color: var(--muted); font-weight: 600; }
+.fed-invite-expired { color: #B5685A; font-weight: 600; }
+.fed-invite-list code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11.5px;
+}
+
 /* Storage usage panel */
 .sub-current { margin-top: 4px; }
 .sub-tier-row {

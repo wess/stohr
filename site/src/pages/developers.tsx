@@ -139,6 +139,9 @@ const folders = await r.json()`}</CodeBlock>
               <tr><td><code>/admin</code></td><td>owner-only: users, invites, audit, OAuth clients</td></tr>
               <tr><td><code>/p</code></td><td>public folders &amp; files (no auth)</td></tr>
               <tr><td><code>/s3</code></td><td>S3-compatible bucket — see <a href="/docs/s3">S3 docs</a></td></tr>
+              <tr><td><code>/me/federations</code></td><td>create, accept invites, mount; <a href="/docs/federation">federation docs</a></td></tr>
+              <tr><td><code>/webdav</code></td><td>RFC 4918 endpoint when enabled by the owner; <a href="/docs/webdav">WebDAV docs</a></td></tr>
+              <tr><td><code>/admin/settings</code></td><td>owner toggles for WebDAV + federation, no restart needed</td></tr>
             </tbody>
           </table>
         </div>
@@ -239,6 +242,14 @@ const folders = await r.json()`}</CodeBlock>
           <a className="devp-card devp-card-link" href="/docs/architecture">
             <h3>Architecture</h3>
             <p>Process layout, request pipeline, permission model, background sweeps.</p>
+          </a>
+          <a className="devp-card devp-card-link" href="/docs/federation">
+            <h3>Federation</h3>
+            <p>Pair Stohr instances in invite-gated networks. Pool storage, or share libraries with end-to-end encryption.</p>
+          </a>
+          <a className="devp-card devp-card-link" href="/docs/webdav">
+            <h3>WebDAV</h3>
+            <p>Mount your Stohr account from macOS Finder, Windows Explorer, GNOME Files, or <code>rclone</code>.</p>
           </a>
           <a className="devp-card devp-card-link" href="/docs/oauth">
             <h3>OAuth 2.0 provider</h3>

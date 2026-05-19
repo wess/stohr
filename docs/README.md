@@ -9,10 +9,12 @@ In-depth guides for installing, deploying, and integrating with Stohr.
 - [**Deploy**](DEPLOY.md) — turn-key Droplet deploy, App Platform alternative, manual setup, post-deploy verification, troubleshooting, backups, rollback
 - [**REST API**](API.md) — every endpoint, grouped by resource; error codes, rate-limit responses, OAuth scopes
 - [**OAuth 2.0**](OAUTH.md) — Authorization Code + PKCE and Device Authorization Grant for third-party apps
+- [**Federation**](FEDERATION.md) — encrypted invite-gated peer networks for pooled storage; content-sharing and space-offering modes
+- [**WebDAV**](WEBDAV.md) — mount Stohr as a network drive from macOS Finder, Windows Explorer, GNOME, `rclone`, etc.
 - [**Action folders**](ACTIONS.md) — folders that run actions on file/folder events; how to write a built-in
 - [**S3-compatible endpoints**](S3.md) — using Stohr with `aws-cli`, `boto3`, or any AWS SDK
 - [**SDKs**](SDKS.md) — TypeScript / Dart / Swift / Kotlin client libraries
-- [**Admin panel**](ADMIN.md) — owner-only operations: users, invites, audit, OAuth clients
+- [**Admin panel**](ADMIN.md) — owner-only operations: users, invites, audit, OAuth clients, instance settings (WebDAV / federation toggles)
 
 Cross-cutting:
 

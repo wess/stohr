@@ -62,6 +62,22 @@ These three must be set together. A passkey created against one `RP_ID` cannot b
 | `RP_NAME` | `Stohr` | Display name shown in the OS-level passkey UI |
 | `RP_ORIGIN` | `http://localhost:3001` | Full origin the SPA is served from. Must match what the browser sees |
 
+### Federation
+
+| var | default | purpose |
+| --- | --- | --- |
+| `FEDERATION_PUBLIC_URL` | (empty → falls back to `APP_URL`) | The URL other Stohr instances should hit for peer-to-peer traffic (invite acceptance, blob/shard PUT/GET/DELETE, drain re-replication). Set this only when peer traffic should enter on a different hostname than the user-facing web app |
+
+The feature itself is toggled from **Admin → Settings** (`federation_enabled`), not via env. See [FEDERATION.md](FEDERATION.md).
+
+### WebDAV
+
+WebDAV has no env var on new deploys — it's an owner toggle (`webdav_enabled`) in **Admin → Settings**. See [WEBDAV.md](WEBDAV.md).
+
+| var | default | purpose |
+| --- | --- | --- |
+| `WEBDAV_ENABLED` | (empty) | **Legacy / upgrade-only.** Pre-Admin-Settings releases gated WebDAV via this env var. The seed-on-first-boot path reads this once and writes `webdav_enabled=true` into the DB if it was previously `true`, so upgrades don't silently lose WebDAV. After upgrade, manage from Admin → Settings and ignore this var |
+
 ### Security & deployment
 
 | var | default | purpose |

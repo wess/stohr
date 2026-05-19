@@ -147,6 +147,9 @@ export const folders = defineSchema("folders", {
   name: column.text(),
   kind: column.text().default("standard"),
   is_public: column.boolean().default(false),
+  federation_id: column.integer().nullable().ref("federations", "id"),
+  federation_role: column.text().nullable(),
+  federation_quota_bytes: column.bigint().default(0),
   deleted_at: column.timestamp().nullable(),
   created_at: column.timestamp().default("now()"),
 })
@@ -253,6 +256,109 @@ export const userActions = defineSchema("user_actions", {
   forked_from: column.text().nullable(),
   created_at: column.timestamp().default("now()"),
   updated_at: column.timestamp().default("now()"),
+})
+
+export const instanceKeys = defineSchema("instance_keys", {
+  id: column.integer().primaryKey(),
+  public_key: column.text(),
+  private_key: column.text(),
+  x25519_public_key: column.text(),
+  x25519_private_key: column.text(),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const federations = defineSchema("federations", {
+  id: column.serial().primaryKey(),
+  slug: column.text().unique(),
+  name: column.text(),
+  description: column.text().nullable(),
+  type: column.text(),
+  public_key: column.text(),
+  private_key: column.text().nullable(),
+  replication_factor: column.integer().default(3),
+  erasure_k: column.integer().nullable(),
+  erasure_m: column.integer().nullable(),
+  quota_multiplier: column.text().default("1.0"),
+  group_key_encrypted: column.text().nullable(),
+  created_by: column.integer().nullable().ref("users", "id"),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const federationMembers = defineSchema("federation_members", {
+  id: column.serial().primaryKey(),
+  federation_id: column.integer().ref("federations", "id"),
+  user_id: column.integer().nullable().ref("users", "id"),
+  peer_pubkey: column.text(),
+  peer_x25519_pubkey: column.text().nullable(),
+  peer_base_url: column.text(),
+  display_name: column.text().nullable(),
+  is_local: column.boolean().default(false),
+  is_admin: column.boolean().default(false),
+  contributed_bytes: column.bigint().default(0),
+  used_bytes: column.bigint().default(0),
+  status: column.text().default("active"),
+  joined_at: column.timestamp().default("now()"),
+  last_seen_at: column.timestamp().nullable(),
+})
+
+export const federationInvites = defineSchema("federation_invites", {
+  id: column.serial().primaryKey(),
+  federation_id: column.integer().ref("federations", "id"),
+  token_hash: column.text().unique(),
+  expires_at: column.timestamp(),
+  used_at: column.timestamp().nullable(),
+  used_by_pubkey: column.text().nullable(),
+  created_by: column.integer().nullable().ref("users", "id"),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const federationBlobs = defineSchema("federation_blobs", {
+  id: column.serial().primaryKey(),
+  federation_id: column.integer().ref("federations", "id"),
+  blob_id: column.text(),
+  size: column.bigint(),
+  owner_pubkey: column.text(),
+  owner_user_id: column.integer().nullable().ref("users", "id"),
+  peer_pubkey: column.text(),
+  local_storage_key: column.text().nullable(),
+  encrypted_metadata: column.text().nullable(),
+  file_id: column.integer().nullable().ref("files", "id"),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const federationShards = defineSchema("federation_shards", {
+  id: column.serial().primaryKey(),
+  federation_id: column.integer().ref("federations", "id"),
+  blob_id: column.text(),
+  shard_index: column.integer(),
+  shard_k: column.integer(),
+  shard_m: column.integer(),
+  size: column.bigint(),
+  total_size: column.bigint(),
+  owner_pubkey: column.text(),
+  owner_user_id: column.integer().nullable().ref("users", "id"),
+  peer_pubkey: column.text(),
+  local_storage_key: column.text().nullable(),
+  encrypted_metadata: column.text().nullable(),
+  file_id: column.integer().nullable().ref("files", "id"),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const webdavCredentials = defineSchema("webdav_credentials", {
+  user_id: column.integer().primaryKey().ref("users", "id"),
+  token_hash: column.text().nullable(),
+  enabled: column.boolean().default(false),
+  last_used_at: column.timestamp().nullable(),
+  updated_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const instanceSettings = defineSchema("instance_settings", {
+  key: column.text().primaryKey(),
+  value: column.text(),
+  updated_by: column.integer().nullable().ref("users", "id"),
+  updated_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default("now()"),
 })
 
 export const contactMessages = defineSchema("contact_messages", {

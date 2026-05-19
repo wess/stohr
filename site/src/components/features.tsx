@@ -6,6 +6,11 @@ import {
   Check,
   ArrowRight,
   Zap,
+  Network,
+  Server,
+  Lock,
+  HardDrive,
+  Cloud,
 } from "lucide-react"
 
 const PhotoGridMock: React.FC = () => (
@@ -107,6 +112,86 @@ const LinkMock: React.FC = () => (
   </div>
 )
 
+const FederationMock: React.FC = () => (
+  <div className="lp-mock lp-mock-card lp-mock-fed" aria-hidden="true">
+    <div className="lp-mock-card-head">
+      <Network size={16} strokeWidth={1.75} />
+      <strong>friends-of-the-pod</strong>
+      <span className="lp-mock-public-pill">Federation</span>
+    </div>
+    <div className="lp-mock-fed-stat">
+      <div>
+        <div className="lp-mock-fed-stat-value">5.2 TB</div>
+        <div className="lp-mock-fed-stat-label">Pooled across 4 peers</div>
+      </div>
+      <div className="lp-mock-fed-badge">
+        <Lock size={11} strokeWidth={2.5} />
+        E2E encrypted
+      </div>
+    </div>
+    <ul className="lp-mock-fed-list">
+      <li>
+        <span className="lp-mock-fed-host"><Server size={12} strokeWidth={1.75} /> wess@home</span>
+        <span className="lp-mock-fed-meta">2.1 / 2.0 TB</span>
+        <span className="lp-mock-role lp-mock-role-owner">Admin</span>
+      </li>
+      <li>
+        <span className="lp-mock-fed-host"><Server size={12} strokeWidth={1.75} /> alice@studio</span>
+        <span className="lp-mock-fed-meta">1.4 / 1.5 TB</span>
+        <span className="lp-mock-role lp-mock-role-editor">Member</span>
+      </li>
+      <li>
+        <span className="lp-mock-fed-host"><Server size={12} strokeWidth={1.75} /> ben@nas</span>
+        <span className="lp-mock-fed-meta">0.9 / 1.0 TB</span>
+        <span className="lp-mock-role lp-mock-role-editor">Member</span>
+      </li>
+      <li>
+        <span className="lp-mock-fed-host"><Server size={12} strokeWidth={1.75} /> cara@cloud</span>
+        <span className="lp-mock-fed-meta">0.8 / 1.0 TB</span>
+        <span className="lp-mock-role lp-mock-role-editor">Member</span>
+      </li>
+    </ul>
+  </div>
+)
+
+const WebDAVMock: React.FC = () => (
+  <div className="lp-mock lp-mock-hero" aria-hidden="true">
+    <div className="lp-mock-chrome">
+      <span className="lp-mock-dot lp-mock-dot-r" />
+      <span className="lp-mock-dot lp-mock-dot-y" />
+      <span className="lp-mock-dot lp-mock-dot-g" />
+      <div className="lp-mock-url">Finder — Stohr</div>
+    </div>
+    <div className="lp-mock-shell">
+      <aside className="lp-mock-sidebar">
+        <div className="lp-mock-brand">Locations</div>
+        <ul>
+          <li><HardDrive size={14} strokeWidth={1.75} /> Macintosh HD</li>
+          <li className="active"><Cloud size={14} strokeWidth={1.75} /> Stohr</li>
+          <li><FolderIcon size={14} strokeWidth={1.75} /> AirDrop</li>
+        </ul>
+      </aside>
+      <div className="lp-mock-main">
+        <div className="lp-mock-toolbar">
+          <span>Stohr</span>
+          <span className="lp-mock-sep">/</span>
+          <strong>Trips</strong>
+          <span className="lp-mock-action-chip"><Cloud size={11} strokeWidth={2.5} /> Mounted</span>
+        </div>
+        <div className="lp-mock-grid">
+          {Array.from({ length: 9 }).map((_, i) => (
+            <div key={i} className={`lp-mock-tile lp-mock-tile-${i + 1}`} />
+          ))}
+        </div>
+      </div>
+    </div>
+    <div className="lp-mock-toast">
+      <Check size={14} strokeWidth={2.5} />
+      Mounted as <code>/Volumes/Stohr</code>
+    </div>
+  </div>
+)
+
 export type Feature = {
   num: string
   eyebrow: string
@@ -143,5 +228,19 @@ export const FEATURES: Feature[] = [
     title: <>Public links <em>without the chrome</em>.</>,
     body: <>Flip on public access and get a clean <code>/p/you/123</code> URL anyone can browse — no signup wall, no upsells, no email capture before they see your work.</>,
     visual: <LinkMock />,
+  },
+  {
+    num: "05",
+    eyebrow: "Federation",
+    title: <>Pool storage <em>with people you trust</em>.</>,
+    body: <>Pair two Stohr instances with an invite token and your storage stacks. <strong>Content-sharing</strong> mode is a group-encrypted shared library; <strong>space-offering</strong> mode is end-to-end encrypted shard hosting where peers can't even read what they store. Ed25519-signed peer transport, replication or erasure coding, graceful drain when a member leaves. <a href="/federation" className="lp-inline-more">Learn how it works →</a></>,
+    visual: <FederationMock />,
+  },
+  {
+    num: "06",
+    eyebrow: "WebDAV",
+    title: <>Mount it like a <em>network drive</em>.</>,
+    body: <>Stohr ships an RFC 4918 WebDAV endpoint at <code>/webdav</code>. Connect from macOS Finder with <kbd>⌘K</kbd>, Windows Explorer's <em>Map network drive</em>, GNOME Files, or <code>rclone</code> — every PROPFIND, PUT, MOVE, MKCOL, COPY just works. <a href="/webdav" className="lp-inline-more">Connection guides →</a></>,
+    visual: <WebDAVMock />,
   },
 ]

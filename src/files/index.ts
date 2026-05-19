@@ -4,6 +4,7 @@ import { del, get, json, parseMultipart, patch, pipeline, post, putHeader, strea
 import { requireAuth } from "../auth/guard.ts"
 import { drop, fetchObject, makeKey, put } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
+import { dropFederationBlob, fetchFederationBytes, isFederationKey } from "../federation/files.ts"
 import { generateImageThumb, isThumbable, THUMB_MAX_BYTES, thumbKeyFor } from "../storage/thumb.ts"
 import { canWrite, fileAccess, folderAccess } from "../permissions/index.ts"
 import type { FileRow, FolderRow } from "../permissions/index.ts"
@@ -104,11 +105,29 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       if (!access) return json(c, 404, { error: "File not found" })
       const row = access.file
 
-      const res = await fetchObject(store, row.storage_key)
-      if (!res.body) return json(c, 500, { error: "Storage returned empty body" })
-
       const wantInline = new URL(c.request.url).searchParams.get("inline") === "1"
       const { contentType, disposition } = decideInline(row.mime, row.name, wantInline)
+
+      if (isFederationKey(row.storage_key)) {
+        const bytes = await fetchFederationBytes(db, store, row.storage_key)
+        if (!bytes) return json(c, 502, { error: "Federation blob unrecoverable" })
+        const headered = putHeader(
+          putHeader(
+            putHeader(c, "content-type", contentType),
+            "content-disposition",
+            disposition,
+          ),
+          "content-length",
+          String(bytes.length),
+        )
+        const rs = new ReadableStream<Uint8Array>({
+          start(controller) { controller.enqueue(bytes); controller.close() },
+        })
+        return stream(headered, 200, rs)
+      }
+
+      const res = await fetchObject(store, row.storage_key)
+      if (!res.body) return json(c, 500, { error: "Storage returned empty body" })
 
       const withHeaders = putHeader(
         putHeader(
@@ -490,10 +509,11 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       await db.execute(from("file_versions").where(q => q("file_id").equals(id)).del())
       await db.execute(from("files").where(q => q("id").equals(id)).del())
 
+      const dropKey = (k: string) => isFederationKey(k) ? dropFederationBlob(db, store, k) : drop(store, k)
       await Promise.allSettled([
-        drop(store, row.storage_key),
+        dropKey(row.storage_key),
         ...(row.thumb_key ? [drop(store, row.thumb_key)] : []),
-        ...versions.map(v => drop(store, v.storage_key)),
+        ...versions.map(v => dropKey(v.storage_key)),
       ])
 
       return json(c, 200, { purged: id })

@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client"
 import { Landing } from "./index"
 import { Developers } from "./developers"
 import { Setup } from "./setup"
+import { Federation } from "./federation"
+import { Webdav } from "./webdav"
 
 // Dev-mode fallback: build.ts replaces `<!-- STATIC_LINKS -->` with real
 // <link> tags at production build time. The dev server can't (Bun's HTML
@@ -25,6 +27,8 @@ const path = window.location.pathname.replace(/\/+$/, "") || "/"
 const pickPage = (): React.ReactElement => {
   if (path === "/developers") return <Developers />
   if (path === "/setup") return <Setup />
+  if (path === "/federation") return <Federation />
+  if (path === "/webdav") return <Webdav />
   return <Landing />
 }
 

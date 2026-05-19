@@ -44,6 +44,30 @@ Actions: edit, **Rotate secret** (confidential only), **Revoke** (existing token
 
 Quick metric grid: total users, total storage, files, folders, active invites, used invites, total invites.
 
+### Settings (instance features)
+
+Owner-controlled toggles for instance-wide features. Stored in `instance_settings`; changes apply immediately, no API restart needed.
+
+| Setting | Default | Effect when off |
+| --- | --- | --- |
+| `webdav_enabled` | off | Every `/webdav/*` verb returns 503. `/me/webdav` (per-user enable) also 503s |
+| `federation_enabled` | off | All `/me/federations/*` and peer-to-peer `/federation/*` routes return 503. Existing federation rows are preserved; flip back on to resume |
+
+API:
+
+```bash
+# List current state of every known toggle
+curl -s https://your-stohr.example.com/api/admin/settings \
+  -H "Authorization: Bearer $OWNER_TOKEN"
+
+# Flip one or more — only known keys accepted
+curl -s -X PATCH https://your-stohr.example.com/api/admin/settings \
+  -H "Authorization: Bearer $OWNER_TOKEN" -H "content-type: application/json" \
+  -d '{"webdav_enabled": true, "federation_enabled": true}'
+```
+
+Why owner-controlled rather than env vars: deploys don't need a restart to flip a feature, and operators can selectively enable WebDAV on instances that need it without baking it into image builds.
+
 ## Per-user security (lives in Settings, not Admin)
 
 The owner can't manage other users' MFA, sessions, or PATs. Each user controls those from **Settings → Security**:

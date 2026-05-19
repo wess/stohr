@@ -29,6 +29,13 @@ import { passwordRoutes, sweepExpiredPasswordResets } from "./auth/password.ts"
 import { passkeyRoutes, sweepExpiredWebauthnChallenges } from "./auth/passkeys.ts"
 import { deletionRoutes, sweepDeletedAccounts } from "./auth/deletion.ts"
 import { contactRoutes } from "./contact/index.ts"
+import { federationRoutes } from "./federation/index.ts"
+import { pairingReceiverRoutes } from "./federation/pairing.ts"
+import { sweepExpiredFederationInvites } from "./federation/invites.ts"
+import { federationFolderRoutes } from "./federation/folders.ts"
+import { federationFilesRoutes, sweepFederationDrains } from "./federation/files.ts"
+import { webdavRoutes } from "./webdav/index.ts"
+import { adminSettingsRoutes, SETTING_WEBDAV_ENABLED, seedIfMissing } from "./settings/index.ts"
 import { createStorage } from "./storage/index.ts"
 import { createEmailer } from "./email/index.ts"
 import { withSecurityHeaders } from "./security/headers.ts"
@@ -45,6 +52,12 @@ const config = defineConfig({
   s3AccessKey: env("S3_ACCESS_KEY", { default: "rustfsadmin" }),
   s3SecretKey: env("S3_SECRET_KEY", { default: "rustfsadmin" }),
   appUrl: env("APP_URL", { default: "http://localhost:3001" }),
+  federationPublicUrl: env("FEDERATION_PUBLIC_URL", { default: "" }),
+  // Legacy env: pre-Admin-Settings releases enabled WebDAV via env var.
+  // Read once at boot and seed the DB setting if missing, so upgrades
+  // don't silently disable WebDAV. After upgrade the owner manages the
+  // toggle from Admin → Settings.
+  webdavEnabledLegacy: env("WEBDAV_ENABLED", { default: "" }),
   resendApiKey: env("RESEND_API_KEY", { default: "" }),
   resendFrom: env("RESEND_FROM", { default: "Stohr <onboarding@resend.dev>" }),
   rpId: env("RP_ID", { default: "localhost" }),
@@ -76,6 +89,13 @@ const emailer = createEmailer({
 
 await migrate.up(db, "./migrations")
 
+// Seed owner-controlled toggles from legacy env vars if the DB row is
+// absent. Only runs on the first boot after this code lands; subsequent
+// boots no-op (ON CONFLICT DO NOTHING).
+if (config.webdavEnabledLegacy === "true") {
+  await seedIfMissing(db, SETTING_WEBDAV_ENABLED, true)
+}
+
 const fetch = router(
   ...authRoutes(db, config.secret),
   ...passwordRoutes(db, emailer, config.appUrl),
@@ -105,6 +125,12 @@ const fetch = router(
   ...deviceAuthorizeRoutes(db, config.secret),
   ...actionRoutes(db, config.secret),
   ...userActionRoutes(db, config.secret),
+  ...federationRoutes(db, config.secret, config.federationPublicUrl || config.appUrl),
+  ...federationFolderRoutes(db, config.secret),
+  ...federationFilesRoutes(db, config.secret, store),
+  ...pairingReceiverRoutes(db, config.federationPublicUrl || config.appUrl),
+  ...webdavRoutes(db, store, config.secret),
+  ...adminSettingsRoutes(db, config.secret),
 )
 
 // OAuth cleanup: expired auth codes (60s TTL) every 5 min, expired device
@@ -126,6 +152,8 @@ const sweepRefreshTokens = guardedSweep("refresh_tokens", () => sweepExpiredRefr
 const sweepPasswordResets = guardedSweep("password_resets", () => sweepExpiredPasswordResets(db))
 const sweepWebauthn = guardedSweep("webauthn_challenges", () => sweepExpiredWebauthnChallenges(db))
 const sweepDeletions = guardedSweep("deleted_accounts", () => sweepDeletedAccounts(db, store))
+const sweepFedInvites = guardedSweep("federation_invites", () => sweepExpiredFederationInvites(db))
+const sweepFedDrains = guardedSweep("federation_drains", () => sweepFederationDrains(db, store))
 setInterval(() => { void sweepAuthCodes() }, 5 * 60 * 1000)
 setInterval(() => { void sweepDeviceCodes() }, 5 * 60 * 1000)
 setInterval(() => { void sweepRefreshTokens() }, 60 * 60 * 1000)
@@ -134,12 +162,16 @@ setInterval(() => { void sweepWebauthn() }, 5 * 60 * 1000)
 // Account hard-delete sweep — runs hourly. The grace window is 24h, so
 // hourly precision is more than sufficient.
 setInterval(() => { void sweepDeletions() }, 60 * 60 * 1000)
+setInterval(() => { void sweepFedInvites() }, 60 * 60 * 1000)
+setInterval(() => { void sweepFedDrains() }, 10 * 60 * 1000)
 void sweepAuthCodes()
 void sweepDeviceCodes()
 void sweepRefreshTokens()
 void sweepPasswordResets()
 void sweepWebauthn()
 void sweepDeletions()
+void sweepFedInvites()
+void sweepFedDrains()
 
 // Production refuses to start with the default SECRET — JWTs signed with a
 // known value would be forgeable by anyone. In development we just warn so
