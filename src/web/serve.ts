@@ -19,7 +19,6 @@ Bun.serve({
     "/s/:token": index,
     "/signup": index,
     "/login": index,
-    "/developers": index,
     "/contact": index,
     "/app/*": index,
     "/p/:username/:folderId": index,

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Stohr — self-hostable cloud storage. Photo galleries, scriptable folders, public sharing, S3-compatible API. Apache 2.0.">
+  <title>Stohr — open-source cloud storage</title>
+  <script>
+    (function(){
+      var t = localStorage.getItem('stohr_theme');
+      var dark = t === 'dark' || ((t !== 'light') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    })();
+  </script>
+  <!-- STATIC_LINKS -->
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="./pages/mount.tsx"></script>
+</body>
+</html>

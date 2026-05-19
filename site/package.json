@@ -1,0 +1,24 @@
+{
+  "name": "stohr-site",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot src/serve.ts",
+    "build": "bun src/build.ts"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "marked": "^15.0.0",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

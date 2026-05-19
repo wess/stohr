@@ -37,7 +37,7 @@ Root `package.json` declares `workspaces: ["libs/atlas/packages/*"]` and depends
 3. Builds a `StorageHandle` via `src/storage/index.ts#createStorage` — picks a driver from `STORAGE_DRIVER` (`s3` or `local`)
 4. Builds an emailer via `src/email/index.ts#createEmailer`
 5. Runs migrations from `./migrations` via `@atlas/migrate#migrate.up`
-6. Registers routes from ~30 feature-module factories into the `@atlas/server` router
+6. Registers routes from ~28 feature-module factories into the `@atlas/server` router
 7. Starts background sweeps on `setInterval` (expired OAuth codes / device codes / refresh tokens / password resets / WebAuthn challenges / soft-deleted accounts), then `Bun.serve` wrapped in `withSecurityHeaders`
 
 Each feature lives at `src/<feature>/index.ts` (some span multiple files, e.g. `src/auth/*`, `src/oauth/*`) and exports a route-factory — `authRoutes`, `fileRoutes`, `oauthTokenRoutes`, `actionRoutes`, etc. Factory signatures **vary** by what the feature needs: most take `(db, secret)`, some also take `store`, `emailer`, `appUrl`, or a WebAuthn RP config object. Check `src/server.ts` for the exact wiring before adding a new module — write it in the same shape and wire it there.
@@ -54,7 +54,7 @@ API query params and JSON bodies accept both `snake_case` and `camelCase` (e.g. 
 
 Schema lives in two places: `src/schema/index.ts` (TS schema via `@atlas/db` `defineSchema`) **and** `migrations/<seq>_<name>/up.sql` + `down.sql` (hand-written SQL). Migrations are the source of truth at runtime — the TS schema is not auto-synced. When changing the DB, update both, and add a new numbered migration directory (never edit an applied one).
 
-~23 tables across 37 migrations. The core blob model is `users` → `folders` (self-referential `parent_id` for nesting) → `files` → `file_versions`, plus `shares`. The rest back specific features: `collaborations`, `invites`, `apps` (PATs), `s3_access_keys`, `oauth_clients` / `oauth_authorization_codes` / `oauth_device_codes` / `oauth_refresh_tokens`, `sessions`, `webauthn_credentials` / `webauthn_challenges`, `password_resets`, `folder_actions` / `folder_action_runs` / `user_actions`, `rate_limits`, `audit_events`, `contact_messages`. `src/schema/index.ts` is the quickest way to see every column.
+~24 tables across 37 migrations. The core blob model is `users` → `folders` (self-referential `parent_id` for nesting) → `files` → `file_versions`, plus `shares`. The rest back specific features: `collaborations`, `invites`, `apps` (PATs), `s3_access_keys`, `oauth_clients` / `oauth_authorization_codes` / `oauth_device_codes` / `oauth_refresh_tokens`, `sessions`, `webauthn_credentials` / `webauthn_challenges`, `password_resets`, `folder_actions` / `folder_action_runs` / `user_actions`, `rate_limits`, `audit_events`, `contact_messages`. `src/schema/index.ts` is the quickest way to see every column.
 
 Soft-deletion pattern: `folders`, `files`, and `users` carry a `deleted_at` nullable timestamp. All list/read queries filter `deleted_at IS NULL`. The `/trash` module lists rows where `deleted_at IS NOT NULL` and exposes restore (`POST /files/:id/restore`, `POST /folders/:id/restore`) and purge (`DELETE .../:id/purge`). Purge cascades: delete shares → file_versions → files → folders, then `Promise.allSettled` drops storage keys. Always follow this order to avoid FK violations. Deleted user accounts get a 24h grace window then a hard-delete sweep; `requireAuth` rejects every credential type for a `deleted_at` user.
 
@@ -75,13 +75,20 @@ Storage keys have the shape `u<userId>/<timestamp><rand>/<sanitized-name>`. When
 
 ### Web client
 
-Single-file SPA: `src/web/app.tsx` (~285KB — all React state + routing + UI in one file by design — do not split unless asked). `src/web/api.ts` is the typed API client; the bearer token lives in `localStorage` as `stohr_token`.
+Single-file SPA: `src/web/app.tsx` (~5.8k lines — all React state + routing + UI in one file by design — do not split unless asked). `src/web/api.ts` is the typed API client; the bearer token lives in `localStorage` as `stohr_token`.
 
 `src/web/serve.ts` is a Bun server on `WEB_PORT` that:
-- Serves `index.html` for every SPA route (`/`, `/s/:token`, `/signup`, `/login`, `/developers`, `/contact`, `/app/*`, `/p/:username/:folderId`, `/oauth/authorize`, `/pair`, `/password/forgot`, `/password/reset`)
+- Serves `index.html` for every SPA route (`/`, `/s/:token`, `/signup`, `/login`, `/contact`, `/app/*`, `/p/:username/:folderId`, `/oauth/authorize`, `/pair`, `/password/forgot`, `/password/reset`)
 - Proxies anything under `/api/*` to `API_URL` (stripping `/api`), preserving headers (including the bearer token) and body
+- `/` falls through to the login screen when logged out (since marketing lives in `site/` now), or the dashboard when logged in
 
 The web client only ever talks to `/api/*` — never directly to the API port — so auth headers flow through the proxy. Public routes (`/s/:token` share download, `/p/...` public folders) are the only API routes that don't require a bearer.
+
+### Marketing site (`site/`)
+
+The landing page, developer page, get-started page, and rendered docs live in `site/` as a standalone static site — built with Bun's HTML bundler + `marked` for the docs — deployed to Cloudflare Pages. The app SPA at `src/web/` no longer carries any marketing surface. See `site/README.md` for the build/deploy specifics; the docs index lives in `site/src/docs/render.tsx#DOCS_INDEX` (each entry pulls a `docs/*.md` or root `.md` from this repo at build time and renders it via React SSR + marked).
+
+When you change a `docs/*.md` file in this repo, rebuild the site (`cd site && bun run build`) — the rendered HTML is regenerated from source, no per-doc updates needed elsewhere.
 
 ## Conventions (enforced)
 
