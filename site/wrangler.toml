@@ -2,6 +2,6 @@
 # settings (build command / output dir) are sufficient. Included for users
 # who prefer to deploy via `wrangler pages deploy ./dist`.
 
-name = "stohr-site"
+name = "stohr"
 pages_build_output_dir = "./dist"
 compatibility_date = "2025-01-01"
