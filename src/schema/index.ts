@@ -361,6 +361,18 @@ export const instanceSettings = defineSchema("instance_settings", {
   created_at: column.timestamp().default("now()"),
 })
 
+export const aiSettings = defineSchema("ai_settings", {
+  id: column.serial().primaryKey(),
+  provider: column.text().default("openai"),
+  api_key: column.text().nullable(),
+  base_url: column.text().nullable(),
+  chat_model: column.text().nullable(),
+  enabled: column.boolean().default(false),
+  updated_by: column.integer().nullable().ref("users", "id"),
+  updated_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default("now()"),
+})
+
 export const contactMessages = defineSchema("contact_messages", {
   id: column.serial().primaryKey(),
   name: column.text(),

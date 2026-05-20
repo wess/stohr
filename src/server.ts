@@ -36,6 +36,7 @@ import { federationFolderRoutes } from "./federation/folders.ts"
 import { federationFilesRoutes, sweepFederationDrains } from "./federation/files.ts"
 import { webdavRoutes } from "./webdav/index.ts"
 import { adminSettingsRoutes, SETTING_WEBDAV_ENABLED, seedIfMissing } from "./settings/index.ts"
+import { aiRoutes } from "./ai/routes.ts"
 import { createStorage } from "./storage/index.ts"
 import { createEmailer } from "./email/index.ts"
 import { withSecurityHeaders } from "./security/headers.ts"
@@ -113,6 +114,7 @@ const fetch = router(
   ...collabRoutes(db, config.secret, emailer, config.appUrl),
   ...publicRoutes(db, config.secret, store),
   ...contactRoutes(db, config.secret),
+  ...aiRoutes(db, config.secret),
   ...adminRoutes(db, config.secret),
   ...s3KeyRoutes(db, config.secret),
   ...s3Routes(db, store),
