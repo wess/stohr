@@ -24,6 +24,7 @@ import {
   Inbox,
   Link2,
   Mail,
+  Menu,
   MessageSquare,
   ExternalLink,
   BookOpen,
@@ -3848,7 +3849,19 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
     try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1" } catch { return false }
   })
   const [helpOpen, setHelpOpen] = useState(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const helpRef = useRef<HTMLDivElement>(null)
+
+  // The off-canvas nav drawer closes on any route change (covers nav taps,
+  // breadcrumb jumps, and browser back) and on Escape.
+  useEffect(() => { setMobileNavOpen(false) }, [route])
+  useEffect(() => {
+    if (!mobileNavOpen) return
+    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setMobileNavOpen(false) }
+    document.addEventListener("keydown", onEsc)
+    return () => document.removeEventListener("keydown", onEsc)
+  }, [mobileNavOpen])
+
   useEffect(() => {
     if (!helpOpen) return
     const onDocClick = (e: MouseEvent) => {
@@ -3885,7 +3898,20 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
   const initial = (userSnapshot?.name?.[0] ?? userSnapshot?.username?.[0] ?? "?").toUpperCase()
 
   return (
-    <div className={`shell${collapsed ? " collapsed" : ""}`}>
+    <div className={`shell${collapsed ? " collapsed" : ""}${mobileNavOpen ? " mobile-open" : ""}`}>
+      <button
+        type="button"
+        className="mobile-nav-toggle"
+        onClick={() => setMobileNavOpen(true)}
+        aria-label="Open navigation"
+      >
+        <Menu size={20} strokeWidth={1.75} />
+      </button>
+      <div
+        className="sidebar-backdrop"
+        onClick={() => setMobileNavOpen(false)}
+        aria-hidden="true"
+      />
       <aside className="sidebar">
         <div className="sidebar-head">
           <div className="brand"><Logo /></div>

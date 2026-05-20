@@ -1444,7 +1444,7 @@ body {
 .devp-table-wrap {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+  overflow-x: auto;
   margin: 8px 0;
   background: var(--panel-elev);
 }
@@ -1611,4 +1611,70 @@ body {
   border: none;
   border-top: 1px solid var(--border);
   margin: 32px 0;
+}
+
+/* ─────────────── Mobile nav menu (.lp-nav-menu) ─────────────── */
+
+/* The desktop link row (.lp-nav-links) is hidden below 880px; this
+   <details>-driven drop-down takes its place. Pure CSS so it works
+   on the statically SSR'd docs pages, which carry no client JS. */
+.lp-nav { position: relative; }
+.lp-nav-menu { display: none; position: relative; }
+.lp-nav-burger {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--lp-line);
+  background: transparent;
+  color: var(--lp-ink);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.lp-nav-burger::-webkit-details-marker { display: none; }
+.lp-nav-burger::marker { content: ""; }
+.lp-nav-menu[open] .lp-nav-burger { background: rgba(46, 52, 64, 0.06); }
+.lp-burger-close { display: none; }
+.lp-nav-menu[open] .lp-burger-open { display: none; }
+.lp-nav-menu[open] .lp-burger-close { display: inline-block; }
+.lp-nav-menu-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 208px;
+  background: var(--panel-elev);
+  border: 1px solid var(--lp-line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+}
+.lp-nav-menu-panel a {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--lp-ink-soft);
+}
+.lp-nav-menu-panel a:hover { background: rgba(46, 52, 64, 0.05); color: var(--lp-ink); }
+
+@media (max-width: 879px) {
+  .lp-nav-menu { display: block; }
+}
+
+/* ─────────────── Mobile polish ─────────────── */
+
+@media (max-width: 600px) {
+  .lp-nav-star { padding: 9px 14px; font-size: 14px; }
+  .docs-main { padding: 22px 18px; }
+  .docs-wrap { padding: 18px 16px 56px; }
+  .devp-section { padding: 44px 18px; }
+  /* Markdown tables in docs have no wrapper element — let the table
+     itself side-scroll so a wide one can't widen the whole page. */
+  .docs-main table { display: block; overflow-x: auto; }
 }

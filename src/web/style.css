@@ -3392,3 +3392,146 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
 }
 .contact-card-actions button { font-size: 12.5px; padding: 6px 12px; }
 
+/* ─────────────────────────────────────────────
+   Mobile / responsive
+   The desktop layout is a fixed 240px-sidebar grid; on narrow
+   screens the sidebar becomes an off-canvas drawer and every
+   fixed-width surface (modals, grids, tables) goes fluid.
+   ───────────────────────────────────────────── */
+
+html { -webkit-text-size-adjust: 100%; }
+
+/* Drawer affordances — inert on desktop, activated in the media query. */
+.mobile-nav-toggle { display: none; }
+.sidebar-backdrop { display: none; }
+
+@media (max-width: 768px) {
+  /* Single-column shell; the sidebar leaves the grid flow and
+     becomes a fixed drawer that slides in over the content. */
+  .shell,
+  .shell.collapsed { grid-template-columns: 1fr; height: 100dvh; }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(82vw, 300px);
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform;
+  }
+  .shell.mobile-open .sidebar { transform: translateX(0); }
+
+  /* The persisted desktop collapse flag is meaningless in drawer
+     mode — neutralize every collapsed-* rule so the drawer always
+     shows full-width labels. */
+  .shell.collapsed .sidebar { padding: 14px 12px; }
+  .shell.collapsed .sidebar-head { justify-content: space-between; padding: 6px 8px 10px; }
+  .shell.collapsed .brand { display: flex; }
+  .shell.collapsed .nav { padding: 10px 10px; justify-content: flex-start; gap: 10px; }
+  .shell.collapsed .nav-label { opacity: 1; max-width: 200px; }
+  .shell.collapsed .user-footer { padding: 12px 8px 8px; justify-content: flex-start; }
+  .shell.collapsed .user-meta { opacity: 1; max-width: 180px; }
+
+  .sidebar-toggle { display: none; }
+  .sidebar-head { padding-left: 52px; }
+  .nav { padding: 10px 10px; }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(16, 24, 40, 0.45);
+    z-index: 55;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  .shell.mobile-open .sidebar-backdrop { opacity: 1; pointer-events: auto; }
+
+  .mobile-nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 9px;
+    left: 10px;
+    z-index: 11;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--panel-elev);
+    color: var(--text);
+    box-shadow: var(--shadow);
+  }
+
+  /* Toolbar: clear the floating hamburger, let actions wrap. */
+  .toolbar {
+    padding: 10px 14px 10px 56px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .toolbar .search { flex: 1 1 100%; min-width: 0; max-width: none; }
+  .toolbar-actions { margin-left: 0; flex-wrap: wrap; }
+  .selbar { flex-wrap: wrap; gap: 8px; }
+
+  .content { padding: 14px; }
+  .path-bar { padding: 2px 0 14px; }
+
+  /* Denser file / photo grids. */
+  .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .gallery { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+  .kind-cards,
+  .auto-recipe-grid,
+  .actions-grid,
+  .step-picker-grid,
+  .trigger-grid,
+  .admin-stats,
+  .fed-usage { grid-template-columns: 1fr; }
+  .admin-setting-row { gap: 12px; }
+
+  /* Prevent iOS from auto-zooming when a sub-16px input is focused. */
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select { font-size: 16px !important; }
+
+  /* Modals / overlays go (near-)fullscreen and sit above the hamburger. */
+  .modal,
+  .modal.modal-wide { width: 100%; max-width: calc(100vw - 24px); padding: 20px; }
+  .modal-backdrop { z-index: 100; padding: 12px; }
+  .preview-backdrop { z-index: 100; padding: 0; }
+  .lightbox { z-index: 100; }
+  .preview { width: 100%; height: 100%; border-radius: 0; }
+  .preview-name { max-width: 52vw; }
+
+  .lightbox-stage { padding: 0 8px 16px; }
+  .lightbox-nav { width: 40px; height: 40px; font-size: 26px; }
+  .lightbox-nav.prev { left: 6px; }
+  .lightbox-nav.next { right: 6px; }
+
+  /* Settings / auth / forms stack and lose their desktop max-widths. */
+  .settings { max-width: none; }
+  .auth { margin: 40px 16px; padding: 28px 22px; max-width: none; }
+  .share-page { margin: 40px 16px; padding: 28px 22px; }
+  .oauth-card { padding: 24px; }
+  .contact-page { padding: 32px 18px 56px; }
+  .contact-page-head h1 { font-size: 32px; }
+  .devp-section { padding: 40px 18px; }
+
+  /* Wide tables side-scroll instead of clipping / forcing page width. */
+  .shares-table { display: block; overflow-x: auto; white-space: nowrap; }
+
+  .preview-audio audio,
+  .share-viewer .share-audio audio { width: 100%; max-width: 320px; }
+
+  .public-header { padding: 14px 16px; }
+  .public-brand img, .public-brand svg { height: 48px; }
+  .public-content { padding: 14px; }
+
+  .upload-panel { width: calc(100vw - 24px); right: 12px; bottom: 12px; }
+}
+
