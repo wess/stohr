@@ -37,6 +37,8 @@ import { federationFilesRoutes, sweepFederationDrains } from "./federation/files
 import { webdavRoutes } from "./webdav/index.ts"
 import { adminSettingsRoutes, SETTING_WEBDAV_ENABLED, seedIfMissing } from "./settings/index.ts"
 import { aiRoutes } from "./ai/routes.ts"
+import { adminMcpRoutes, mcpRoutes } from "./mcp/index.ts"
+import { mcpServerRoutes } from "./mcp/servers.ts"
 import { createStorage } from "./storage/index.ts"
 import { createEmailer } from "./email/index.ts"
 import { withSecurityHeaders } from "./security/headers.ts"
@@ -133,6 +135,9 @@ const fetch = router(
   ...pairingReceiverRoutes(db, config.federationPublicUrl || config.appUrl),
   ...webdavRoutes(db, store, config.secret),
   ...adminSettingsRoutes(db, config.secret),
+  ...mcpRoutes(db, config.secret, store, config.appUrl),
+  ...adminMcpRoutes(db, config.secret, config.appUrl),
+  ...mcpServerRoutes(db, config.secret),
 )
 
 // OAuth cleanup: expired auth codes (60s TTL) every 5 min, expired device

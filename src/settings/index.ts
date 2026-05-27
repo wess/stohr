@@ -12,6 +12,11 @@ import { ownerOnly } from "../security/owner.ts"
 
 export const SETTING_WEBDAV_ENABLED = "webdav_enabled"
 export const SETTING_FEDERATION_ENABLED = "federation_enabled"
+export const SETTING_MCP_ENABLED = "mcp_enabled"
+export const SETTING_MCP_TOOL_READ = "mcp_tool_read"
+export const SETTING_MCP_TOOL_WRITE = "mcp_tool_write"
+export const SETTING_MCP_TOOL_DELETE = "mcp_tool_delete"
+export const SETTING_MCP_TOOL_SHARE = "mcp_tool_share"
 
 // The full set of toggleable keys + their default value. New settings get
 // added here; the admin endpoints reject any key not in this map so the
@@ -19,6 +24,11 @@ export const SETTING_FEDERATION_ENABLED = "federation_enabled"
 const REGISTRY = {
   [SETTING_WEBDAV_ENABLED]: { default: false, type: "boolean" as const, description: "WebDAV endpoint at /webdav. Users still need to mint a per-account WebDAV password before they can connect." },
   [SETTING_FEDERATION_ENABLED]: { default: false, type: "boolean" as const, description: "Federation features (mint, join, mount). Existing federations remain in the DB when this is off — they just stop accepting traffic until re-enabled." },
+  [SETTING_MCP_ENABLED]: { default: false, type: "boolean" as const, description: "Model Context Protocol server at /mcp. When off the endpoint returns 503 regardless of per-tool toggles. AI clients (Claude Desktop, IDEs) authenticate with a PAT or OAuth access token." },
+  [SETTING_MCP_TOOL_READ]: { default: true, type: "boolean" as const, description: "Expose read-only MCP tools: list folders/files, read file contents, search. Safe default — these only return data the caller's token already has access to." },
+  [SETTING_MCP_TOOL_WRITE]: { default: false, type: "boolean" as const, description: "Expose write MCP tools: create folder, upload file, rename, move. Off by default — opt in once you trust the AI client and its prompts." },
+  [SETTING_MCP_TOOL_DELETE]: { default: false, type: "boolean" as const, description: "Expose destructive MCP tools: trash, restore, purge. Soft-deletes go to /trash and can be restored, but purge is permanent." },
+  [SETTING_MCP_TOOL_SHARE]: { default: false, type: "boolean" as const, description: "Expose sharing MCP tools: create and revoke public share links. Anything the AI shares becomes reachable without auth — keep off unless you specifically want this." },
 }
 
 type SettingKey = keyof typeof REGISTRY
@@ -118,6 +128,14 @@ export const adminSettingsRoutes = (db: Connection, secret: string) => {
 // Convenience read helpers used by other modules' route gates.
 export const webdavEnabled = (db: Connection) => getBoolean(db, SETTING_WEBDAV_ENABLED)
 export const federationEnabled = (db: Connection) => getBoolean(db, SETTING_FEDERATION_ENABLED)
+export const mcpEnabled = (db: Connection) => getBoolean(db, SETTING_MCP_ENABLED)
+export const mcpToolEnabled = (db: Connection, category: "read" | "write" | "delete" | "share") => {
+  const key = category === "read" ? SETTING_MCP_TOOL_READ
+    : category === "write" ? SETTING_MCP_TOOL_WRITE
+    : category === "delete" ? SETTING_MCP_TOOL_DELETE
+    : SETTING_MCP_TOOL_SHARE
+  return getBoolean(db, key)
+}
 
 // Seed a setting at first boot. Used during env-var-to-DB migration so
 // existing instances that were running with WEBDAV_ENABLED=true don't get

@@ -373,6 +373,18 @@ export const aiSettings = defineSchema("ai_settings", {
   created_at: column.timestamp().default("now()"),
 })
 
+export const mcpServers = defineSchema("mcp_servers", {
+  id: column.serial().primaryKey(),
+  name: column.text(),
+  description: column.text().nullable(),
+  url: column.text(),
+  auth_token: column.text().nullable(),
+  enabled: column.boolean().default(true),
+  created_by: column.integer().nullable().ref("users", "id"),
+  created_at: column.timestamp().default("now()"),
+  updated_at: column.timestamp().default("now()"),
+})
+
 export const contactMessages = defineSchema("contact_messages", {
   id: column.serial().primaryKey(),
   name: column.text(),

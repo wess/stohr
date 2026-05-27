@@ -6070,7 +6070,7 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
   )
 }
 
-type AdminSection = "users" | "invites" | "stats" | "audit" | "contact" | "settings"
+type AdminSection = "users" | "invites" | "stats" | "audit" | "contact" | "settings" | "mcp"
 
 const AdminView: React.FC = () => {
   const me = api.getUser()
@@ -6095,6 +6095,7 @@ const AdminView: React.FC = () => {
           <button className={section === "users" ? "active" : ""} onClick={() => setSection("users")}>Users</button>
           <button className={section === "invites" ? "active" : ""} onClick={() => setSection("invites")}>Invites</button>
           <button className={section === "settings" ? "active" : ""} onClick={() => setSection("settings")}>Settings</button>
+          <button className={section === "mcp" ? "active" : ""} onClick={() => setSection("mcp")}>MCP</button>
           <button className={section === "contact" ? "active" : ""} onClick={() => setSection("contact")}>Contact</button>
           <button className={section === "stats" ? "active" : ""} onClick={() => setSection("stats")}>Stats</button>
           <button className={section === "audit" ? "active" : ""} onClick={() => setSection("audit")}>Audit</button>
@@ -6102,6 +6103,7 @@ const AdminView: React.FC = () => {
         {section === "users" && <AdminUsers meId={me.id} />}
         {section === "invites" && <AdminInvites />}
         {section === "settings" && <AdminSettings />}
+        {section === "mcp" && <AdminMcp />}
         {section === "contact" && <AdminContact />}
         {section === "stats" && <AdminStats />}
         {section === "audit" && <AdminAudit />}
@@ -6113,6 +6115,11 @@ const AdminView: React.FC = () => {
 const SETTING_LABELS: Record<string, string> = {
   webdav_enabled: "WebDAV",
   federation_enabled: "Federation",
+  mcp_enabled: "MCP server",
+  mcp_tool_read: "MCP — read tools",
+  mcp_tool_write: "MCP — write tools",
+  mcp_tool_delete: "MCP — delete tools",
+  mcp_tool_share: "MCP — share tools",
 }
 
 const AdminSettings: React.FC = () => {
@@ -6197,6 +6204,278 @@ const AdminSettings: React.FC = () => {
         })}
       </div>
     </section>
+  )
+}
+
+const MCP_TOGGLE_KEYS = [
+  "mcp_enabled",
+  "mcp_tool_read",
+  "mcp_tool_write",
+  "mcp_tool_delete",
+  "mcp_tool_share",
+] as const
+
+const AdminMcp: React.FC = () => {
+  const [settings, setSettings] = useState<api.AdminSetting[] | null>(null)
+  const [preview, setPreview] = useState<api.McpPreview | null>(null)
+  const [servers, setServers] = useState<api.McpServer[] | null>(null)
+  const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [showAdd, setShowAdd] = useState(false)
+
+  const load = () => {
+    Promise.all([
+      api.adminGetSettings(),
+      api.adminGetMcpPreview().catch(() => null),
+      api.adminListMcpServers().catch(() => []),
+    ]).then(([s, p, srv]) => {
+      setSettings(s)
+      setPreview(p)
+      setServers(srv ?? [])
+    }).catch(e => setError(e?.message ?? "Failed to load MCP settings"))
+  }
+
+  useEffect(() => { load() }, [])
+
+  const toggle = async (key: string, next: boolean) => {
+    setBusyKey(key)
+    setError(null)
+    try {
+      await api.adminUpdateSettings({ [key]: next })
+      load()
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to update setting")
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  const mcpSettings = (settings ?? []).filter(s => MCP_TOGGLE_KEYS.includes(s.key as typeof MCP_TOGGLE_KEYS[number]))
+  const mainToggle = mcpSettings.find(s => s.key === "mcp_enabled")
+  const toolToggles = mcpSettings.filter(s => s.key !== "mcp_enabled")
+
+  if (!settings) {
+    return (
+      <section className="settings-card">
+        <h3>Model Context Protocol</h3>
+        <div style={{ color: "var(--muted)", fontSize: 14 }}>{error ?? "Loading…"}</div>
+      </section>
+    )
+  }
+
+  return (
+    <>
+      <section className="settings-card">
+        <h3>Model Context Protocol</h3>
+        <p style={{ color: "var(--muted)", fontSize: 13.5, margin: "0 0 16px", lineHeight: 1.55 }}>
+          Stohr ships a Model Context Protocol (MCP) endpoint at <code>{preview?.endpoint ?? "(loading)"}</code>.
+          AI clients (Claude Desktop, IDE extensions, custom agents) authenticate with a
+          personal access token or an OAuth access token and call tools to browse and
+          manage the caller's files. Each capability group has its own switch — turn on
+          only what you trust the AI to do.
+        </p>
+        {error && <div style={{ color: "var(--danger, #c0392b)", fontSize: 13, marginBottom: 12 }}>{error}</div>}
+
+        {mainToggle && (
+          <div className="admin-setting-row" style={{ borderBottom: "1px solid var(--border)" }}>
+            <div className="admin-setting-meta">
+              <div className="admin-setting-name">MCP server</div>
+              <div className="admin-setting-key">{mainToggle.key}</div>
+              <div className="admin-setting-desc">{mainToggle.description}</div>
+            </div>
+            <div className="admin-setting-control">
+              <label className="admin-setting-toggle">
+                <input
+                  type="checkbox"
+                  checked={mainToggle.value === true}
+                  disabled={busyKey === mainToggle.key}
+                  onChange={(e) => toggle(mainToggle.key, e.target.checked)}
+                />
+                <span className="admin-setting-track" aria-hidden="true">
+                  <span className="admin-setting-thumb" />
+                </span>
+                <span className="admin-setting-state">{mainToggle.value === true ? "On" : "Off"}</span>
+              </label>
+            </div>
+          </div>
+        )}
+
+        <div className="admin-settings-list" style={{ marginTop: 8 }}>
+          {toolToggles.map(row => {
+            const current = row.value === true
+            const label = SETTING_LABELS[row.key] ?? row.key
+            return (
+              <div key={row.key} className="admin-setting-row">
+                <div className="admin-setting-meta">
+                  <div className="admin-setting-name">{label}</div>
+                  <div className="admin-setting-key">{row.key}</div>
+                  <div className="admin-setting-desc">{row.description}</div>
+                </div>
+                <div className="admin-setting-control">
+                  <label className="admin-setting-toggle">
+                    <input
+                      type="checkbox"
+                      checked={current}
+                      disabled={busyKey === row.key || mainToggle?.value !== true}
+                      onChange={(e) => toggle(row.key, e.target.checked)}
+                    />
+                    <span className="admin-setting-track" aria-hidden="true">
+                      <span className="admin-setting-thumb" />
+                    </span>
+                    <span className="admin-setting-state">{current ? "On" : "Off"}</span>
+                  </label>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </section>
+
+      {preview && (
+        <section className="settings-card">
+          <h3>Tools exposed to AI clients <span className="admin-count">({preview.advertised_tools.length})</span></h3>
+          {!preview.enabled && (
+            <p style={{ color: "var(--muted)", fontSize: 13.5 }}>
+              MCP is currently <strong>off</strong> — the endpoint returns 503 regardless of these toggles.
+            </p>
+          )}
+          {preview.advertised_tools.length === 0 && (
+            <div style={{ color: "var(--muted)", fontSize: 14 }}>No tools advertised. Turn on at least one capability group above.</div>
+          )}
+          <div className="admin-list">
+            {preview.advertised_tools.map(t => (
+              <div key={t.name} className="admin-row">
+                <div className="admin-row-main">
+                  <div className="admin-row-line">
+                    <strong>{t.name}</strong>
+                    <span className="admin-count" style={{ marginLeft: 8 }}>{t.category}</span>
+                  </div>
+                  <div className="admin-row-sub">{t.description}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {preview.hidden_tools.length > 0 && (
+            <div style={{ marginTop: 12, fontSize: 13, color: "var(--muted)" }}>
+              <strong>Hidden:</strong>{" "}
+              {preview.hidden_tools.map(t => `${t.name} (${t.category})`).join(", ")}
+            </div>
+          )}
+        </section>
+      )}
+
+      <section className="settings-card">
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <h3 style={{ margin: 0 }}>External MCP servers <span className="admin-count">({servers?.length ?? 0})</span></h3>
+          <button className="btn btn-primary" onClick={() => setShowAdd(s => !s)}>{showAdd ? "Cancel" : "Add server"}</button>
+        </div>
+        <p style={{ color: "var(--muted)", fontSize: 13.5, marginTop: 8, lineHeight: 1.55 }}>
+          Outbound MCP servers Stohr can call. Once added, their tools become available
+          to AI integrations (the built-in /ai/chat surface that consumes them is being
+          built — for now this is the configuration surface).
+        </p>
+        {showAdd && <AdminMcpServerForm onSaved={() => { setShowAdd(false); load() }} />}
+        <div className="admin-list" style={{ marginTop: 12 }}>
+          {(servers ?? []).map(srv => (
+            <AdminMcpServerRow key={srv.id} server={srv} onChanged={load} />
+          ))}
+          {servers && servers.length === 0 && (
+            <div style={{ color: "var(--muted)", fontSize: 14 }}>No external MCP servers configured.</div>
+          )}
+        </div>
+      </section>
+    </>
+  )
+}
+
+const AdminMcpServerForm: React.FC<{ onSaved: () => void }> = ({ onSaved }) => {
+  const [name, setName] = useState("")
+  const [url, setUrl] = useState("")
+  const [desc, setDesc] = useState("")
+  const [token, setToken] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const submit = async () => {
+    setBusy(true); setErr(null)
+    try {
+      await api.adminCreateMcpServer({
+        name: name.trim(),
+        url: url.trim(),
+        description: desc.trim() || undefined,
+        auth_token: token.trim() || null,
+        enabled: true,
+      })
+      onSaved()
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to add server")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="admin-form" style={{ marginTop: 12, display: "grid", gap: 8 }}>
+      <input className="input" placeholder="Name" value={name} onChange={e => setName(e.target.value)} />
+      <input className="input" placeholder="https://example.com/mcp" value={url} onChange={e => setUrl(e.target.value)} />
+      <input className="input" placeholder="Description (optional)" value={desc} onChange={e => setDesc(e.target.value)} />
+      <input className="input" placeholder="Bearer token (optional)" value={token} onChange={e => setToken(e.target.value)} type="password" />
+      {err && <div style={{ color: "var(--danger, #c0392b)", fontSize: 13 }}>{err}</div>}
+      <div>
+        <button className="btn btn-primary" onClick={submit} disabled={busy || !name.trim() || !url.trim()}>
+          {busy ? "Adding…" : "Add"}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const AdminMcpServerRow: React.FC<{ server: api.McpServer; onChanged: () => void }> = ({ server, onChanged }) => {
+  const [probe, setProbe] = useState<{ ok: boolean; tools?: any[]; error?: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const toggleEnabled = async () => {
+    setBusy(true)
+    try { await api.adminUpdateMcpServer(server.id, { enabled: !server.enabled }); onChanged() }
+    finally { setBusy(false) }
+  }
+
+  const remove = async () => {
+    if (!confirm(`Delete external MCP server "${server.name}"?`)) return
+    setBusy(true)
+    try { await api.adminDeleteMcpServer(server.id); onChanged() }
+    finally { setBusy(false) }
+  }
+
+  const runProbe = async () => {
+    setBusy(true); setProbe(null)
+    try { setProbe(await api.adminProbeMcpServer(server.id)) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="admin-row">
+      <div className="admin-row-main">
+        <div className="admin-row-line">
+          <strong>{server.name}</strong>
+          {!server.enabled && <span className="admin-count" style={{ marginLeft: 8 }}>disabled</span>}
+        </div>
+        <div className="admin-row-sub" style={{ wordBreak: "break-all" }}>{server.url}</div>
+        {server.description && <div className="admin-row-sub">{server.description}</div>}
+        {probe && (
+          <div className="admin-row-sub" style={{ marginTop: 6, color: probe.ok ? "var(--muted)" : "var(--danger, #c0392b)" }}>
+            {probe.ok
+              ? `OK — ${probe.tools?.length ?? 0} tool(s): ${(probe.tools ?? []).map((t: any) => t.name).join(", ")}`
+              : `Probe failed: ${probe.error}`}
+          </div>
+        )}
+      </div>
+      <div className="admin-row-actions" style={{ display: "flex", gap: 6 }}>
+        <button className="btn" onClick={runProbe} disabled={busy}>Probe</button>
+        <button className="btn" onClick={toggleEnabled} disabled={busy}>{server.enabled ? "Disable" : "Enable"}</button>
+        <button className="btn btn-danger" onClick={remove} disabled={busy}>Delete</button>
+      </div>
+    </div>
   )
 }
 

@@ -443,6 +443,45 @@ export const adminGetSettings = () =>
 export const adminUpdateSettings = (updates: Record<string, unknown>) =>
   jsonReq("PATCH", "/admin/settings", updates)
 
+// ──────────────── MCP (Model Context Protocol) ────────────────
+
+export type McpPreview = {
+  enabled: boolean
+  endpoint: string
+  advertised_tools: Array<{ name: string; category: "read" | "write" | "delete" | "share"; description: string }>
+  hidden_tools: Array<{ name: string; category: "read" | "write" | "delete" | "share" }>
+}
+
+export const adminGetMcpPreview = () =>
+  jsonReq("GET", "/admin/mcp/preview") as Promise<McpPreview>
+
+export type McpServer = {
+  id: number
+  name: string
+  description: string | null
+  url: string
+  has_auth_token: boolean
+  enabled: boolean
+  created_by: number | null
+  created_at: string
+  updated_at: string
+}
+
+export const adminListMcpServers = () =>
+  jsonReq("GET", "/admin/mcp/servers") as Promise<McpServer[]>
+
+export const adminCreateMcpServer = (body: { name: string; description?: string; url: string; auth_token?: string | null; enabled?: boolean }) =>
+  jsonReq("POST", "/admin/mcp/servers", body) as Promise<McpServer>
+
+export const adminUpdateMcpServer = (id: number, body: { name?: string; description?: string | null; url?: string; auth_token?: string | null; enabled?: boolean }) =>
+  jsonReq("PATCH", `/admin/mcp/servers/${id}`, body) as Promise<McpServer>
+
+export const adminDeleteMcpServer = (id: number) =>
+  jsonReq("DELETE", `/admin/mcp/servers/${id}`) as Promise<{ deleted: number } | { error: string }>
+
+export const adminProbeMcpServer = (id: number) =>
+  jsonReq("POST", `/admin/mcp/servers/${id}/probe`, {}) as Promise<{ ok: boolean; tools?: Array<{ name: string; description: string }>; error?: string }>
+
 export type WebdavStatus = {
   enabled: boolean
   last_used_at: string | null

@@ -44,6 +44,8 @@ const TABLES = [
   "folders",
   "collaborations",
   "invites",
+  "instance_settings",
+  "mcp_servers",
   "users",
 ]
 

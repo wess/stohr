@@ -6,6 +6,9 @@ docs/superpowers
 DO_MARKETPLACE.md
 INTEGRATIONS.md
 SECURITY.md
+.stohr
+.screenshots
+screenshots
 
 sdks/swift/.build
 # dependencies (bun install)

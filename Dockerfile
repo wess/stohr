@@ -49,6 +49,16 @@ ENV NODE_ENV=production \
     API_URL=http://127.0.0.1:3000 \
     STORAGE_LOCAL_DIR=/data/blobs
 
+# OCI image metadata. org.opencontainers.image.source is what links the
+# published package back to the GitHub repo — GHCR uses it for repo
+# association (README, license, visibility inheritance). The CI workflow
+# also injects dynamic labels (revision, created) via docker/metadata-action.
+LABEL org.opencontainers.image.title="Stohr" \
+      org.opencontainers.image.description="Self-hostable cloud storage — sharing, collaboration, S3-compatible API, OAuth, passkeys." \
+      org.opencontainers.image.source="https://github.com/wess/stohr" \
+      org.opencontainers.image.url="https://github.com/wess/stohr" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
 COPY --from=deps --chown=bun:bun /app/node_modules ./node_modules
 COPY --from=deps --chown=bun:bun /app/libs ./libs
 COPY --chown=bun:bun package.json bun.lock tsconfig.json ./

@@ -22,6 +22,9 @@ import { oauthAuthorizeRoutes } from "../../src/oauth/authorize.ts"
 import { oauthTokenRoutes, oauthRevokeRoutes } from "../../src/oauth/token.ts"
 import { oauthDiscoveryRoutes } from "../../src/oauth/discovery.ts"
 import { deviceAuthorizeRoutes } from "../../src/oauth/device.ts"
+import { adminSettingsRoutes } from "../../src/settings/index.ts"
+import { adminMcpRoutes, mcpRoutes } from "../../src/mcp/index.ts"
+import { mcpServerRoutes } from "../../src/mcp/servers.ts"
 import type { StorageHandle } from "../../src/storage/index.ts"
 import type { Emailer, EmailMessage } from "../../src/email/index.ts"
 
@@ -74,6 +77,10 @@ export const buildApp = (db: Connection, secret: string) => {
     ...oauthRevokeRoutes(db),
     ...oauthDiscoveryRoutes(),
     ...deviceAuthorizeRoutes(db, secret),
+    ...adminSettingsRoutes(db, secret),
+    ...mcpRoutes(db, secret, fakeStore, TEST_APP_URL),
+    ...adminMcpRoutes(db, secret, TEST_APP_URL),
+    ...mcpServerRoutes(db, secret),
   )
 }
 
