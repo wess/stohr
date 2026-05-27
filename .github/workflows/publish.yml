@@ -1,10 +1,10 @@
 # Builds the single-container image and publishes it to GitHub Container
 # Registry (ghcr.io/wess/stohr) and Docker Hub (docker.io/wess/stohr).
 #
-# Triggers:
-#   - push to main      -> tags: main, sha-<short>
-#   - push of a v* tag  -> tags: <x.y.z>, <x.y>, latest, sha-<short>
-#   - manual dispatch
+# Release is package.json-driven:
+#   - push to main bumps package.json version  -> publishes <version> + latest + sha-<short>
+#   - push to main without a version bump      -> no-op (publish job is skipped)
+#   - manual dispatch                          -> always publishes the current version
 #
 # GHCR auth uses the built-in GITHUB_TOKEN; no secret needed.
 #
@@ -18,7 +18,6 @@ name: publish
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -30,20 +29,59 @@ permissions:
   attestations: write
 
 # A second push to the same ref shouldn't race the first. We don't
-# cancel-in-progress: a tag publish must always finish, even if a
+# cancel-in-progress: a release publish must always finish, even if a
 # follow-up main push lands while it's building.
 concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  # Gatekeeper. Reads package.json, compares its `version` against the
+  # previous commit's, and decides whether the publish job runs. Manual
+  # dispatch always passes through so the operator can force a re-publish
+  # without a fake version bump.
+  version-check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.check.outputs.should_publish }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need HEAD~1 to diff package.json; depth=2 is the minimum.
+          fetch-depth: 2
+      - id: check
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          CUR=$(jq -r .version package.json)
+          if [ -z "$CUR" ] || [ "$CUR" = "null" ]; then
+            echo "::error::package.json has no version field"
+            exit 1
+          fi
+          echo "version=$CUR" >> "$GITHUB_OUTPUT"
+          PREV=$(git show HEAD~1:package.json 2>/dev/null | jq -r .version 2>/dev/null || echo "")
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "Manual dispatch — publishing $CUR regardless of version delta"
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          elif [ "$CUR" != "$PREV" ]; then
+            echo "Version bumped: ${PREV:-<none>} -> $CUR"
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version unchanged at $CUR — skipping publish"
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
   publish:
+    needs: version-check
+    if: needs.version-check.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     # Surfaced as an env so every Docker-Hub-touching step can gate on the
     # same condition. Secrets can't be referenced from job-level `if`s, so
     # we evaluate the gate once here and reuse it.
     env:
       PUBLISH_DOCKERHUB: ${{ secrets.DOCKERHUB_TOKEN != '' }}
+      VERSION: ${{ needs.version-check.outputs.version }}
     steps:
       # libs/atlas is a git submodule the Dockerfile COPYs into the build
       # context — bun install resolves @atlas/* from libs/atlas/packages/*.
@@ -94,14 +132,13 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.images.outputs.list }}
-          # latest only follows release tags, not every main push.
+          # We compute `latest` ourselves below; disable metadata-action's
+          # built-in inference (which would otherwise add it on every push).
           flavor: latest=false
           tags: |
-            type=ref,event=branch
+            type=raw,value=${{ env.VERSION }}
+            type=raw,value=latest
             type=sha,prefix=sha-
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
 
       - name: Build and push
         id: build
