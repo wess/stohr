@@ -6,10 +6,13 @@
 #   - push of a v* tag  -> tags: <x.y.z>, <x.y>, latest, sha-<short>
 #   - manual dispatch
 #
-# Required repo secrets (Settings -> Secrets and variables -> Actions):
+# GHCR auth uses the built-in GITHUB_TOKEN; no secret needed.
+#
+# Docker Hub mirroring is optional. Set both secrets to enable it:
 #   DOCKERHUB_USERNAME  -- Docker Hub account name (wess)
 #   DOCKERHUB_TOKEN     -- Docker Hub access token with Read & Write scope
-# GHCR auth uses the built-in GITHUB_TOKEN; no secret needed.
+# When DOCKERHUB_TOKEN is unset every Docker Hub step is skipped and
+# the workflow publishes to GHCR only.
 name: publish
 
 on:
@@ -36,6 +39,11 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Surfaced as an env so every Docker-Hub-touching step can gate on the
+    # same condition. Secrets can't be referenced from job-level `if`s, so
+    # we evaluate the gate once here and reuse it.
+    env:
+      PUBLISH_DOCKERHUB: ${{ secrets.DOCKERHUB_TOKEN != '' }}
     steps:
       # libs/atlas is a git submodule the Dockerfile COPYs into the build
       # context — bun install resolves @atlas/* from libs/atlas/packages/*.
@@ -59,18 +67,33 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub
+        if: env.PUBLISH_DOCKERHUB == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # metadata-action's `images:` list is computed here so docker.io
+      # only joins the publish set when Docker Hub creds are configured.
+      - name: Compute image refs
+        id: images
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          {
+            echo "list<<EOF"
+            echo "ghcr.io/$REPO"
+            if [ "$PUBLISH_DOCKERHUB" = "true" ]; then
+              echo "docker.io/$REPO"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Derive tags and labels
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: |
-            ghcr.io/${{ github.repository }}
-            docker.io/${{ github.repository }}
+          images: ${{ steps.images.outputs.list }}
           # latest only follows release tags, not every main push.
           flavor: latest=false
           tags: |
@@ -107,6 +130,7 @@ jobs:
           push-to-registry: true
 
       - name: Attest Docker Hub image
+        if: env.PUBLISH_DOCKERHUB == 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: docker.io/${{ github.repository }}
@@ -116,7 +140,7 @@ jobs:
       # Mirrors README.md to the Docker Hub repo page. Non-fatal: a
       # description sync failure must not fail an otherwise-good publish.
       - name: Sync Docker Hub description
-        if: github.event_name == 'push'
+        if: env.PUBLISH_DOCKERHUB == 'true' && github.event_name == 'push'
         continue-on-error: true
         uses: peter-evans/dockerhub-description@v4
         with:
