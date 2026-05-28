@@ -13,20 +13,12 @@ const isDev = (process.env.NODE_ENV ?? "development") === "development"
 const HERE = dirname(new URL(import.meta.url).pathname)
 const DIST = resolve(HERE, "dist")
 
-// SPA routes — every request matching one of these returns index.html so
-// React Router takes over client-side. Everything else either hits the
-// /api or /webdav proxy below or is served as a built asset out of DIST.
-const SPA_ROUTES = new Set([
-  "/",
-  "/signup",
-  "/login",
-  "/contact",
-  "/oauth/authorize",
-  "/pair",
-  "/password/forgot",
-  "/password/reset",
-])
-const SPA_PREFIXES = ["/app/", "/s/", "/p/"]
+// SPA fallback policy: any path that isn't /api, /webdav, or an
+// existing built asset returns index.html so React Router takes over
+// client-side. We don't keep an allowlist of routes — Stohr has many
+// (/me, /folders, /admin, /trash, /shares, …) and an out-of-date list
+// here surfaces as a 404 "Not Found" body which, on top-level Safari
+// navigations, manifests as a download prompt.
 
 const buildSpa = async (): Promise<void> => {
   if (!existsSync(DIST)) mkdirSync(DIST, { recursive: true })
@@ -57,11 +49,6 @@ const indexHtml = (await Bun.file(join(DIST, "index.html")).text()).replace(
   "",
 )
 
-const isSpaPath = (path: string): boolean => {
-  if (SPA_ROUTES.has(path)) return true
-  return SPA_PREFIXES.some((p) => path.startsWith(p))
-}
-
 const serveAsset = async (path: string): Promise<Response | null> => {
   // Reject path traversal — DIST is the only thing we ever serve from.
   const safe = path.replace(/^\/+/, "")
@@ -69,6 +56,16 @@ const serveAsset = async (path: string): Promise<Response | null> => {
   const file = Bun.file(join(DIST, safe))
   if (!(await file.exists())) return null
   return new Response(file)
+}
+
+// Heuristic: a request is for an asset file (not a SPA navigation) when
+// its last path segment contains a dot — `/foo/bar.png`, `/manifest.json`,
+// `/favicon.ico`, etc. SPA routes never have an extension on the final
+// segment. Used to decide whether a not-found path should 404 or fall
+// back to the SPA index.html.
+const looksLikeAsset = (path: string): boolean => {
+  const last = path.split("/").pop() ?? ""
+  return last.includes(".")
 }
 
 const proxy = async (req: Request, target: string): Promise<Response> => {
@@ -101,16 +98,18 @@ Bun.serve({
       return proxy(req, `${API}${url.pathname}${url.search}`)
     }
 
-    if (isSpaPath(url.pathname)) {
-      return new Response(indexHtml, {
-        headers: { "content-type": "text/html;charset=utf-8" },
-      })
-    }
-
     const asset = await serveAsset(url.pathname)
     if (asset) return asset
 
-    return new Response("Not Found", { status: 404 })
+    // Asset-shaped path that wasn't found → 404. SPA-shaped path → fall
+    // through to the index.html so client-side routing handles it.
+    if (looksLikeAsset(url.pathname)) {
+      return new Response("Not Found", { status: 404 })
+    }
+
+    return new Response(indexHtml, {
+      headers: { "content-type": "text/html;charset=utf-8" },
+    })
   },
 })
 
