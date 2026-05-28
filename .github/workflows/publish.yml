@@ -83,13 +83,11 @@ jobs:
       PUBLISH_DOCKERHUB: ${{ secrets.DOCKERHUB_TOKEN != '' }}
       VERSION: ${{ needs.version-check.outputs.version }}
     steps:
-      # libs/atlas is a git submodule the Dockerfile COPYs into the build
-      # context — bun install resolves @atlas/* from libs/atlas/packages/*.
-      # Without submodules:recursive the image build fails.
-      - name: Checkout (with submodule)
+      # atlas is fetched via `bun install` from github:wess/atlas (public
+      # repo, HTTPS) inside the Docker build, so no submodule checkout
+      # is needed here.
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
