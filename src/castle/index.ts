@@ -41,6 +41,10 @@ export const castleRoutes = (db: Connection, adminToken: string) => {
       const usernameRaw = body.username?.trim()
       const name = body.name?.trim()
       const passwordHash = body.password_hash
+      // Only set role when the caller explicitly opts in. Castle is an
+      // identity provisioner, not a role authority — owner is a Stohr-side
+      // concept that the local admin manages from the Admin UI.
+      const isOwnerSpecified = typeof body.is_owner === "boolean"
       const isOwner = body.is_owner === true
 
       if (!email || !usernameRaw || !name || !passwordHash) {
@@ -69,14 +73,15 @@ export const castleRoutes = (db: Connection, adminToken: string) => {
       if (target) {
         userId = target.id
         const passwordChanged = target.password !== passwordHash
+        const update: Record<string, unknown> = {
+          email,
+          username,
+          name,
+          password: passwordHash,
+        }
+        if (isOwnerSpecified) update.is_owner = isOwner
         await db.execute(
-          from("users").where(q => q("id").equals(target.id)).update({
-            email,
-            username,
-            name,
-            password: passwordHash,
-            is_owner: isOwner,
-          }),
+          from("users").where(q => q("id").equals(target.id)).update(update),
         )
         if (passwordChanged) {
           revokedSessions = await revokeAllSessions(db, target.id)
@@ -96,7 +101,7 @@ export const castleRoutes = (db: Connection, adminToken: string) => {
               username,
               name,
               password: passwordHash,
-              is_owner: isOwner,
+              is_owner: isOwnerSpecified ? isOwner : false,
             })
             .returning("id"),
         ) as Array<{ id: number }>
