@@ -1,5 +1,6 @@
-# Keep the build context small — only package.json, bun.lock, libs/, src/,
+# Keep the build context small — only package.json, bun.lock, src/,
 # migrations/ and tsconfig.json are actually COPY'd into the image.
+# (atlas is fetched by `bun install` from github:wess/atlas.)
 
 # VCS + local
 .git

@@ -7,8 +7,8 @@
 # so you only need to publish :3001. Migrations run automatically on API
 # startup.
 #
-# BUILD — the libs/atlas submodule must be checked out first:
-#   git submodule update --init
+# BUILD — atlas is a normal bun dep (github:wess/atlas), pulled by
+# `bun install` inside the deps stage:
 #   docker build -t stohr .
 #
 # RUN — needs an external Postgres. Storage is either an S3-compatible
@@ -30,10 +30,10 @@
 # ---- deps: resolve + install into its own cached layer ------------------
 FROM oven/bun:1-alpine AS deps
 WORKDIR /app
-# The @atlas/* deps are workspace packages, so libs/atlas/packages/* must be
-# present for `bun install` to resolve them.
+# atlas is fetched via `bun install` from github:wess/atlas — needs git in
+# the image. Alpine's bun base lacks it.
+RUN apk add --no-cache git
 COPY package.json bun.lock ./
-COPY libs/ ./libs/
 RUN bun install --frozen-lockfile --production
 
 # ---- runtime ------------------------------------------------------------
@@ -60,7 +60,6 @@ LABEL org.opencontainers.image.title="Stohr" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 COPY --from=deps --chown=bun:bun /app/node_modules ./node_modules
-COPY --from=deps --chown=bun:bun /app/libs ./libs
 COPY --chown=bun:bun package.json bun.lock tsconfig.json ./
 COPY --chown=bun:bun migrations/ ./migrations/
 COPY --chown=bun:bun src/ ./src/
