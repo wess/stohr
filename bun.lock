@@ -11,6 +11,7 @@
         "@atlas/db": "workspace:*",
         "@atlas/migrate": "workspace:*",
         "@atlas/server": "workspace:*",
+        "@atlas/sso": "workspace:*",
         "@atlas/storage": "workspace:*",
         "@simplewebauthn/browser": "^13.3.0",
         "@simplewebauthn/server": "^13.3.0",
@@ -122,6 +123,18 @@
         "typescript": "^5",
       },
     },
+    "libs/atlas/packages/oauth": {
+      "name": "@atlas/oauth",
+      "version": "0.0.1",
+      "dependencies": {
+        "@atlas/auth": "workspace:*",
+        "@atlas/db": "workspace:*",
+        "@atlas/server": "workspace:*",
+      },
+      "peerDependencies": {
+        "typescript": "^5",
+      },
+    },
     "libs/atlas/packages/request": {
       "name": "@atlas/request",
       "version": "0.0.1",
@@ -132,6 +145,18 @@
     "libs/atlas/packages/server": {
       "name": "@atlas/server",
       "version": "0.0.1",
+      "peerDependencies": {
+        "typescript": "^5",
+      },
+    },
+    "libs/atlas/packages/sso": {
+      "name": "@atlas/sso",
+      "version": "0.0.1",
+      "dependencies": {
+        "@atlas/auth": "workspace:*",
+        "@atlas/db": "workspace:*",
+        "@atlas/server": "workspace:*",
+      },
       "peerDependencies": {
         "typescript": "^5",
       },
@@ -179,9 +204,13 @@
 
     "@atlas/migrate": ["@atlas/migrate@workspace:libs/atlas/packages/migrate"],
 
+    "@atlas/oauth": ["@atlas/oauth@workspace:libs/atlas/packages/oauth"],
+
     "@atlas/request": ["@atlas/request@workspace:libs/atlas/packages/request"],
 
     "@atlas/server": ["@atlas/server@workspace:libs/atlas/packages/server"],
+
+    "@atlas/sso": ["@atlas/sso@workspace:libs/atlas/packages/sso"],
 
     "@atlas/storage": ["@atlas/storage@workspace:libs/atlas/packages/storage"],
 
