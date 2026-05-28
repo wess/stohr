@@ -70,7 +70,7 @@ src/
     totp.ts             — RFC 6238 verifier
     inline.ts           — inline-Content-Type allowlist for downloads
     owner.ts            — DB-backed `is_owner` guard
-  permissions/          — unified folder/file access resolver
+  permissions/          — unified folder/file access resolver (incl. Space membership lookup)
   usage/                — storage-usage + quota-check helpers
   storage/              — pluggable blob backends (s3/, local/) behind a StorageDriver interface
   email/                — Resend integration + transactional templates
@@ -78,6 +78,17 @@ src/
   webdav/               — RFC 4918 WebDAV server at /webdav (see WEBDAV.md). Owner-gated via admin settings
   settings/             — DB-backed owner toggles (webdav_enabled, federation_enabled). Runtime gate, no restart needed
   actions/              — folder-action dispatch + built-in registry
+  comments/             — comments on files/folders (viewer-can-comment, owner can moderate)
+  notifications/        — per-user inbox (resource_type/resource_id/payload); fanned out from comment + collab events
+  activity/             — derived per-resource activity feed (comments + versions + shares + collabs)
+  spaces/               — team workspaces with per-space membership (admin/editor/viewer)
+  messages/             — user↔user + system→user mailbox (threading, archive, system-broadcast helpers)
+  photos/               — mobile photo-backup protocol (init/manifest/upload/timeline; idempotent)
+  search/content/       — full-text content search (Tika-style extraction → Postgres tsvector + GIN; ts_headline snippets)
+  auth/oidc/            — OIDC client (PKCE, JWKS verification, state sweep) + admin config
+  auth/ldap/            — LDAP bind+search login (ldapts) + admin config + test endpoint
+  auth/external.ts      — shared external-identity → user resolver (link/auto-provision)
+  admin/users.ts        — owner-only user-management routes: edit, suspend/unsuspend, reset-password, message, broadcast
   util/                 — small helpers (token, username)
   web/                  — single-file React SPA + serve.ts proxy
 migrations/             — hand-written SQL, applied at API startup via @atlas/migrate

@@ -179,6 +179,60 @@ class StohrClient {
   Future<FileItem> moveFile(int id, int? folderId) async =>
       FileItem.fromJson(await _json('PATCH', '/files/$id', body: {'folder_id': folderId}) as Map<String, dynamic>);
 
+  // ── photo backup ───────────────────────────────────
+  //
+  // Mobile-first protocol: see docs/PHOTO-BACKUP.md.
+  // Flow:
+  //   1. `initPhotoBackup()` once at app launch — ensures the Photos folder
+  //      exists and tells you how many photos are already up.
+  //   2. `photoBackupManifest(localAssetIds)` to learn which IDs the server
+  //      already has — skip those locally.
+  //   3. For each remaining ID, call `uploadPhoto(...)`. Safe to retry on
+  //      flaky networks: (user, asset_id) is unique server-side, so a
+  //      duplicate hit returns `deduped: true` without re-storing bytes.
+
+  Future<Map<String, dynamic>> initPhotoBackup() async =>
+      await _json('POST', '/photos/init', body: const <String, dynamic>{}) as Map<String, dynamic>;
+
+  Future<List<String>> photoBackupManifest(List<String> assetIds) async {
+    final j = await _json('POST', '/photos/manifest', body: {'asset_ids': assetIds}) as Map<String, dynamic>;
+    final known = j['known'];
+    return known is List ? known.map((e) => e.toString()).toList() : <String>[];
+  }
+
+  Future<Map<String, dynamic>> uploadPhoto({
+    required String assetId,
+    required Uint8List bytes,
+    required String name,
+    required String mime,
+    DateTime? capturedAt,
+  }) async {
+    final uri = Uri.parse('$baseUrl/photos/upload');
+    final req = http.MultipartRequest('POST', uri)
+      ..headers.addAll(_headers())
+      ..fields['asset_id'] = assetId
+      ..fields['mime'] = mime;
+    if (capturedAt != null) req.fields['captured_at'] = capturedAt.toUtc().toIso8601String();
+    req.files.add(http.MultipartFile.fromBytes('file', bytes, filename: name));
+    final streamed = await _http.send(req);
+    final text = await streamed.stream.bytesToString();
+    final parsed = text.isEmpty ? null : jsonDecode(text);
+    if (streamed.statusCode < 200 || streamed.statusCode >= 300 ||
+        (parsed is Map<String, dynamic> && parsed.containsKey('error'))) {
+      final msg = (parsed is Map<String, dynamic> && parsed['error'] != null)
+          ? parsed['error'].toString()
+          : 'HTTP ${streamed.statusCode}';
+      throw StohrError(msg, streamed.statusCode, parsed is Map<String, dynamic> ? parsed : null);
+    }
+    return parsed as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> photoTimeline({int limit = 100, DateTime? before}) async {
+    final qs = StringBuffer('limit=$limit');
+    if (before != null) qs.write('&before=${Uri.encodeComponent(before.toUtc().toIso8601String())}');
+    return await _json('GET', '/photos/timeline?$qs') as Map<String, dynamic>;
+  }
+
   // ── shares ─────────────────────────────────────────
 
   Future<Share> createShare(

@@ -22,11 +22,16 @@ import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 class StohrClient(
@@ -159,6 +164,73 @@ class StohrClient(
     suspend fun deleteFile(id: Int) {
         val resp = http.delete("$baseUrl/files/$id") { authHeader()?.let { header(HttpHeaders.Authorization, it) } }
         assertOk(resp)
+    }
+
+    // ── photo backup ──────────────────────────────────
+    //
+    // Mobile-first protocol. See docs/PHOTO-BACKUP.md.
+    //   1. initPhotoBackup() once at app launch.
+    //   2. photoBackupManifest(localIds) → server-known IDs (skip those).
+    //   3. uploadPhoto(...) per remaining ID. Retry-safe.
+
+    suspend fun initPhotoBackup(): Map<String, Any?> {
+        val resp = http.post("$baseUrl/photos/init") {
+            authHeader()?.let { header(HttpHeaders.Authorization, it) }
+            contentType(ContentType.Application.Json); setBody("{}")
+        }
+        @Suppress("UNCHECKED_CAST")
+        return json.decodeFromString(JsonElement.serializer(), assertOk(resp)).toMap()
+    }
+
+    suspend fun photoBackupManifest(assetIds: List<String>): List<String> {
+        val resp = http.post("$baseUrl/photos/manifest") {
+            authHeader()?.let { header(HttpHeaders.Authorization, it) }
+            contentType(ContentType.Application.Json)
+            setBody(jsonStr(mapOf("asset_ids" to assetIds)))
+        }
+        val parsed = json.decodeFromString(JsonElement.serializer(), assertOk(resp))
+        return parsed.jsonObject["known"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+    }
+
+    suspend fun uploadPhoto(
+        assetId: String,
+        bytes: ByteArray,
+        name: String,
+        mime: String,
+        capturedAtIso: String? = null,
+    ): Map<String, Any?> {
+        val resp = http.post("$baseUrl/photos/upload") {
+            authHeader()?.let { header(HttpHeaders.Authorization, it) }
+            setBody(MultiPartFormDataContent(formData {
+                append("asset_id", assetId)
+                append("mime", mime)
+                if (capturedAtIso != null) append("captured_at", capturedAtIso)
+                append("file", bytes, Headers.build {
+                    append(HttpHeaders.ContentType, mime)
+                    append(HttpHeaders.ContentDisposition, "filename=\"$name\"")
+                })
+            }))
+        }
+        return json.decodeFromString(JsonElement.serializer(), assertOk(resp)).toMap()
+    }
+
+    private fun JsonElement.toMap(): Map<String, Any?> {
+        val obj = (this as? JsonObject) ?: return emptyMap()
+        return obj.mapValues { (_, v) ->
+            when {
+                v is JsonObject -> v.toMap()
+                v is JsonArray -> v.map { it.unwrap() }
+                v is JsonPrimitive -> v.unwrap()
+                else -> null
+            }
+        }
+    }
+
+    private fun JsonElement.unwrap(): Any? = when (this) {
+        is JsonNull -> null
+        is JsonPrimitive -> contentOrNull
+        is JsonObject -> toMap()
+        is JsonArray -> map { it.unwrap() }
     }
 
     // ── shares ────────────────────────────────────────

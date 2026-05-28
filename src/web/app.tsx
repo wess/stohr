@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client"
 import {
   AlertTriangle,
   ArrowRight,
+  Bell,
+  Briefcase,
   Calendar,
   Check,
   ChevronRight,
@@ -60,6 +62,11 @@ type Route =
   | { kind: "actions" }
   | { kind: "actionEdit"; id: number }
   | { kind: "trash" }
+  | { kind: "notifications" }
+  | { kind: "messages" }
+  | { kind: "messageThread"; threadId: number }
+  | { kind: "spaces" }
+  | { kind: "space"; id: number }
   | { kind: "settings" }
   | { kind: "admin" }
   | { kind: "share"; token: string }
@@ -93,6 +100,13 @@ const parseRoute = (loc: { pathname: string; search: string }): Route => {
   if (path === "/app/shared") return { kind: "shared" }
   if (path === "/app/links") return { kind: "links" }
   if (path === "/app/trash") return { kind: "trash" }
+  if (path === "/app/notifications") return { kind: "notifications" }
+  if (path === "/app/messages") return { kind: "messages" }
+  const thread = path.match(/^\/app\/messages\/thread\/(\d+)$/)
+  if (thread) return { kind: "messageThread", threadId: Number(thread[1]) }
+  if (path === "/app/spaces") return { kind: "spaces" }
+  const space = path.match(/^\/app\/spaces\/(\d+)$/)
+  if (space) return { kind: "space", id: Number(space[1]) }
   if (path === "/app/settings") return { kind: "settings" }
   if (path === "/app/admin") return { kind: "admin" }
   if (path === "/app/actions") return { kind: "actions" }
@@ -205,6 +219,9 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
   const [mfaUseBackup, setMfaUseBackup] = useState(false)
   const [mfaBackup, setMfaBackup] = useState("")
   const [passkeyBusy, setPasskeyBusy] = useState(false)
+  const [oidc, setOidc] = useState<{ available: boolean; label: string } | null>(null)
+  const [ldap, setLdap] = useState<{ available: boolean } | null>(null)
+  const [useLdap, setUseLdap] = useState(false)
 
   useEffect(() => {
     if (needsSetup) return
@@ -227,6 +244,17 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
     return () => { cancelled = true }
   }, [mode, inviteToken, needsSetup])
 
+  useEffect(() => {
+    if (needsSetup) return
+    let cancelled = false
+    Promise.all([api.oidcStatus(), api.ldapStatus()]).then(([o, l]) => {
+      if (cancelled) return
+      setOidc(o)
+      setLdap(l)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [needsSetup])
+
   const submit = async () => {
     setError("")
     if (mode === "signup") {
@@ -234,6 +262,17 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
       if (res.error) return setError(res.error)
       if (!res.token) return setError("Authentication failed")
       if (window.location.pathname === "/signup") history.replaceState(null, "", "/")
+      onLogin()
+      return
+    }
+    if (useLdap) {
+      const res = await api.loginLdap(identity, password)
+      if (res.error) return setError(res.error)
+      if (!res.token) return setError("Authentication failed")
+      if (oauthNext) {
+        history.replaceState(null, "", oauthNext)
+        window.dispatchEvent(new PopStateEvent("popstate"))
+      }
       onLogin()
       return
     }
@@ -371,6 +410,22 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
         </>
       ) : (
         <>
+          {!needsSetup && oidc?.available && (
+            <>
+              <button
+                type="button"
+                className="passkey-cta"
+                onClick={() => {
+                  const next = oauthNext ?? (window.location.pathname + window.location.search)
+                  const q = next && next !== "/" ? `?redirect_to=${encodeURIComponent(next)}` : ""
+                  window.location.href = `/api/auth/oidc/start${q}`
+                }}
+              >
+                🔐 {oidc.label}
+              </button>
+              <div className="auth-divider"><span>or</span></div>
+            </>
+          )}
           {!needsSetup && (
             <>
               <button
@@ -384,7 +439,7 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
               <div className="auth-divider"><span>or</span></div>
             </>
           )}
-          <input placeholder="Email or username" value={identity}
+          <input placeholder={useLdap ? "LDAP username" : "Email or username"} value={identity}
             onChange={e => setIdentity(e.target.value)}
             autoCapitalize="off"
             autoCorrect="off"
@@ -408,6 +463,11 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
           {!needsSetup && mode === "login" && (
             <div className="toggle" onClick={() => navigate("/password/forgot")} style={{ marginTop: 4 }}>
               Forgot your password?
+            </div>
+          )}
+          {!needsSetup && mode === "login" && ldap?.available && (
+            <div className="toggle" onClick={() => { setUseLdap(!useLdap); setError("") }} style={{ marginTop: 4 }}>
+              {useLdap ? "Use a Stohr account instead" : "Sign in with LDAP"}
             </div>
           )}
         </>
@@ -738,7 +798,7 @@ const Modal: React.FC<{ title: string; onClose: () => void; children: React.Reac
 )
 
 type PaletteFolder = { id: number; name: string; parent_id: number | null }
-type PaletteResults = { files: FileItem[]; folders: PaletteFolder[] }
+type PaletteResults = { files: FileItem[]; folders: PaletteFolder[]; content: api.ContentHit[] }
 
 type FolderDetail = { id: number; name: string; parent_id: number | null; role: "owner" | "editor" | "viewer"; owner: { id: number; username: string; name: string } | null; trail: Crumb[] }
 
@@ -854,7 +914,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
 
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [paletteQuery, setPaletteQuery] = useState("")
-  const [paletteResults, setPaletteResults] = useState<PaletteResults>({ files: [], folders: [] })
+  const [paletteResults, setPaletteResults] = useState<PaletteResults>({ files: [], folders: [], content: [] })
   const [paletteActive, setPaletteActive] = useState(0)
   const [paletteLoading, setPaletteLoading] = useState(false)
 
@@ -904,7 +964,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
         e.preventDefault()
         setPaletteOpen(true)
         setPaletteQuery("")
-        setPaletteResults({ files: [], folders: [] })
+        setPaletteResults({ files: [], folders: [], content: [] })
         setPaletteActive(0)
         setPaletteLoading(false)
       }
@@ -916,7 +976,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
   useEffect(() => {
     if (!paletteOpen) return
     if (!paletteQuery) {
-      setPaletteResults({ files: [], folders: [] })
+      setPaletteResults({ files: [], folders: [], content: [] })
       setPaletteActive(0)
       return
     }
@@ -924,20 +984,24 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
     const ctrl = new AbortController()
     const t = setTimeout(async () => {
       try {
-        const res = await api.search(paletteQuery, undefined, ctrl.signal) as PaletteResults
+        const [nameRes, contentRes] = await Promise.all([
+          api.search(paletteQuery, undefined, ctrl.signal),
+          api.searchContent(paletteQuery, 10).catch(() => ({ query: "", files: [] as api.ContentHit[] })),
+        ])
         if (ctrl.signal.aborted) return
         const results: PaletteResults = {
-          folders: Array.isArray(res?.folders) ? res.folders : [],
-          files: Array.isArray(res?.files) ? res.files : [],
+          folders: Array.isArray((nameRes as any)?.folders) ? (nameRes as any).folders : [],
+          files: Array.isArray((nameRes as any)?.files) ? (nameRes as any).files : [],
+          content: Array.isArray(contentRes?.files) ? contentRes.files : [],
         }
         setPaletteResults(results)
         setPaletteActive(prev => {
-          const total = results.folders.length + results.files.length
+          const total = results.folders.length + results.files.length + results.content.length
           return total === 0 ? 0 : Math.min(prev, total - 1)
         })
       } catch (err) {
         if ((err as { name?: string })?.name === "AbortError") return
-        setPaletteResults({ files: [], folders: [] })
+        setPaletteResults({ files: [], folders: [], content: [] })
         setPaletteActive(0)
       } finally {
         if (!ctrl.signal.aborted) setPaletteLoading(false)
@@ -1343,8 +1407,12 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
       )}
 
       {paletteOpen && (() => {
-        const combined = [...paletteResults.folders, ...paletteResults.files]
-        const closePalette = () => { setPaletteOpen(false); setPaletteQuery(""); setPaletteResults({ files: [], folders: [] }); setPaletteActive(0) }
+        const combined: Array<PaletteFolder | FileItem | api.ContentHit> = [
+          ...paletteResults.folders,
+          ...paletteResults.files,
+          ...paletteResults.content,
+        ]
+        const closePalette = () => { setPaletteOpen(false); setPaletteQuery(""); setPaletteResults({ files: [], folders: [], content: [] }); setPaletteActive(0) }
         const activate = (idx: number) => {
           const item = combined[idx]
           if (!item) return
@@ -1380,7 +1448,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                 value={paletteQuery}
                 onChange={e => { setPaletteQuery(e.target.value); setPaletteActive(0) }}
               />
-              {paletteQuery.length > 0 && !paletteLoading && paletteResults.folders.length === 0 && paletteResults.files.length === 0 && (
+              {paletteQuery.length > 0 && !paletteLoading && paletteResults.folders.length === 0 && paletteResults.files.length === 0 && paletteResults.content.length === 0 && (
                 <div style={{ padding: "12px 0", color: "var(--muted)", textAlign: "center", fontSize: 14 }}>No matches.</div>
               )}
               {paletteResults.folders.length > 0 && (
@@ -1415,6 +1483,34 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                       >
                         <MimeIcon mime={f.mime} size={16} />
                         <span style={{ marginLeft: 8 }}>{f.name}</span>
+                      </div>
+                    )
+                  })}
+                </>
+              )}
+              {paletteResults.content.length > 0 && (
+                <>
+                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", padding: "6px 0 2px" }}>Inside files</div>
+                  {paletteResults.content.map((f, i) => {
+                    const globalIdx = paletteResults.folders.length + paletteResults.files.length + i
+                    return (
+                      <div
+                        key={`pco-${f.id}`}
+                        className={`picker-row${paletteActive === globalIdx ? " active" : ""}`}
+                        style={{ cursor: "pointer", borderRadius: 6, padding: "6px 8px", background: paletteActive === globalIdx ? "var(--hover)" : undefined, display: "flex", flexDirection: "column", alignItems: "flex-start" }}
+                        onClick={() => activate(globalIdx)}
+                        onMouseEnter={() => setPaletteActive(globalIdx)}
+                      >
+                        <div style={{ display: "flex", alignItems: "center" }}>
+                          <MimeIcon mime={f.mime} size={16} />
+                          <span style={{ marginLeft: 8 }}>{f.name}</span>
+                        </div>
+                        {f.snippet && (
+                          <div
+                            style={{ marginLeft: 24, fontSize: 12, color: "var(--muted)", lineHeight: 1.3, marginTop: 2 }}
+                            dangerouslySetInnerHTML={{ __html: f.snippet }}
+                          />
+                        )}
                       </div>
                     )
                   })}
@@ -1516,6 +1612,7 @@ const PreviewModal: React.FC<{ file: FileItem; onClose: () => void }> = ({ file,
   const [url, setUrl] = useState<string | null>(null)
   const [text, setText] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [commentsOpen, setCommentsOpen] = useState(false)
   const kind = kindFor(file.mime)
 
   useEffect(() => {
@@ -1567,11 +1664,15 @@ const PreviewModal: React.FC<{ file: FileItem; onClose: () => void }> = ({ file,
             </div>
           </div>
           <div className="preview-actions">
+            <button onClick={() => setCommentsOpen(v => !v)} title="Comments">
+              <MessageSquare size={16} /> {commentsOpen ? "Hide comments" : "Comments"}
+            </button>
             <button onClick={() => downloadFile(file)}>Download</button>
             <button onClick={onClose} aria-label="Close"><X size={16} /></button>
           </div>
         </div>
-        <div className="preview-body">
+        <div className="preview-body" style={{ display: "flex" }}>
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "stretch", justifyContent: "center" }}>
           {loading && <div className="preview-empty">Loading preview...</div>}
           {error && <div className="preview-empty">Could not load preview: {error}</div>}
           {kind === "image" && url && <img src={url} alt={file.name} />}
@@ -1591,8 +1692,90 @@ const PreviewModal: React.FC<{ file: FileItem; onClose: () => void }> = ({ file,
               <button className="primary" style={{ marginTop: 16 }} onClick={() => downloadFile(file)}>Download</button>
             </div>
           )}
+          </div>
+          {commentsOpen && (
+            <div style={{ width: 360, borderLeft: "1px solid var(--border)", overflowY: "auto", padding: 16 }}>
+              <CommentsPanel kind="file" resourceId={file.id} />
+            </div>
+          )}
         </div>
       </div>
+    </div>
+  )
+}
+
+const CommentsPanel: React.FC<{ kind: "file" | "folder"; resourceId: number }> = ({ kind, resourceId }) => {
+  const [items, setItems] = useState<api.CommentRow[]>([])
+  const [body, setBody] = useState("")
+  const [loading, setLoading] = useState(true)
+  const [posting, setPosting] = useState(false)
+  const [err, setErr] = useState("")
+
+  const refresh = async () => {
+    setLoading(true)
+    try {
+      const data = kind === "file" ? await api.listFileComments(resourceId) : await api.listFolderComments(resourceId)
+      setItems(Array.isArray(data.comments) ? data.comments : [])
+    } finally { setLoading(false) }
+  }
+  useEffect(() => { refresh() }, [kind, resourceId])
+
+  const post = async () => {
+    const trimmed = body.trim()
+    if (!trimmed) return
+    setPosting(true)
+    setErr("")
+    try {
+      const res = kind === "file" ? await api.createFileComment(resourceId, trimmed) : await api.createFolderComment(resourceId, trimmed)
+      if ((res as any).error) { setErr((res as any).error); return }
+      setBody("")
+      await refresh()
+    } finally { setPosting(false) }
+  }
+
+  const remove = async (id: number) => {
+    if (!confirm("Delete this comment?")) return
+    await api.deleteComment(id)
+    await refresh()
+  }
+
+  const me = api.getUser()
+  return (
+    <div>
+      <h4 style={{ marginTop: 0 }}>Comments</h4>
+      {loading ? (
+        <div style={{ color: "var(--muted)" }}>Loading…</div>
+      ) : items.length === 0 ? (
+        <div style={{ color: "var(--muted)", fontSize: 13 }}>No comments yet.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 12 }}>
+          {items.map(c => (
+            <div key={c.id} style={{ padding: 8, borderRadius: 6, background: "var(--hover)", fontSize: 13 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                <strong>{c.user.name ?? c.user.username ?? "Someone"}</strong>
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>{new Date(c.created_at).toLocaleString()}</span>
+              </div>
+              <div style={{ whiteSpace: "pre-wrap" }}>{c.deleted_at ? <em style={{ color: "var(--muted)" }}>(deleted)</em> : c.body}</div>
+              {!c.deleted_at && me?.id === c.user.id && (
+                <button onClick={() => remove(c.id)} style={{ background: "transparent", border: "none", color: "var(--muted)", fontSize: 11, padding: 0, marginTop: 4, cursor: "pointer" }}>
+                  Delete
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <textarea
+        value={body}
+        onChange={e => setBody(e.target.value)}
+        placeholder="Add a comment…"
+        rows={3}
+        style={{ width: "100%", boxSizing: "border-box", marginBottom: 8 }}
+      />
+      {err && <div className="msg err">{err}</div>}
+      <button className="primary" onClick={post} disabled={posting || !body.trim()}>
+        {posting ? "Posting…" : "Post"}
+      </button>
     </div>
   )
 }
@@ -3843,6 +4026,594 @@ const jsonFetch = async (path: string) => {
 
 const SIDEBAR_COLLAPSED_KEY = "stohr_sidebar_collapsed"
 
+const summarizeNotification = (n: api.NotificationRow): string => {
+  switch (n.kind) {
+    case "comment.created": return "New comment"
+    case "comment.reply": return "New reply"
+    case "collab.invited": return n.payload?.role ? `Shared with you (${n.payload.role})` : "Shared with you"
+    case "share.created": return "Public link created"
+    case "file.added": return "File added"
+    case "file.changed": return "File updated"
+    case "file.moved": return "File moved"
+    case "folder.added": return "Folder added"
+    default: return n.kind
+  }
+}
+
+const notificationHref = (n: api.NotificationRow): string | null => {
+  if (n.resource_type === "file" && n.resource_id) return `/app/u/me/file/${n.resource_id}`
+  if (n.resource_type === "folder" && n.resource_id) return `/app/f/${n.resource_id}`
+  return null
+}
+
+const NotificationsView: React.FC<{ onChange: () => void }> = ({ onChange }) => {
+  const [items, setItems] = useState<api.NotificationRow[]>([])
+  const [unread, setUnread] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState<"all" | "unread">("all")
+
+  const refresh = async () => {
+    setLoading(true)
+    try {
+      const res = await api.listNotifications(filter === "unread")
+      setItems(res.notifications)
+      setUnread(res.unread)
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { refresh() }, [filter])
+
+  const markRead = async (n: api.NotificationRow) => {
+    if (n.read_at) return
+    await api.markNotificationRead(n.id)
+    setItems(prev => prev.map(x => x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x))
+    setUnread(u => Math.max(0, u - 1))
+    onChange()
+  }
+  const markAll = async () => {
+    await api.markAllNotificationsRead()
+    setItems(prev => prev.map(x => x.read_at ? x : { ...x, read_at: new Date().toISOString() }))
+    setUnread(0)
+    onChange()
+  }
+  const remove = async (n: api.NotificationRow) => {
+    await api.deleteNotification(n.id)
+    setItems(prev => prev.filter(x => x.id !== n.id))
+    if (!n.read_at) setUnread(u => Math.max(0, u - 1))
+    onChange()
+  }
+
+  return (
+    <div className="main">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <h2 style={{ margin: 0 }}>Notifications</h2>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setFilter("all")} className={filter === "all" ? "primary" : undefined}>All</button>
+          <button onClick={() => setFilter("unread")} className={filter === "unread" ? "primary" : undefined}>
+            Unread{unread > 0 ? ` (${unread})` : ""}
+          </button>
+          {unread > 0 && <button onClick={markAll}>Mark all read</button>}
+        </div>
+      </div>
+      {loading && items.length === 0 ? (
+        <div style={{ color: "var(--muted)" }}>Loading…</div>
+      ) : items.length === 0 ? (
+        <div style={{ padding: "24px 0", color: "var(--muted)" }}>
+          {filter === "unread" ? "You're all caught up." : "No notifications yet."}
+        </div>
+      ) : (
+        <div>
+          {items.map(n => {
+            const href = notificationHref(n)
+            return (
+              <div
+                key={n.id}
+                style={{
+                  display: "flex", alignItems: "center", padding: "10px 12px",
+                  borderRadius: 6, marginBottom: 4,
+                  background: n.read_at ? "transparent" : "var(--accent-bg)",
+                  cursor: href ? "pointer" : "default",
+                }}
+                onClick={() => {
+                  markRead(n)
+                  if (href) navigate(href)
+                }}
+              >
+                <Bell size={16} strokeWidth={1.75} style={{ marginRight: 12, color: n.read_at ? "var(--muted)" : "var(--brand)" }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 14 }}>{summarizeNotification(n)}</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                    {new Date(n.created_at).toLocaleString()}
+                  </div>
+                </div>
+                <button
+                  onClick={e => { e.stopPropagation(); remove(n) }}
+                  style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}
+                  aria-label="Dismiss"
+                >
+                  <X size={14} strokeWidth={1.75} />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const formatSender = (m: api.Message): string => {
+  if (m.kind === "system" || !m.from) return "Stohr (system)"
+  return m.from.name ?? m.from.username ?? "Someone"
+}
+
+const MessagesView: React.FC<{ onChange: () => void }> = ({ onChange }) => {
+  const [box, setBox] = useState<"inbox" | "sent" | "archived">("inbox")
+  const [items, setItems] = useState<api.Message[]>([])
+  const [loading, setLoading] = useState(true)
+  const [composing, setComposing] = useState(false)
+  const [composeTo, setComposeTo] = useState("")
+  const [composeSubject, setComposeSubject] = useState("")
+  const [composeBody, setComposeBody] = useState("")
+  const [composeErr, setComposeErr] = useState("")
+
+  const refresh = async () => {
+    setLoading(true)
+    try {
+      const data = await api.listMessages(box)
+      setItems(Array.isArray(data.messages) ? data.messages : [])
+    } finally { setLoading(false) }
+    onChange()
+  }
+  useEffect(() => { refresh() }, [box])
+
+  const send = async () => {
+    setComposeErr("")
+    if (!composeTo.trim() || !composeSubject.trim() || !composeBody.trim()) {
+      setComposeErr("Recipient, subject, and message are all required.")
+      return
+    }
+    const to = composeTo.trim()
+    const input = to.includes("@")
+      ? { email: to, subject: composeSubject.trim(), body: composeBody.trim() }
+      : { username: to.toLowerCase(), subject: composeSubject.trim(), body: composeBody.trim() }
+    const res = await api.sendMessage(input)
+    if ((res as any).error) { setComposeErr((res as any).error); return }
+    setComposing(false)
+    setComposeTo(""); setComposeSubject(""); setComposeBody("")
+    if (box === "sent") refresh()
+  }
+
+  const markRead = async (m: api.Message) => {
+    if (m.read_at) return
+    await api.markMessageRead(m.id)
+    setItems(prev => prev.map(x => x.id === m.id ? { ...x, read_at: new Date().toISOString() } : x))
+    onChange()
+  }
+  const archive = async (m: api.Message) => {
+    await api.archiveMessage(m.id)
+    refresh()
+  }
+  const unarchive = async (m: api.Message) => {
+    await api.unarchiveMessage(m.id)
+    refresh()
+  }
+  const remove = async (m: api.Message) => {
+    if (!confirm("Delete this message?")) return
+    await api.deleteMessage(m.id)
+    refresh()
+  }
+
+  return (
+    <div className="main">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <h2 style={{ margin: 0 }}>Messages</h2>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setBox("inbox")} className={box === "inbox" ? "primary" : undefined}>Inbox</button>
+          <button onClick={() => setBox("sent")} className={box === "sent" ? "primary" : undefined}>Sent</button>
+          <button onClick={() => setBox("archived")} className={box === "archived" ? "primary" : undefined}>Archived</button>
+          <button onClick={() => setComposing(true)}><Plus size={14} strokeWidth={1.75} /> New message</button>
+        </div>
+      </div>
+      {loading ? (
+        <div style={{ color: "var(--muted)" }}>Loading…</div>
+      ) : items.length === 0 ? (
+        <div style={{ padding: "32px 0", color: "var(--muted)", textAlign: "center" }}>
+          {box === "inbox" ? "Inbox is empty." : box === "sent" ? "Nothing sent." : "No archived messages."}
+        </div>
+      ) : (
+        <div>
+          {items.map(m => {
+            const unread = !m.read_at && box === "inbox"
+            const partyLabel = box === "sent"
+              ? `to @${m.to.username ?? "?"}`
+              : `from ${formatSender(m)}`
+            return (
+              <div
+                key={m.id}
+                style={{
+                  padding: "10px 12px", borderRadius: 6, marginBottom: 4,
+                  display: "flex", alignItems: "center",
+                  background: unread ? "var(--accent-bg)" : "transparent",
+                  cursor: "pointer",
+                }}
+                onClick={() => { markRead(m); navigate(`/app/messages/thread/${m.thread_id}`) }}
+              >
+                <Mail size={16} strokeWidth={1.75} style={{ marginRight: 12, color: unread ? "var(--brand)" : "var(--muted)" }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: unread ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {m.subject}
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>{partyLabel} · {new Date(m.created_at).toLocaleString()}</div>
+                </div>
+                {box === "inbox" && (
+                  <button onClick={e => { e.stopPropagation(); archive(m) }} title="Archive" style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer", marginRight: 4 }}>
+                    <Inbox size={14} strokeWidth={1.75} />
+                  </button>
+                )}
+                {box === "archived" && (
+                  <button onClick={e => { e.stopPropagation(); unarchive(m) }} title="Unarchive" style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer", marginRight: 4 }}>
+                    <ArrowRight size={14} strokeWidth={1.75} />
+                  </button>
+                )}
+                {box !== "sent" && (
+                  <button onClick={e => { e.stopPropagation(); remove(m) }} title="Delete" style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}>
+                    <X size={14} strokeWidth={1.75} />
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {composing && (
+        <Modal title="New message" onClose={() => setComposing(false)}>
+          {composeErr && <div className="msg err">{composeErr}</div>}
+          <input placeholder="To (username or email)" value={composeTo} onChange={e => setComposeTo(e.target.value)} autoFocus />
+          <input placeholder="Subject" value={composeSubject} onChange={e => setComposeSubject(e.target.value)} />
+          <textarea placeholder="Message" rows={8} value={composeBody} onChange={e => setComposeBody(e.target.value)} style={{ width: "100%", boxSizing: "border-box" }} />
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button onClick={() => setComposing(false)}>Cancel</button>
+            <button className="primary" onClick={send}>Send</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+const MessageThreadView: React.FC<{ threadId: number; onChange: () => void }> = ({ threadId, onChange }) => {
+  const [items, setItems] = useState<api.Message[]>([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState("")
+  const [replyBody, setReplyBody] = useState("")
+  const [sending, setSending] = useState(false)
+
+  const refresh = async () => {
+    setLoading(true)
+    setErr("")
+    try {
+      const data = await api.messageThread(threadId)
+      if ((data as any).error) { setErr((data as any).error); return }
+      setItems(Array.isArray(data.messages) ? data.messages : [])
+    } finally { setLoading(false) }
+    onChange()
+  }
+  useEffect(() => { refresh() }, [threadId])
+
+  const reply = async () => {
+    const last = items[items.length - 1]
+    if (!last || !replyBody.trim()) return
+    setSending(true)
+    try {
+      const res = await api.replyMessage(last.id, replyBody.trim())
+      if ((res as any).error) { setErr((res as any).error); return }
+      setReplyBody("")
+      await refresh()
+    } finally { setSending(false) }
+  }
+
+  const last = items[items.length - 1]
+  const canReply = last && last.kind !== "system" && !!last.from
+
+  if (err) return <div className="main"><div className="msg err">{err}</div></div>
+  if (loading && items.length === 0) return <div className="main"><div style={{ color: "var(--muted)" }}>Loading…</div></div>
+  if (items.length === 0) return <div className="main"><div style={{ color: "var(--muted)" }}>Thread is empty or unavailable.</div></div>
+
+  return (
+    <div className="main">
+      <div style={{ marginBottom: 8 }}>
+        <span style={{ color: "var(--muted)", cursor: "pointer" }} onClick={() => navigate("/app/messages")}>← Messages</span>
+      </div>
+      <h2 style={{ margin: "0 0 16px" }}>{items[0]!.subject}</h2>
+      <div>
+        {items.map(m => (
+          <div key={m.id} style={{ padding: 12, borderRadius: 6, marginBottom: 8, background: "var(--card)", border: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <strong>{formatSender(m)}</strong>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>{new Date(m.created_at).toLocaleString()}</span>
+            </div>
+            <div style={{ whiteSpace: "pre-wrap" }}>{m.body}</div>
+          </div>
+        ))}
+      </div>
+      {canReply ? (
+        <div style={{ marginTop: 16 }}>
+          <textarea placeholder="Reply…" rows={4} value={replyBody} onChange={e => setReplyBody(e.target.value)} style={{ width: "100%", boxSizing: "border-box" }} />
+          <button className="primary" onClick={reply} disabled={sending || !replyBody.trim()}>{sending ? "Sending…" : "Reply"}</button>
+        </div>
+      ) : (
+        <div style={{ marginTop: 16, color: "var(--muted)", fontSize: 13 }}>Cannot reply to a system message.</div>
+      )}
+    </div>
+  )
+}
+
+const SpacesListView: React.FC = () => {
+  const [spaces, setSpaces] = useState<api.Space[]>([])
+  const [loading, setLoading] = useState(true)
+  const [creating, setCreating] = useState(false)
+  const [name, setName] = useState("")
+  const [description, setDescription] = useState("")
+  const [err, setErr] = useState("")
+
+  const refresh = async () => {
+    setLoading(true)
+    try {
+      const data = await api.listSpaces()
+      setSpaces(Array.isArray(data.spaces) ? data.spaces : [])
+    } finally { setLoading(false) }
+  }
+  useEffect(() => { refresh() }, [])
+
+  const create = async () => {
+    setErr("")
+    const trimmed = name.trim()
+    if (!trimmed) return
+    const res = await api.createSpace({ name: trimmed, description: description.trim() || undefined })
+    if ((res as any).error) { setErr((res as any).error); return }
+    setName(""); setDescription(""); setCreating(false)
+    await refresh()
+  }
+
+  return (
+    <div className="main">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <h2 style={{ margin: 0 }}>Spaces</h2>
+        <button className="primary" onClick={() => setCreating(true)}>
+          <Plus size={14} strokeWidth={1.75} /> New space
+        </button>
+      </div>
+      <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>
+        Spaces are shared workspaces. Files in a space belong to the team, not to any one person.
+      </div>
+      {loading ? (
+        <div style={{ color: "var(--muted)" }}>Loading…</div>
+      ) : spaces.length === 0 ? (
+        <div style={{ padding: "32px 0", color: "var(--muted)", textAlign: "center" }}>
+          No spaces yet. Create one to share a folder tree with your team.
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+          {spaces.map(s => (
+            <div
+              key={s.id}
+              style={{ padding: 16, borderRadius: 8, border: "1px solid var(--border)", cursor: "pointer", background: "var(--card)" }}
+              onClick={() => navigate(`/app/spaces/${s.id}`)}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                <Briefcase size={14} strokeWidth={1.75} style={{ marginRight: 6, verticalAlign: -2 }} />
+                {s.name}
+              </div>
+              {s.description && (
+                <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8 }}>{s.description}</div>
+              )}
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                {s.my_role} · /{s.slug}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {creating && (
+        <Modal title="Create a space" onClose={() => setCreating(false)}>
+          {err && <div className="msg err">{err}</div>}
+          <input placeholder="Space name" value={name} onChange={e => setName(e.target.value)} autoFocus />
+          <textarea placeholder="Description (optional)" rows={3} value={description} onChange={e => setDescription(e.target.value)} style={{ width: "100%", boxSizing: "border-box" }} />
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button onClick={() => setCreating(false)}>Cancel</button>
+            <button className="primary" onClick={create} disabled={!name.trim()}>Create</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+const SpaceView: React.FC<{ id: number }> = ({ id }) => {
+  const [space, setSpace] = useState<api.Space | null>(null)
+  const [folders, setFolders] = useState<Array<{ id: number; name: string; created_at: string }>>([])
+  const [members, setMembers] = useState<api.SpaceMember[]>([])
+  const [tab, setTab] = useState<"folders" | "members">("folders")
+  const [err, setErr] = useState("")
+  const [creatingFolder, setCreatingFolder] = useState(false)
+  const [newFolderName, setNewFolderName] = useState("")
+  const [addingMember, setAddingMember] = useState(false)
+  const [memberIdentity, setMemberIdentity] = useState("")
+  const [memberRole, setMemberRole] = useState<api.SpaceRole>("editor")
+
+  const refresh = async () => {
+    setErr("")
+    try {
+      const [s, f, m] = await Promise.all([
+        api.getSpace(id),
+        api.listSpaceFolders(id),
+        api.listSpaceMembers(id),
+      ])
+      if ((s as any).error) { setErr((s as any).error); return }
+      setSpace(s)
+      setFolders(Array.isArray(f.folders) ? f.folders : [])
+      setMembers(Array.isArray(m.members) ? m.members : [])
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to load space")
+    }
+  }
+  useEffect(() => { refresh() }, [id])
+
+  if (err) return <div className="main"><div className="msg err">{err}</div></div>
+  if (!space) return <div className="main"><div style={{ color: "var(--muted)" }}>Loading…</div></div>
+
+  const isAdmin = space.my_role === "admin"
+  const canEdit = isAdmin || space.my_role === "editor"
+
+  const createFolder = async () => {
+    const trimmed = newFolderName.trim()
+    if (!trimmed) return
+    const res = await api.createSpaceFolder(id, trimmed)
+    if ((res as any).error) { setErr((res as any).error); return }
+    setNewFolderName("")
+    setCreatingFolder(false)
+    await refresh()
+  }
+
+  const addMember = async () => {
+    const ident = memberIdentity.trim()
+    if (!ident) return
+    const input = ident.includes("@") ? { email: ident, role: memberRole } : { username: ident.toLowerCase(), role: memberRole }
+    const res = await api.addSpaceMember(id, input)
+    if ((res as any).error) { setErr((res as any).error); return }
+    setMemberIdentity("")
+    setAddingMember(false)
+    await refresh()
+  }
+
+  const removeMember = async (m: api.SpaceMember) => {
+    if (!confirm(`Remove ${m.user.name ?? m.user.username} from this space?`)) return
+    await api.removeSpaceMember(id, m.id)
+    await refresh()
+  }
+
+  const changeRole = async (m: api.SpaceMember, role: api.SpaceRole) => {
+    await api.updateSpaceMember(id, m.id, role)
+    await refresh()
+  }
+
+  return (
+    <div className="main">
+      <div style={{ marginBottom: 8 }}>
+        <span style={{ color: "var(--muted)", cursor: "pointer" }} onClick={() => navigate("/app/spaces")}>← Spaces</span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <div>
+          <h2 style={{ margin: 0 }}>
+            <Briefcase size={18} strokeWidth={1.75} style={{ marginRight: 8, verticalAlign: -3 }} />
+            {space.name}
+          </h2>
+          {space.description && <div style={{ color: "var(--muted)", marginTop: 4 }}>{space.description}</div>}
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+            you are {space.my_role} · /{space.slug}
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, borderBottom: "1px solid var(--border)" }}>
+        <button
+          onClick={() => setTab("folders")}
+          style={{ background: "transparent", border: "none", padding: "8px 12px", borderBottom: tab === "folders" ? "2px solid var(--brand)" : "2px solid transparent", cursor: "pointer", color: tab === "folders" ? "var(--brand)" : "var(--text)" }}
+        >Folders</button>
+        <button
+          onClick={() => setTab("members")}
+          style={{ background: "transparent", border: "none", padding: "8px 12px", borderBottom: tab === "members" ? "2px solid var(--brand)" : "2px solid transparent", cursor: "pointer", color: tab === "members" ? "var(--brand)" : "var(--text)" }}
+        >Members ({members.length})</button>
+      </div>
+
+      {tab === "folders" && (
+        <>
+          {canEdit && (
+            <div style={{ marginBottom: 12 }}>
+              {creatingFolder ? (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input autoFocus placeholder="Folder name" value={newFolderName} onChange={e => setNewFolderName(e.target.value)} onKeyDown={e => e.key === "Enter" && createFolder()} />
+                  <button className="primary" onClick={createFolder} disabled={!newFolderName.trim()}>Create</button>
+                  <button onClick={() => { setCreatingFolder(false); setNewFolderName("") }}>Cancel</button>
+                </div>
+              ) : (
+                <button onClick={() => setCreatingFolder(true)}><FolderPlus size={14} strokeWidth={1.75} /> New folder</button>
+              )}
+            </div>
+          )}
+          {folders.length === 0 ? (
+            <div style={{ padding: "24px 0", color: "var(--muted)" }}>No folders yet.</div>
+          ) : (
+            <div>
+              {folders.map(f => (
+                <div
+                  key={f.id}
+                  style={{ padding: "8px 12px", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center" }}
+                  className="picker-row"
+                  onClick={() => navigate(`/app/f/${f.id}`)}
+                >
+                  <FolderIcon size={16} strokeWidth={1.5} />
+                  <span style={{ marginLeft: 8 }}>{f.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {tab === "members" && (
+        <>
+          {isAdmin && (
+            <div style={{ marginBottom: 12 }}>
+              {addingMember ? (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input autoFocus placeholder="username or email" value={memberIdentity} onChange={e => setMemberIdentity(e.target.value)} />
+                  <select value={memberRole} onChange={e => setMemberRole(e.target.value as api.SpaceRole)}>
+                    <option value="viewer">Viewer</option>
+                    <option value="editor">Editor</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                  <button className="primary" onClick={addMember} disabled={!memberIdentity.trim()}>Add</button>
+                  <button onClick={() => { setAddingMember(false); setMemberIdentity("") }}>Cancel</button>
+                </div>
+              ) : (
+                <button onClick={() => setAddingMember(true)}><UserPlus size={14} strokeWidth={1.75} /> Add member</button>
+              )}
+            </div>
+          )}
+          <div>
+            {members.map(m => (
+              <div key={m.id} style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderRadius: 6, marginBottom: 4 }}>
+                <div style={{ flex: 1 }}>
+                  <div>{m.user.name ?? m.user.username}</div>
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>@{m.user.username} · {m.user.email}</div>
+                </div>
+                {isAdmin && m.user.id !== space.owner_id ? (
+                  <>
+                    <select value={m.role} onChange={e => changeRole(m, e.target.value as api.SpaceRole)} style={{ marginRight: 8 }}>
+                      <option value="viewer">Viewer</option>
+                      <option value="editor">Editor</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                    <button onClick={() => removeMember(m)} style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}>
+                      <X size={14} strokeWidth={1.75} />
+                    </button>
+                  </>
+                ) : (
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>{m.user.id === space.owner_id ? "owner" : m.role}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, route }) => {
   const [userSnapshot, setUserSnapshot] = useState(api.getUser())
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -3885,15 +4656,35 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
     })
   }
 
-  const activeTab: "files" | "shared" | "links" | "actions" | "trash" | "settings" | "admin" = (() => {
+  const activeTab: "files" | "shared" | "links" | "actions" | "trash" | "notifications" | "messages" | "spaces" | "settings" | "admin" = (() => {
     if (route.kind === "shared") return "shared"
     if (route.kind === "links") return "links"
     if (route.kind === "actions" || route.kind === "actionEdit") return "actions"
     if (route.kind === "trash") return "trash"
+    if (route.kind === "notifications") return "notifications"
+    if (route.kind === "messages" || route.kind === "messageThread") return "messages"
+    if (route.kind === "spaces" || route.kind === "space") return "spaces"
     if (route.kind === "settings") return "settings"
     if (route.kind === "admin") return "admin"
     return "files"
   })()
+
+  const [unreadNotif, setUnreadNotif] = useState(0)
+  const [unreadMsg, setUnreadMsg] = useState(0)
+  useEffect(() => {
+    let cancelled = false
+    const refresh = () => {
+      api.unreadNotificationCount()
+        .then(r => { if (!cancelled) setUnreadNotif(r.unread) })
+        .catch(() => {})
+      api.unreadMessageCount()
+        .then(r => { if (!cancelled) setUnreadMsg(r.unread) })
+        .catch(() => {})
+    }
+    refresh()
+    const t = setInterval(refresh, 60_000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [activeTab])
 
   const initial = (userSnapshot?.name?.[0] ?? userSnapshot?.username?.[0] ?? "?").toUpperCase()
 
@@ -3931,6 +4722,9 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
         <div className={`nav${activeTab === "shared" ? " active" : ""}`} onClick={() => navigate("/app/shared")} title="Shared with me">
           <Users size={18} strokeWidth={1.75} /> <span className="nav-label">Shared with me</span>
         </div>
+        <div className={`nav${activeTab === "spaces" ? " active" : ""}`} onClick={() => navigate("/app/spaces")} title="Spaces">
+          <Briefcase size={18} strokeWidth={1.75} /> <span className="nav-label">Spaces</span>
+        </div>
         <div className={`nav${activeTab === "links" ? " active" : ""}`} onClick={() => navigate("/app/links")} title="Public links">
           <Link2 size={18} strokeWidth={1.75} /> <span className="nav-label">Public links</span>
         </div>
@@ -3939,6 +4733,22 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
         </div>
         <div className={`nav${activeTab === "trash" ? " active" : ""}`} onClick={() => navigate("/app/trash")} title="Trash">
           <Trash2 size={18} strokeWidth={1.75} /> <span className="nav-label">Trash</span>
+        </div>
+        <div className={`nav${activeTab === "notifications" ? " active" : ""}`} onClick={() => navigate("/app/notifications")} title="Notifications">
+          <Bell size={18} strokeWidth={1.75} /> <span className="nav-label">Notifications</span>
+          {unreadNotif > 0 && (
+            <span style={{ marginLeft: "auto", background: "var(--brand)", color: "white", borderRadius: 10, fontSize: 11, padding: "0 6px", minWidth: 18, textAlign: "center" }}>
+              {unreadNotif > 99 ? "99+" : unreadNotif}
+            </span>
+          )}
+        </div>
+        <div className={`nav${activeTab === "messages" ? " active" : ""}`} onClick={() => navigate("/app/messages")} title="Messages">
+          <Mail size={18} strokeWidth={1.75} /> <span className="nav-label">Messages</span>
+          {unreadMsg > 0 && (
+            <span style={{ marginLeft: "auto", background: "var(--brand)", color: "white", borderRadius: 10, fontSize: 11, padding: "0 6px", minWidth: 18, textAlign: "center" }}>
+              {unreadMsg > 99 ? "99+" : unreadMsg}
+            </span>
+          )}
         </div>
         <div className={`nav${activeTab === "settings" ? " active" : ""}`} onClick={() => navigate("/app/settings")} title="Settings">
           <SettingsIcon size={18} strokeWidth={1.75} /> <span className="nav-label">Settings</span>
@@ -4007,6 +4817,11 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
       {activeTab === "actions" && route.kind === "actions" && <ActionsListView />}
       {activeTab === "actions" && route.kind === "actionEdit" && <ActionEditView id={route.id} />}
       {activeTab === "trash" && <TrashView />}
+      {activeTab === "notifications" && <NotificationsView onChange={() => api.unreadNotificationCount().then(r => setUnreadNotif(r.unread)).catch(() => {})} />}
+      {activeTab === "spaces" && route.kind === "spaces" && <SpacesListView />}
+      {activeTab === "spaces" && route.kind === "space" && <SpaceView id={route.id} />}
+      {activeTab === "messages" && route.kind === "messages" && <MessagesView onChange={() => api.unreadMessageCount().then(r => setUnreadMsg(r.unread)).catch(() => {})} />}
+      {activeTab === "messages" && route.kind === "messageThread" && <MessageThreadView threadId={route.threadId} onChange={() => api.unreadMessageCount().then(r => setUnreadMsg(r.unread)).catch(() => {})} />}
       {activeTab === "settings" && (
         <Settings
           onProfileUpdate={() => setUserSnapshot(api.getUser())}
@@ -6488,18 +7303,53 @@ type AdminUser = {
   storage_quota_bytes: number
   storage_bytes: number
   file_count: number
+  suspended_at?: string | null
+  suspended_reason?: string | null
   created_at: string
 }
 
 const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
   const [users, setUsers] = useState<AdminUser[]>([])
   const [busy, setBusy] = useState<number | null>(null)
+  const [editing, setEditing] = useState<AdminUser | null>(null)
+  const [messaging, setMessaging] = useState<AdminUser | null>(null)
+  const [broadcasting, setBroadcasting] = useState(false)
 
   const load = async () => {
     const data = await api.adminListUsers()
     setUsers(Array.isArray(data) ? data : [])
   }
   useEffect(() => { load() }, [])
+
+  const suspend = async (u: AdminUser) => {
+    const reason = prompt(`Suspend @${u.username}? Optional reason (sent to the user):`, "")
+    if (reason === null) return
+    setBusy(u.id)
+    const res = await api.adminSuspendUser(u.id, reason.trim() || undefined)
+    setBusy(null)
+    if ((res as any).error) return alert((res as any).error)
+    await load()
+  }
+  const unsuspend = async (u: AdminUser) => {
+    if (!confirm(`Restore access for @${u.username}?`)) return
+    setBusy(u.id)
+    const res = await api.adminUnsuspendUser(u.id)
+    setBusy(null)
+    if ((res as any).error) return alert((res as any).error)
+    await load()
+  }
+  const resetPassword = async (u: AdminUser) => {
+    if (!confirm(`Issue a password reset link for @${u.username}?`)) return
+    setBusy(u.id)
+    const res = await api.adminResetUserPassword(u.id)
+    setBusy(null)
+    if (res.error) return alert(res.error)
+    if (res.reset_url) {
+      prompt("Email isn't configured. Copy this reset URL and send it manually:", res.reset_url)
+    } else {
+      alert("Reset link emailed to the user.")
+    }
+  }
 
   const toggleOwner = async (u: AdminUser) => {
     if (u.id === meId) return
@@ -6538,7 +7388,10 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
 
   return (
     <section className="settings-card">
-      <h3>Users <span className="admin-count">({users.length})</span></h3>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <h3 style={{ margin: 0 }}>Users <span className="admin-count">({users.length})</span></h3>
+        <button onClick={() => setBroadcasting(true)}><Mail size={14} strokeWidth={1.75} /> Broadcast</button>
+      </div>
       {users.length === 0 && <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 14 }}>No users yet.</div>}
       <div className="admin-list">
         {users.map(u => (
@@ -6549,6 +7402,7 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
                 <span className="admin-row-name">{u.name}</span>
                 <span className="admin-row-name">· {u.email}</span>
                 {u.is_owner && <span className="admin-pill admin-pill-owner">owner</span>}
+                {u.suspended_at && <span className="admin-pill" style={{ background: "var(--danger-bg, #fee)", color: "var(--danger, #c00)" }}>suspended</span>}
                 {u.id === meId && <span className="admin-pill">you</span>}
                 <span className="admin-row-when">{new Date(u.created_at).toLocaleDateString()}</span>
               </div>
@@ -6556,13 +7410,22 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
                 {formatBytes(u.storage_bytes)} · {u.file_count} file{u.file_count === 1 ? "" : "s"}
                 {" · "}
                 {u.storage_quota_bytes > 0 ? `${formatBytes(u.storage_quota_bytes)} cap` : "no cap"}
+                {u.suspended_reason && <> · suspended: {u.suspended_reason}</>}
               </div>
             </div>
             <div className="admin-row-actions">
-              <button disabled={busy === u.id} onClick={() => setQuota(u)}>Set quota</button>
+              <button disabled={busy === u.id} onClick={() => setEditing(u)}>Edit</button>
+              <button disabled={busy === u.id} onClick={() => setQuota(u)}>Quota</button>
+              <button disabled={busy === u.id} onClick={() => setMessaging(u)}>Message</button>
               <button disabled={busy === u.id || u.id === meId} onClick={() => toggleOwner(u)}>
                 {u.is_owner ? "Revoke owner" : "Make owner"}
               </button>
+              <button disabled={busy === u.id} onClick={() => resetPassword(u)}>Reset password</button>
+              {u.id !== meId && !u.is_owner && (
+                u.suspended_at
+                  ? <button disabled={busy === u.id} onClick={() => unsuspend(u)}>Unsuspend</button>
+                  : <button disabled={busy === u.id} onClick={() => suspend(u)}>Suspend</button>
+              )}
               {u.id !== meId && (
                 <button className="danger" disabled={busy === u.id} onClick={() => remove(u)}>Delete</button>
               )}
@@ -6570,7 +7433,123 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
           </div>
         ))}
       </div>
+      {editing && (
+        <AdminUserEditModal
+          user={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); load() }}
+        />
+      )}
+      {messaging && (
+        <AdminMessageModal
+          target={messaging}
+          onClose={() => setMessaging(null)}
+        />
+      )}
+      {broadcasting && (
+        <AdminBroadcastModal
+          onClose={() => setBroadcasting(false)}
+        />
+      )}
     </section>
+  )
+}
+
+const AdminUserEditModal: React.FC<{ user: AdminUser; onClose: () => void; onSaved: () => void }> = ({ user, onClose, onSaved }) => {
+  const [name, setName] = useState(user.name)
+  const [email, setEmail] = useState(user.email)
+  const [username, setUsername] = useState(user.username)
+  const [err, setErr] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  const save = async () => {
+    setErr("")
+    const patch: Record<string, string> = {}
+    if (name.trim() !== user.name) patch.name = name.trim()
+    if (email.trim().toLowerCase() !== user.email) patch.email = email.trim().toLowerCase()
+    if (username.trim().toLowerCase() !== user.username) patch.username = username.trim().toLowerCase()
+    if (Object.keys(patch).length === 0) { onClose(); return }
+    setSaving(true)
+    const res = await api.adminEditUser(user.id, patch)
+    setSaving(false)
+    if ((res as any).error) { setErr((res as any).error); return }
+    onSaved()
+  }
+
+  return (
+    <Modal title={`Edit @${user.username}`} onClose={onClose}>
+      {err && <div className="msg err">{err}</div>}
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>Display name</label>
+      <input value={name} onChange={e => setName(e.target.value)} />
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>Email</label>
+      <input value={email} onChange={e => setEmail(e.target.value)} type="email" />
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>Username</label>
+      <input value={username} onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))} />
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button onClick={onClose}>Cancel</button>
+        <button className="primary" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save"}</button>
+      </div>
+    </Modal>
+  )
+}
+
+const AdminMessageModal: React.FC<{ target: AdminUser; onClose: () => void }> = ({ target, onClose }) => {
+  const [subject, setSubject] = useState("")
+  const [body, setBody] = useState("")
+  const [err, setErr] = useState("")
+  const [sending, setSending] = useState(false)
+
+  const send = async () => {
+    setErr("")
+    if (!subject.trim() || !body.trim()) { setErr("Subject and body are required."); return }
+    setSending(true)
+    const res = await api.adminMessageUser(target.id, subject.trim(), body.trim())
+    setSending(false)
+    if ((res as any).error) { setErr((res as any).error); return }
+    onClose()
+  }
+
+  return (
+    <Modal title={`Message @${target.username}`} onClose={onClose}>
+      {err && <div className="msg err">{err}</div>}
+      <input placeholder="Subject" value={subject} onChange={e => setSubject(e.target.value)} autoFocus />
+      <textarea placeholder="Message" rows={8} value={body} onChange={e => setBody(e.target.value)} style={{ width: "100%", boxSizing: "border-box" }} />
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button onClick={onClose}>Cancel</button>
+        <button className="primary" disabled={sending} onClick={send}>{sending ? "Sending…" : "Send"}</button>
+      </div>
+    </Modal>
+  )
+}
+
+const AdminBroadcastModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  const [subject, setSubject] = useState("")
+  const [body, setBody] = useState("")
+  const [err, setErr] = useState("")
+  const [sending, setSending] = useState(false)
+
+  const send = async () => {
+    setErr("")
+    if (!subject.trim() || !body.trim()) { setErr("Subject and body are required."); return }
+    if (!confirm("Send this message to every active user on this instance?")) return
+    setSending(true)
+    const res = await api.adminBroadcast(subject.trim(), body.trim())
+    setSending(false)
+    if (res.error) { setErr(res.error); return }
+    alert(`Delivered to ${res.delivered} user${res.delivered === 1 ? "" : "s"}.`)
+    onClose()
+  }
+
+  return (
+    <Modal title="Broadcast to all users" onClose={onClose}>
+      {err && <div className="msg err">{err}</div>}
+      <input placeholder="Subject" value={subject} onChange={e => setSubject(e.target.value)} autoFocus />
+      <textarea placeholder="Message" rows={8} value={body} onChange={e => setBody(e.target.value)} style={{ width: "100%", boxSizing: "border-box" }} />
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button onClick={onClose}>Cancel</button>
+        <button className="primary" disabled={sending} onClick={send}>{sending ? "Sending…" : "Send to all"}</button>
+      </div>
+    </Modal>
   )
 }
 
@@ -6921,6 +7900,20 @@ const App: React.FC = () => {
   const [loggedIn, setLoggedIn] = useState(!!api.getToken())
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location))
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null)
+
+  // OIDC callback hands the JWT back in the URL fragment so it doesn't end
+  // up in the API logs or a redirect-chain Referer. Adopt it once, clear
+  // the hash, and fetch /me to populate the user record before flipping
+  // into the logged-in shell.
+  useEffect(() => {
+    if (loggedIn) return
+    const hash = window.location.hash
+    if (!hash.startsWith("#token=")) return
+    const t = decodeURIComponent(hash.slice("#token=".length))
+    if (!t) return
+    history.replaceState(null, "", window.location.pathname + window.location.search)
+    api.adoptToken(t).then(u => { if (u) setLoggedIn(true) })
+  }, [loggedIn])
 
   useEffect(() => {
     const onPop = () => setRoute(parseRoute(window.location))

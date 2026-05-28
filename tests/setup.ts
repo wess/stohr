@@ -33,6 +33,13 @@ export const db: Connection = connect({ driver: "postgres", url: TEST_URL })
 await migrate.up(db, "./migrations")
 
 const TABLES = [
+  "messages",
+  "notifications",
+  "comments",
+  "space_members",
+  "spaces",
+  "external_identities",
+  "oidc_states",
   "audit_events",
   "rate_limits",
   "sessions",

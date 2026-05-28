@@ -1,3 +1,4 @@
+import { emit } from "../notifications/emit.ts"
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
@@ -110,6 +111,14 @@ const addCollab = (db: Connection, kind: ResourceKind, emailer: Emailer, appUrl:
         accepted_at: raw("NOW()"),
       }).returning("id", "user_id", "email", "role", "created_at", "accepted_at"),
     ) as Array<any>
+    void emit(db, {
+      userId: target.user.id,
+      kind: "collab.invited",
+      resourceType: kind,
+      resourceId: id,
+      actorId: userId,
+      payload: { role },
+    })
     return json(c, 201, { ...inserted[0], user: target.user })
   }
 

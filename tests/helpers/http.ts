@@ -25,6 +25,18 @@ import { deviceAuthorizeRoutes } from "../../src/oauth/device.ts"
 import { adminSettingsRoutes } from "../../src/settings/index.ts"
 import { adminMcpRoutes, mcpRoutes } from "../../src/mcp/index.ts"
 import { mcpServerRoutes } from "../../src/mcp/servers.ts"
+import { commentRoutes } from "../../src/comments/index.ts"
+import { notificationRoutes } from "../../src/notifications/index.ts"
+import { activityRoutes } from "../../src/activity/index.ts"
+import { spaceRoutes } from "../../src/spaces/index.ts"
+import { messageRoutes } from "../../src/messages/index.ts"
+import { photoRoutes } from "../../src/photos/index.ts"
+import { oidcRoutes } from "../../src/auth/oidc/index.ts"
+import { adminOidcRoutes } from "../../src/auth/oidc/admin.ts"
+import { ldapRoutes } from "../../src/auth/ldap/index.ts"
+import { adminLdapRoutes } from "../../src/auth/ldap/admin.ts"
+import { contentSearchRoutes } from "../../src/search/content/routes.ts"
+import { adminUserRoutes } from "../../src/admin/users.ts"
 import type { StorageHandle } from "../../src/storage/index.ts"
 import type { Emailer, EmailMessage } from "../../src/email/index.ts"
 
@@ -81,6 +93,18 @@ export const buildApp = (db: Connection, secret: string) => {
     ...mcpRoutes(db, secret, fakeStore, TEST_APP_URL),
     ...adminMcpRoutes(db, secret, TEST_APP_URL),
     ...mcpServerRoutes(db, secret),
+    ...commentRoutes(db, secret),
+    ...notificationRoutes(db, secret),
+    ...activityRoutes(db, secret),
+    ...spaceRoutes(db, secret),
+    ...messageRoutes(db, secret),
+    ...photoRoutes(db, secret, fakeStore),
+    ...oidcRoutes(db, secret, TEST_APP_URL),
+    ...adminOidcRoutes(db, secret),
+    ...ldapRoutes(db, secret),
+    ...adminLdapRoutes(db, secret),
+    ...contentSearchRoutes(db, secret),
+    ...adminUserRoutes(db, secret, fakeEmailer, TEST_APP_URL),
   )
 }
 

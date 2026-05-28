@@ -20,6 +20,7 @@ type UserRow = {
   name: string
   is_owner: boolean
   deleted_at?: string | null
+  suspended_at?: string | null
 }
 
 // Accounts scheduled for deletion (deleted_at IS NOT NULL) must reject every
@@ -28,6 +29,8 @@ type UserRow = {
 // up to the hard-delete sweep.
 const ACCOUNT_DELETED_ERROR =
   "Account is scheduled for deletion. Click the cancel link in your email to restore it."
+const ACCOUNT_SUSPENDED_ERROR =
+  "Account has been suspended by the owner. Contact the instance owner to restore access."
 
 type RequireAuthOptions = {
   secret: string
@@ -60,13 +63,16 @@ export const requireAuth = (opts: RequireAuthOptions): PipeFn =>
       const user = await opts.db.one(
         from("users")
           .where(q => q("id").equals(app.user_id))
-          .select("id", "email", "username", "name", "is_owner", "deleted_at"),
+          .select("id", "email", "username", "name", "is_owner", "deleted_at", "suspended_at"),
       ) as UserRow | null
       if (!user) {
         return halt(conn, 401, { error: "App token references a missing user" })
       }
       if (user.deleted_at) {
         return halt(conn, 403, { error: ACCOUNT_DELETED_ERROR })
+      }
+      if (user.suspended_at) {
+        return halt(conn, 403, { error: ACCOUNT_SUSPENDED_ERROR })
       }
       void opts.db.execute(
         from("apps").where(q => q("id").equals(app.id)).update({ last_used_at: raw("NOW()") }),
@@ -107,14 +113,18 @@ export const requireAuth = (opts: RequireAuthOptions): PipeFn =>
           })
         }
       }
-      // Reject deleted users even if their access token is still inside its
-      // 1h TTL. One PK lookup; cheap relative to the JWT verify above.
+      // Reject deleted or suspended users even if their access token is
+      // still inside its 1h TTL. One PK lookup; cheap relative to the
+      // JWT verify above.
       if (typeof payload.id === "number") {
         const u = await opts.db.one(
-          from("users").where(q => q("id").equals(payload.id)).select("deleted_at"),
-        ) as { deleted_at: string | null } | null
+          from("users").where(q => q("id").equals(payload.id)).select("deleted_at", "suspended_at"),
+        ) as { deleted_at: string | null; suspended_at: string | null } | null
         if (!u || u.deleted_at) {
           return halt(conn, 403, { error: ACCOUNT_DELETED_ERROR })
+        }
+        if (u.suspended_at) {
+          return halt(conn, 403, { error: ACCOUNT_SUSPENDED_ERROR })
         }
       }
       return assign(conn, {
@@ -139,10 +149,13 @@ export const requireAuth = (opts: RequireAuthOptions): PipeFn =>
     // (race or session-less PAT-style call) we still reject it.
     if (typeof payload?.id === "number") {
       const u = await opts.db.one(
-        from("users").where(q => q("id").equals(payload.id)).select("deleted_at"),
-      ) as { deleted_at: string | null } | null
+        from("users").where(q => q("id").equals(payload.id)).select("deleted_at", "suspended_at"),
+      ) as { deleted_at: string | null; suspended_at: string | null } | null
       if (u?.deleted_at) {
         return halt(conn, 403, { error: ACCOUNT_DELETED_ERROR })
+      }
+      if (u?.suspended_at) {
+        return halt(conn, 403, { error: ACCOUNT_SUSPENDED_ERROR })
       }
     }
 

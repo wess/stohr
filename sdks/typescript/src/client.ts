@@ -166,6 +166,45 @@ export const createClient = (options: ClientOptions = {}) => {
       versions: (id: number) => json<FileVersion[]>("GET", `/files/${id}/versions`),
     },
 
+    photos: {
+      init: () => json<{ folder_id: number; uploaded: number; bytes: number }>("POST", "/photos/init", {}),
+      manifest: (assetIds: string[]) =>
+        json<{ known: string[] }>("POST", "/photos/manifest", { asset_ids: assetIds }),
+      upload: async (input: {
+        assetId: string
+        file: Blob | Uint8Array
+        name: string
+        mime: string
+        capturedAt?: Date
+      }): Promise<{ id: number; deduped: boolean; name: string; mime: string; size: number | string; folder_id: number; version: number; created_at: string }> => {
+        const blob = input.file instanceof Blob
+          ? input.file
+          : new Blob([input.file as BlobPart], { type: input.mime })
+        const form = new FormData()
+        form.append("asset_id", input.assetId)
+        form.append("mime", input.mime)
+        if (input.capturedAt) form.append("captured_at", input.capturedAt.toISOString())
+        form.append("file", blob, input.name)
+        const res = await fetcher(`${baseUrl}/photos/upload`, {
+          method: "POST",
+          headers: headers(),
+          body: form,
+        })
+        const text = await res.text()
+        const parsed = text ? JSON.parse(text) : null
+        if (!res.ok || isError(parsed)) {
+          throw new StohrError(isError(parsed) ? parsed.error : `HTTP ${res.status}`, res.status, parsed)
+        }
+        return parsed
+      },
+      timeline: (opts?: { limit?: number; before?: Date }) => {
+        const qs = new URLSearchParams()
+        if (opts?.limit) qs.set("limit", String(opts.limit))
+        if (opts?.before) qs.set("before", opts.before.toISOString())
+        return json<{ photos: any[]; next: string | null }>("GET", `/photos/timeline?${qs.toString()}`)
+      },
+    },
+
     shares: {
       list: () => json<Share[]>("GET", "/shares"),
       create: (fileId: number, expiresInSeconds: number) =>

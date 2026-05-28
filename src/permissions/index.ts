@@ -13,6 +13,7 @@ export type FolderRow = {
   federation_id: number | null
   federation_role: string | null
   federation_quota_bytes: number | string
+  space_id: number | null
   deleted_at: string | null
   created_at: string
 }
@@ -76,6 +77,32 @@ const inheritedFolderRole = async (
   return rows[0]?.role ?? null
 }
 
+// Resolve a Space-scoped folder: walk up the parent chain to find which
+// space the folder belongs to, then look up the caller's membership.
+// Single round-trip — we always need the space root anyway because folder
+// ancestry is contiguous (a folder in space X cannot have a parent in
+// space Y or in personal).
+const spaceRoleForFolder = async (
+  db: Connection,
+  userId: number,
+  spaceId: number,
+): Promise<Role | null> => {
+  const row = await db.one({
+    text: `
+      SELECT
+        CASE WHEN m.role = 'admin' THEN 'owner'
+             WHEN m.role = 'editor' THEN 'editor'
+             ELSE 'viewer'
+        END AS role
+      FROM space_members m
+      WHERE m.space_id = $1 AND m.user_id = $2
+      LIMIT 1
+    `,
+    values: [spaceId, userId],
+  }) as { role: Role } | null
+  return row?.role ?? null
+}
+
 export const folderAccess = async (
   db: Connection,
   userId: number,
@@ -87,6 +114,15 @@ export const folderAccess = async (
       .where(q => q("deleted_at").isNull()),
   ) as FolderRow | null
   if (!folder) return null
+
+  // Space folders use the space membership table. The folder.user_id
+  // (whoever created it) is just for attribution — it does not grant
+  // "owner"-level access; an admin of the Space gets that.
+  if (folder.space_id != null) {
+    const role = await spaceRoleForFolder(db, userId, folder.space_id)
+    if (role) return { role, folder }
+    return null
+  }
 
   if (folder.user_id === userId) return { role: "owner", folder }
 
@@ -106,6 +142,21 @@ export const fileAccess = async (
       .where(q => q("deleted_at").isNull()),
   ) as FileRow | null
   if (!file) return null
+
+  // If the file lives inside a Space, the space membership is the
+  // authoritative source of access. We don't fall back to file.user_id
+  // because in a Space "the user who uploaded it" is not the same as
+  // "the file's owner" — the space is.
+  if (file.folder_id != null) {
+    const folder = await db.one(
+      from("folders").where(q => q("id").equals(file.folder_id)).select("space_id"),
+    ) as { space_id: number | null } | null
+    if (folder?.space_id != null) {
+      const role = await spaceRoleForFolder(db, userId, folder.space_id)
+      if (role) return { role, file }
+      return null
+    }
+  }
 
   if (file.user_id === userId) return { role: "owner", file }
 

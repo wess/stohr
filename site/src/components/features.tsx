@@ -11,6 +11,11 @@ import {
   Lock,
   HardDrive,
   Cloud,
+  Search,
+  Briefcase,
+  Smartphone,
+  Mail,
+  KeyRound,
 } from "lucide-react"
 
 const PhotoGridMock: React.FC = () => (
@@ -242,5 +247,76 @@ export const FEATURES: Feature[] = [
     title: <>Mount it like a <em>network drive</em>.</>,
     body: <>Stohr ships an RFC 4918 WebDAV endpoint at <code>/webdav</code>. Connect from macOS Finder with <kbd>⌘K</kbd>, Windows Explorer's <em>Map network drive</em>, GNOME Files, or <code>rclone</code> — every PROPFIND, PUT, MOVE, MKCOL, COPY just works. <a href="/webdav" className="lp-inline-more">Connection guides →</a></>,
     visual: <WebDAVMock />,
+  },
+  {
+    num: "07",
+    eyebrow: "Spaces",
+    title: <>Team workspaces, <em>not just shared folders</em>.</>,
+    body: <>Spaces are co-owned by their members. Add teammates by username or email with admin / editor / viewer roles; files inside live in the Space, not in any one person's drive. Personal storage and team storage stay cleanly separated. <a href="/docs/spaces" className="lp-inline-more">Read the docs →</a></>,
+    visual: <div className="lp-mock lp-mock-card" aria-hidden="true">
+      <div className="lp-mock-card-head"><Briefcase size={16} strokeWidth={1.75} /><strong>Acme · Engineering</strong><span className="lp-mock-public-pill">Space</span></div>
+      <ul className="lp-mock-collab-list">
+        <li><span className="lp-mock-avatar lp-mock-avatar-1">W</span><span className="lp-mock-collab-name">@wess</span><span className="lp-mock-role lp-mock-role-owner">Admin</span></li>
+        <li><span className="lp-mock-avatar lp-mock-avatar-2">A</span><span className="lp-mock-collab-name">@alice</span><span className="lp-mock-role lp-mock-role-editor">Editor</span></li>
+        <li><span className="lp-mock-avatar lp-mock-avatar-3">B</span><span className="lp-mock-collab-name">@ben</span><span className="lp-mock-role lp-mock-role-viewer">Viewer</span></li>
+      </ul>
+    </div>,
+  },
+  {
+    num: "08",
+    eyebrow: "Search",
+    title: <>Search <em>inside</em> your files.</>,
+    body: <>Full-text content search across PDFs, Office docs, code, and plain text. Indexed in the background via Postgres <code>tsvector</code> + GIN, with highlighted <code>ts_headline</code> snippets so you find the passage, not just the filename. <a href="/docs/search" className="lp-inline-more">How it works →</a></>,
+    visual: <div className="lp-mock lp-mock-card" aria-hidden="true">
+      <div className="lp-mock-card-head"><Search size={16} strokeWidth={1.75} /><code>"key rotation"</code></div>
+      <div className="lp-mock-action-body">
+        <div className="lp-mock-action-line"><FolderIcon size={14} strokeWidth={1.75} /><strong>security/runbook.md</strong></div>
+        <div className="lp-mock-action-result"><span>… steps for <b>key rotation</b> in the prod cluster …</span></div>
+        <div className="lp-mock-action-line"><FolderIcon size={14} strokeWidth={1.75} /><strong>q3-audit.pdf</strong></div>
+        <div className="lp-mock-action-result"><span>… <b>key rotation</b> evidence reviewed, see Appendix C …</span></div>
+      </div>
+    </div>,
+  },
+  {
+    num: "09",
+    eyebrow: "Photo backup",
+    title: <>Camera roll on <em>your own server</em>.</>,
+    body: <>An idempotent mobile protocol: init once, send your local asset IDs to the manifest endpoint, upload only what the server doesn't have. Retry-safe across flaky networks. Swift, Kotlin, Dart, and TypeScript SDKs ship with helpers. <a href="/docs/photo-backup" className="lp-inline-more">Protocol spec →</a></>,
+    visual: <div className="lp-mock lp-mock-card" aria-hidden="true">
+      <div className="lp-mock-card-head"><Smartphone size={16} strokeWidth={1.75} /><strong>Photo backup</strong><span className="lp-mock-action-chip"><Check size={11} strokeWidth={2.5} /> 2,418 backed up</span></div>
+      <div className="lp-mock-action-body">
+        <div className="lp-mock-action-line"><code className="lp-mock-event">manifest</code><ArrowRight size={14} strokeWidth={2} className="lp-mock-arrow" /><code className="lp-mock-slug">{`{ known: 2,401 }`}</code></div>
+        <div className="lp-mock-action-line"><code className="lp-mock-event">upload</code><ArrowRight size={14} strokeWidth={2} className="lp-mock-arrow" /><code className="lp-mock-slug">17 new (3 retried)</code></div>
+      </div>
+    </div>,
+  },
+  {
+    num: "10",
+    eyebrow: "SSO",
+    title: <>Enterprise <em>sign-on</em>.</>,
+    body: <>Delegate authentication to your IdP via OIDC (PKCE + JWKS-verified ID tokens) or LDAP (bind-and-search). Auto-provision new users or restrict to invite-only — your call. <a href="/docs/auth-external" className="lp-inline-more">OIDC + LDAP setup →</a></>,
+    visual: <div className="lp-mock lp-mock-card" aria-hidden="true">
+      <div className="lp-mock-card-head"><KeyRound size={16} strokeWidth={1.75} /><strong>Sign in</strong></div>
+      <div className="lp-mock-action-body">
+        <button type="button" className="lp-mock-link-bar"><Lock size={13} strokeWidth={2} /> Sign in with Okta</button>
+        <button type="button" className="lp-mock-link-bar">🔑 Sign in with a passkey</button>
+        <div className="lp-mock-action-line"><span>Email or username</span></div>
+        <div className="lp-mock-action-line"><span>Password</span></div>
+      </div>
+    </div>,
+  },
+  {
+    num: "11",
+    eyebrow: "Mailbox + activity",
+    title: <>Comments, messages, <em>and a real inbox</em>.</>,
+    body: <>Per-file comments with notifications, a user-to-user mailbox, and system messages from Stohr itself (welcome, account events, owner broadcasts). The activity feed pulls every event a user has access to into one timeline. <a href="/docs/messaging" className="lp-inline-more">Messaging docs →</a></>,
+    visual: <div className="lp-mock lp-mock-card" aria-hidden="true">
+      <div className="lp-mock-card-head"><Mail size={16} strokeWidth={1.75} /><strong>Inbox</strong><span className="lp-mock-action-chip">3 unread</span></div>
+      <ul className="lp-mock-collab-list">
+        <li><span className="lp-mock-avatar lp-mock-avatar-1">·</span><span className="lp-mock-collab-name">Welcome to Stohr</span><span className="lp-mock-role lp-mock-role-pending">system</span></li>
+        <li><span className="lp-mock-avatar lp-mock-avatar-2">A</span><span className="lp-mock-collab-name">Q3 review notes — Alice</span><span className="lp-mock-role lp-mock-role-editor">user</span></li>
+        <li><span className="lp-mock-avatar lp-mock-avatar-3">B</span><span className="lp-mock-collab-name">Re: shared folder — Ben</span><span className="lp-mock-role lp-mock-role-viewer">user</span></li>
+      </ul>
+    </div>,
   },
 ]

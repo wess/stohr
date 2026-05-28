@@ -1,0 +1,4 @@
+DROP INDEX IF EXISTS folders_space_idx;
+ALTER TABLE folders DROP COLUMN IF EXISTS space_id;
+DROP TABLE IF EXISTS space_members;
+DROP TABLE IF EXISTS spaces;

@@ -84,6 +84,181 @@ export const enableMfa = (code: string) => jsonReq("POST", "/me/mfa/enable", { c
 export const disableMfa = (password: string, code: string) => jsonReq("POST", "/me/mfa/disable", { password, code })
 export const regenerateBackupCodes = (password: string) => jsonReq("POST", "/me/mfa/backup-codes", { password })
 
+export type MessageParty = { id: number; username: string | null; name: string | null }
+export type Message = {
+  id: number
+  thread_id: number
+  parent_id: number | null
+  from: MessageParty | null
+  to: MessageParty
+  subject: string
+  body: string
+  kind: "user" | "system"
+  read_at: string | null
+  archived_at: string | null
+  created_at: string
+}
+export const listMessages = (box: "inbox" | "sent" | "archived" = "inbox") =>
+  jsonReq("GET", `/me/messages?box=${box}`) as Promise<{ messages: Message[]; unread?: number }>
+export const messageThread = (threadId: number) =>
+  jsonReq("GET", `/me/messages/thread/${threadId}`) as Promise<{ messages: Message[] }>
+export const sendMessage = (input: { user_id?: number; username?: string; email?: string; subject: string; body: string }) =>
+  jsonReq("POST", "/me/messages", input)
+export const replyMessage = (id: number, body: string) =>
+  jsonReq("POST", `/me/messages/${id}/reply`, { body })
+export const markMessageRead = (id: number) => jsonReq("POST", `/me/messages/${id}/read`, {})
+export const markAllMessagesRead = () => jsonReq("POST", `/me/messages/read-all`, {})
+export const archiveMessage = (id: number) => jsonReq("POST", `/me/messages/${id}/archive`, {})
+export const unarchiveMessage = (id: number) => jsonReq("POST", `/me/messages/${id}/unarchive`, {})
+export const deleteMessage = (id: number) => jsonReq("DELETE", `/me/messages/${id}`)
+export const unreadMessageCount = () =>
+  jsonReq("GET", "/me/messages/unread-count") as Promise<{ unread: number }>
+
+export type SpaceRole = "admin" | "editor" | "viewer"
+
+export type Space = {
+  id: number
+  slug: string
+  name: string
+  description: string | null
+  owner_id: number
+  created_at: string
+  my_role: SpaceRole
+}
+
+export type SpaceMember = {
+  id: number
+  user: { id: number; username: string; name: string; email: string }
+  role: SpaceRole
+  added_at?: string
+}
+
+export const listSpaces = () => jsonReq("GET", "/spaces") as Promise<{ spaces: Space[] }>
+export const createSpace = (input: { name: string; slug?: string; description?: string }) =>
+  jsonReq("POST", "/spaces", input) as Promise<Space>
+export const getSpace = (id: number) => jsonReq("GET", `/spaces/${id}`) as Promise<Space>
+export const updateSpace = (id: number, patch: { name?: string; description?: string | null }) =>
+  jsonReq("PATCH", `/spaces/${id}`, patch) as Promise<Space>
+export const deleteSpace = (id: number) => jsonReq("DELETE", `/spaces/${id}`)
+export const listSpaceMembers = (id: number) =>
+  jsonReq("GET", `/spaces/${id}/members`) as Promise<{ members: SpaceMember[] }>
+export const addSpaceMember = (id: number, input: { username?: string; email?: string; role?: SpaceRole }) =>
+  jsonReq("POST", `/spaces/${id}/members`, input)
+export const updateSpaceMember = (id: number, memberId: number, role: SpaceRole) =>
+  jsonReq("PATCH", `/spaces/${id}/members/${memberId}`, { role })
+export const removeSpaceMember = (id: number, memberId: number) =>
+  jsonReq("DELETE", `/spaces/${id}/members/${memberId}`)
+export const listSpaceFolders = (id: number) =>
+  jsonReq("GET", `/spaces/${id}/folders`) as Promise<{ folders: Array<{ id: number; name: string; kind: string; is_public: boolean; created_at: string }> }>
+export const createSpaceFolder = (id: number, name: string) =>
+  jsonReq("POST", `/spaces/${id}/folders`, { name })
+
+export type CommentRow = {
+  id: number
+  resource_type: "file" | "folder"
+  resource_id: number
+  parent_id: number | null
+  body: string
+  user: { id: number; name: string | null; username: string | null }
+  edited_at: string | null
+  deleted_at: string | null
+  created_at: string
+}
+
+export const listFileComments = (id: number) => jsonReq("GET", `/files/${id}/comments`) as Promise<{ comments: CommentRow[] }>
+export const listFolderComments = (id: number) => jsonReq("GET", `/folders/${id}/comments`) as Promise<{ comments: CommentRow[] }>
+export const createFileComment = (id: number, body: string, parentId?: number) =>
+  jsonReq("POST", `/files/${id}/comments`, parentId ? { body, parent_id: parentId } : { body })
+export const createFolderComment = (id: number, body: string, parentId?: number) =>
+  jsonReq("POST", `/folders/${id}/comments`, parentId ? { body, parent_id: parentId } : { body })
+export const editComment = (id: number, body: string) => jsonReq("PATCH", `/comments/${id}`, { body })
+export const deleteComment = (id: number) => jsonReq("DELETE", `/comments/${id}`)
+
+export type NotificationRow = {
+  id: number
+  kind: string
+  resource_type: string | null
+  resource_id: number | null
+  actor_id: number | null
+  payload: any
+  read_at: string | null
+  created_at: string
+}
+export const listNotifications = (unread = false) =>
+  jsonReq("GET", `/me/notifications${unread ? "?unread=1" : ""}`) as Promise<{ notifications: NotificationRow[]; unread: number }>
+export const unreadNotificationCount = () =>
+  jsonReq("GET", "/me/notifications/unread-count") as Promise<{ unread: number }>
+export const markNotificationRead = (id: number) => jsonReq("POST", `/me/notifications/${id}/read`, {})
+export const markAllNotificationsRead = () => jsonReq("POST", `/me/notifications/read-all`, {})
+export const deleteNotification = (id: number) => jsonReq("DELETE", `/me/notifications/${id}`)
+
+export type ActivityEvent = {
+  kind: "comment" | "collab" | "version" | "share"
+  at: string
+  actor: { id: number | null; username: string | null; name: string | null }
+  detail: Record<string, unknown>
+}
+export const fileActivity = (id: number) => jsonReq("GET", `/files/${id}/activity`) as Promise<{ events: ActivityEvent[] }>
+export const folderActivity = (id: number) => jsonReq("GET", `/folders/${id}/activity`) as Promise<{ events: ActivityEvent[] }>
+
+export type ContentHit = {
+  id: number
+  name: string
+  mime: string
+  size: number | string
+  folder_id: number | null
+  user_id: number
+  version: number
+  created_at: string
+  rank: number
+  snippet: string
+}
+
+export const searchContent = async (q: string, limit = 20): Promise<{ query: string; files: ContentHit[] }> => {
+  const params = new URLSearchParams({ q, limit: String(limit) })
+  const data = await jsonReq("GET", `/search/content?${params.toString()}`)
+  return data
+}
+
+export const contentIndexStatus = async (): Promise<{ total: number; indexed: number; pending: number; errored: number }> => {
+  return jsonReq("GET", "/admin/content-index/status")
+}
+
+export const oidcStatus = async (): Promise<{ available: boolean; label: string }> => {
+  const res = await fetch(`${BASE}/auth/oidc/status`)
+  return res.json()
+}
+
+export const ldapStatus = async (): Promise<{ available: boolean }> => {
+  const res = await fetch(`${BASE}/auth/ldap/status`)
+  return res.json()
+}
+
+export const loginLdap = async (identity: string, password: string) => {
+  const data = await jsonReq("POST", "/auth/ldap/login", { identity, password })
+  if (data.token) setToken(data.token, { id: data.id, email: data.email, username: data.username, name: data.name, is_owner: !!data.is_owner })
+  return data as {
+    id?: number; email?: string; username?: string; name?: string; is_owner?: boolean
+    token?: string
+    error?: string; retry_after?: number; account_deleted?: boolean
+  }
+}
+
+// Pull a fresh /me when we adopted a token from the OIDC fragment so the
+// stored user record matches whatever the IdP just minted/updated.
+export const adoptToken = async (t: string): Promise<AuthUser | null> => {
+  setToken(t)
+  try {
+    const data = await jsonReq("GET", "/me")
+    if (data?.id) {
+      const u: AuthUser = { id: data.id, email: data.email, username: data.username, name: data.name, is_owner: !!data.is_owner }
+      setToken(t, u)
+      return u
+    }
+  } catch { /* fall through */ }
+  return null
+}
+
 export const checkInvite = async (token: string) => {
   const res = await fetch(`${BASE}/invites/${encodeURIComponent(token)}/check`)
   return res.json()
@@ -426,6 +601,22 @@ export const getMyUsage = () =>
 
 export const adminSetUserQuota = (id: number, quotaBytes: number) =>
   jsonReq("POST", `/admin/users/${id}/quota`, { quota_bytes: quotaBytes })
+
+export const adminGetUser = (id: number) => jsonReq("GET", `/admin/users/${id}`)
+export const adminEditUser = (id: number, patch: { name?: string; email?: string; username?: string }) =>
+  jsonReq("PATCH", `/admin/users/${id}`, patch)
+export const adminSuspendUser = (id: number, reason?: string) =>
+  jsonReq("POST", `/admin/users/${id}/suspend`, reason ? { reason } : {})
+export const adminUnsuspendUser = (id: number) =>
+  jsonReq("POST", `/admin/users/${id}/unsuspend`, {})
+export const adminResetUserPassword = (id: number) =>
+  jsonReq("POST", `/admin/users/${id}/reset-password`, {}) as Promise<{ id: number; emailed: boolean; reset_url: string | null; error?: string }>
+export const adminMessageUser = (id: number, subject: string, body: string) =>
+  jsonReq("POST", `/admin/users/${id}/message`, { subject, body })
+export const adminBroadcast = (subject: string, body: string) =>
+  jsonReq("POST", `/admin/broadcast`, { subject, body }) as Promise<{ delivered: number; error?: string }>
+export const adminCreateInvite = (email?: string) =>
+  jsonReq("POST", `/admin/invites`, email ? { email } : {})
 
 export type AdminSetting = {
   key: string

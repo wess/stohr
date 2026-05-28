@@ -38,10 +38,12 @@ export const Landing: React.FC = () => {
             Your rules.
           </h1>
           <p className="lp-lede">
-            Photo galleries, scriptable folders, encrypted federation with
-            friends, mount-as-a-drive WebDAV, an S3-compatible API — without
-            the surveillance, the upsells, or the dark patterns. Free and
-            open source; run it yourself on a $6 droplet.
+            Photo galleries, scriptable folders, team Spaces, full-text
+            content search, OIDC + LDAP sign-on, mobile photo backup,
+            encrypted federation with friends, mount-as-a-drive WebDAV,
+            an S3-compatible API — without the surveillance, the upsells,
+            or the dark patterns. Free and open source; run it yourself
+            on a $6 droplet.
           </p>
           <div className="lp-cta-row">
             <a href={REPO} target="_blank" rel="noreferrer" className="lp-btn lp-btn-primary lp-btn-lg"><Github size={16} strokeWidth={2} /> View on GitHub</a>
@@ -62,6 +64,9 @@ export const Landing: React.FC = () => {
         <span className="lp-trust-item">Federated</span>
         <span className="lp-trust-item">WebDAV</span>
         <span className="lp-trust-item">S3-compatible</span>
+        <span className="lp-trust-item">OIDC + LDAP</span>
+        <span className="lp-trust-item">Full-text search</span>
+        <span className="lp-trust-item">Spaces</span>
         <span className="lp-trust-item">Bun · React · Postgres</span>
       </section>
 
@@ -69,7 +74,7 @@ export const Landing: React.FC = () => {
         <header className="lp-section-head">
           <p className="lp-eyebrow">Features</p>
           <h2>Built for the way <em>you</em> store.</h2>
-          <p className="lp-section-lede">Four things that make Stohr feel different the moment you start using it.</p>
+          <p className="lp-section-lede">Eleven things that make Stohr feel different the moment you start using it.</p>
         </header>
 
         <div className="lp-feature-rows">

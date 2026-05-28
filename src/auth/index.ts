@@ -8,6 +8,7 @@ import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
 import { logEvent } from "../security/audit.ts"
 import { verifyTotp } from "../security/totp.ts"
 import { issueSession } from "../security/sessions.ts"
+import { sendSystem } from "../messages/system.ts"
 
 type UserRow = {
   id: number
@@ -188,6 +189,18 @@ export const authRoutes = (db: Connection, secret: string) => {
 
       await resolvePendingCollabs(db, user.id, email)
 
+      // Welcome message lands in the new account's inbox so the first
+      // login shows something. Fire-and-forget; signup must not fail if
+      // the messages table or notifier hiccups.
+      void sendSystem(
+        db,
+        user.id,
+        isFirstUser ? "Welcome to Stohr — you're the owner" : "Welcome to Stohr",
+        isFirstUser
+          ? "You created the first account on this instance, so you're the owner.\n\nFrom Admin → Settings you can toggle WebDAV, federation, MCP, and other features. Admin → Users lets you invite others and manage their accounts.\n\nFiles live in My Files (your personal drive) or in Spaces (shared team workspaces)."
+          : "Welcome! Your files live in My Files (your personal drive) or in Spaces (shared workspaces you join).\n\nUse Settings → Apps to create a personal access token for SDKs and the mobile app.",
+      )
+
       logEvent(db, {
         userId: user.id,
         event: "signup.ok",
@@ -236,8 +249,8 @@ export const authRoutes = (db: Connection, secret: string) => {
       const user = await db.one(
         from("users")
           .where(q => identity.includes("@") ? q("email").equals(lookup) : q("username").equals(lookup))
-          .select("id", "email", "username", "name", "password", "is_owner", "totp_enabled", "totp_secret", "totp_backup_codes", "deleted_at"),
-      ) as (UserRow & { deleted_at: string | null }) | null
+          .select("id", "email", "username", "name", "password", "is_owner", "totp_enabled", "totp_secret", "totp_backup_codes", "deleted_at", "suspended_at"),
+      ) as (UserRow & { deleted_at: string | null; suspended_at: string | null }) | null
 
       // Always run a verify, even when the user doesn't exist, so the
       // response timing doesn't leak account existence. The decoy hash is a
@@ -261,6 +274,15 @@ export const authRoutes = (db: Connection, secret: string) => {
         return json(c, 403, {
           error: "Account is scheduled for deletion. Click the cancel link in your email to restore it.",
           account_deleted: true,
+        })
+      }
+      // Suspended accounts: reject after password verify so we don't leak
+      // suspension state to unauthenticated probes.
+      if (user.suspended_at) {
+        logEvent(db, { userId: user.id, event: "login.fail", metadata: { reason: "account_suspended" }, ip, userAgent: ua })
+        return json(c, 403, {
+          error: "Account has been suspended by the owner. Contact the instance owner to restore access.",
+          account_suspended: true,
         })
       }
 

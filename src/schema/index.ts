@@ -14,6 +14,9 @@ export const users = defineSchema("users", {
   totp_enabled: column.boolean().default(false),
   totp_backup_codes: column.text().nullable(),
   totp_enabled_at: column.timestamp().nullable(),
+  suspended_at: column.timestamp().nullable(),
+  suspended_reason: column.text().nullable(),
+  suspended_by: column.integer().nullable().ref("users", "id"),
   created_at: column.timestamp().default("now()"),
 })
 
@@ -150,8 +153,28 @@ export const folders = defineSchema("folders", {
   federation_id: column.integer().nullable().ref("federations", "id"),
   federation_role: column.text().nullable(),
   federation_quota_bytes: column.bigint().default(0),
+  space_id: column.integer().nullable().ref("spaces", "id"),
   deleted_at: column.timestamp().nullable(),
   created_at: column.timestamp().default("now()"),
+})
+
+export const spaces = defineSchema("spaces", {
+  id: column.serial().primaryKey(),
+  slug: column.text().unique(),
+  name: column.text(),
+  description: column.text().nullable(),
+  owner_id: column.integer().ref("users", "id"),
+  created_at: column.timestamp().default("now()"),
+  deleted_at: column.timestamp().nullable(),
+})
+
+export const spaceMembers = defineSchema("space_members", {
+  id: column.serial().primaryKey(),
+  space_id: column.integer().ref("spaces", "id"),
+  user_id: column.integer().ref("users", "id"),
+  role: column.text(),
+  added_by: column.integer().nullable().ref("users", "id"),
+  added_at: column.timestamp().default("now()"),
 })
 
 export const files = defineSchema("files", {
@@ -164,6 +187,12 @@ export const files = defineSchema("files", {
   storage_key: column.text(),
   thumb_key: column.text().nullable(),
   version: column.integer().default(1),
+  text_content: column.text().nullable(),
+  text_indexed_version: column.integer().nullable(),
+  text_indexed_at: column.timestamp().nullable(),
+  text_extract_error: column.text().nullable(),
+  photo_asset_id: column.text().nullable(),
+  captured_at: column.timestamp().nullable(),
   deleted_at: column.timestamp().nullable(),
   created_at: column.timestamp().default("now()"),
 })
@@ -383,6 +412,100 @@ export const mcpServers = defineSchema("mcp_servers", {
   created_by: column.integer().nullable().ref("users", "id"),
   created_at: column.timestamp().default("now()"),
   updated_at: column.timestamp().default("now()"),
+})
+
+export const messages = defineSchema("messages", {
+  id: column.serial().primaryKey(),
+  thread_id: column.integer(),
+  parent_id: column.integer().nullable().ref("messages", "id"),
+  from_user_id: column.integer().nullable().ref("users", "id"),
+  to_user_id: column.integer().ref("users", "id"),
+  subject: column.text(),
+  body: column.text(),
+  kind: column.text().default("user"),
+  read_at: column.timestamp().nullable(),
+  archived_at: column.timestamp().nullable(),
+  deleted_at: column.timestamp().nullable(),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const comments = defineSchema("comments", {
+  id: column.serial().primaryKey(),
+  resource_type: column.text(),
+  resource_id: column.integer(),
+  user_id: column.integer().ref("users", "id"),
+  parent_id: column.integer().nullable().ref("comments", "id"),
+  body: column.text(),
+  edited_at: column.timestamp().nullable(),
+  deleted_at: column.timestamp().nullable(),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const notifications = defineSchema("notifications", {
+  id: column.serial().primaryKey(),
+  user_id: column.integer().ref("users", "id"),
+  kind: column.text(),
+  resource_type: column.text().nullable(),
+  resource_id: column.integer().nullable(),
+  actor_id: column.integer().nullable().ref("users", "id"),
+  payload: column.text().nullable(),
+  read_at: column.timestamp().nullable(),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const oidcConfig = defineSchema("oidc_config", {
+  id: column.integer().primaryKey(),
+  enabled: column.boolean().default(false),
+  issuer_url: column.text().nullable(),
+  client_id: column.text().nullable(),
+  client_secret: column.text().nullable(),
+  scopes: column.text().default("openid profile email"),
+  button_label: column.text().default("Sign in with SSO"),
+  auto_provision: column.boolean().default(true),
+  email_claim: column.text().default("email"),
+  name_claim: column.text().default("name"),
+  username_claim: column.text().default("preferred_username"),
+  updated_by: column.integer().nullable().ref("users", "id"),
+  updated_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const ldapConfig = defineSchema("ldap_config", {
+  id: column.integer().primaryKey(),
+  enabled: column.boolean().default(false),
+  url: column.text().nullable(),
+  start_tls: column.boolean().default(false),
+  bind_dn: column.text().nullable(),
+  bind_password: column.text().nullable(),
+  user_search_base: column.text().nullable(),
+  user_filter: column.text().default("(uid={username})"),
+  email_attr: column.text().default("mail"),
+  name_attr: column.text().default("cn"),
+  username_attr: column.text().default("uid"),
+  auto_provision: column.boolean().default(true),
+  updated_by: column.integer().nullable().ref("users", "id"),
+  updated_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const externalIdentities = defineSchema("external_identities", {
+  id: column.serial().primaryKey(),
+  user_id: column.integer().ref("users", "id"),
+  provider: column.text(),
+  subject: column.text(),
+  email: column.text().nullable(),
+  display_name: column.text().nullable(),
+  last_login_at: column.timestamp().nullable(),
+  created_at: column.timestamp().default("now()"),
+})
+
+export const oidcStates = defineSchema("oidc_states", {
+  state: column.text().primaryKey(),
+  nonce: column.text(),
+  code_verifier: column.text(),
+  redirect_to: column.text().nullable(),
+  expires_at: column.timestamp(),
+  created_at: column.timestamp().default("now()"),
 })
 
 export const contactMessages = defineSchema("contact_messages", {

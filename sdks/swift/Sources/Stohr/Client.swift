@@ -156,6 +156,66 @@ public actor StohrClient {
         let _: Empty = try await send("DELETE", "files/\(id)", expecting: Empty.self)
     }
 
+    // ── photo backup ─────────────────────────────────
+    //
+    // Mobile-first protocol. See docs/PHOTO-BACKUP.md.
+    //   1. initPhotoBackup() once at launch.
+    //   2. photoBackupManifest(localIds) → server-known IDs (skip those).
+    //   3. uploadPhoto(...) per remaining ID. Idempotent: retry-safe.
+
+    public struct PhotoBackupInit: Decodable { public let folder_id: Int; public let uploaded: Int; public let bytes: Int64 }
+    public struct PhotoUploadResult: Decodable {
+        public let id: Int; public let name: String; public let mime: String
+        public let folder_id: Int?; public let version: Int; public let created_at: String
+        public let deduped: Bool
+    }
+
+    public func initPhotoBackup() async throws -> PhotoBackupInit {
+        struct Empty: Encodable {}
+        return try await send("POST", "photos/init", body: Empty(), expecting: PhotoBackupInit.self)
+    }
+
+    public func photoBackupManifest(assetIds: [String]) async throws -> [String] {
+        struct Body: Encodable { let asset_ids: [String] }
+        struct Result: Decodable { let known: [String] }
+        return try await send("POST", "photos/manifest", body: Body(asset_ids: assetIds), expecting: Result.self).known
+    }
+
+    public func uploadPhoto(assetId: String, data: Data, name: String, mime: String, capturedAt: Date? = nil) async throws -> PhotoUploadResult {
+        let boundary = "----stohr-\(UUID().uuidString)"
+        var body = Data()
+        let crlf = "\r\n"
+
+        func appendField(_ field: String, _ value: String) {
+            body.append("--\(boundary)\(crlf)".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"\(field)\"\(crlf)\(crlf)".data(using: .utf8)!)
+            body.append("\(value)\(crlf)".data(using: .utf8)!)
+        }
+
+        appendField("asset_id", assetId)
+        appendField("mime", mime)
+        if let capturedAt {
+            let fmt = ISO8601DateFormatter()
+            fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            appendField("captured_at", fmt.string(from: capturedAt))
+        }
+
+        body.append("--\(boundary)\(crlf)".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(name)\"\(crlf)".data(using: .utf8)!)
+        body.append("Content-Type: \(mime)\(crlf)\(crlf)".data(using: .utf8)!)
+        body.append(data)
+        body.append("\(crlf)--\(boundary)--\(crlf)".data(using: .utf8)!)
+
+        var req = URLRequest(url: baseURL.appendingPathComponent("photos/upload"))
+        req.httpMethod = "POST"
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+
+        let (responseData, response) = try await session.upload(for: req, from: body)
+        try Self.assertOK(responseData, response)
+        return try JSONDecoder().decode(PhotoUploadResult.self, from: responseData)
+    }
+
     // ── shares ───────────────────────────────────────
 
     public func createShare(fileId: Int, expiresInSeconds: Int) async throws -> Share {

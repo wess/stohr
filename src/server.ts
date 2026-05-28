@@ -5,16 +5,29 @@ import { router } from "@atlas/server"
 import { authRoutes } from "./auth/index.ts"
 import { mfaRoutes } from "./auth/mfa.ts"
 import { sessionRoutes } from "./auth/sessions.ts"
+import { oidcRoutes, sweepExpiredOidcStates } from "./auth/oidc/index.ts"
+import { adminOidcRoutes } from "./auth/oidc/admin.ts"
+import { ldapRoutes } from "./auth/ldap/index.ts"
+import { adminLdapRoutes } from "./auth/ldap/admin.ts"
 import { folderRoutes } from "./folders/index.ts"
 import { fileRoutes } from "./files/index.ts"
 import { shareRoutes } from "./shares/index.ts"
 import { trashRoutes } from "./trash/index.ts"
 import { userRoutes } from "./users/index.ts"
 import { searchRoutes } from "./search/index.ts"
+import { contentSearchRoutes } from "./search/content/routes.ts"
+import { indexBatch as indexContentBatch } from "./search/content/indexer.ts"
 import { inviteRoutes } from "./invites/index.ts"
 import { collabRoutes } from "./collabs/index.ts"
+import { commentRoutes } from "./comments/index.ts"
+import { notificationRoutes } from "./notifications/index.ts"
+import { activityRoutes } from "./activity/index.ts"
+import { spaceRoutes } from "./spaces/index.ts"
+import { messageRoutes } from "./messages/index.ts"
+import { photoRoutes } from "./photos/index.ts"
 import { publicRoutes } from "./public/index.ts"
 import { adminRoutes } from "./admin/index.ts"
+import { adminUserRoutes } from "./admin/users.ts"
 import { s3KeyRoutes } from "./s3keys/index.ts"
 import { s3Routes } from "./s3/index.ts"
 import { appRoutes } from "./apps/index.ts"
@@ -110,6 +123,10 @@ const fetch = router(
   ...mfaRoutes(db, config.secret),
   ...passkeyRoutes(db, config.secret, { rpId: config.rpId, rpName: config.rpName, rpOrigin: config.rpOrigin }),
   ...sessionRoutes(db, config.secret),
+  ...oidcRoutes(db, config.secret, config.appUrl),
+  ...adminOidcRoutes(db, config.secret),
+  ...ldapRoutes(db, config.secret),
+  ...adminLdapRoutes(db, config.secret),
   ...deletionRoutes(db, config.secret),
   ...userRoutes(db, config.secret, store, emailer, config.appUrl),
   ...folderRoutes(db, config.secret, store),
@@ -117,12 +134,20 @@ const fetch = router(
   ...shareRoutes(db, config.secret, store),
   ...trashRoutes(db, config.secret, store),
   ...searchRoutes(db, config.secret),
+  ...contentSearchRoutes(db, config.secret),
   ...inviteRoutes(db, config.secret),
   ...collabRoutes(db, config.secret, emailer, config.appUrl),
+  ...commentRoutes(db, config.secret),
+  ...notificationRoutes(db, config.secret),
+  ...activityRoutes(db, config.secret),
+  ...spaceRoutes(db, config.secret),
+  ...messageRoutes(db, config.secret),
+  ...photoRoutes(db, config.secret, store),
   ...publicRoutes(db, config.secret, store),
   ...contactRoutes(db, config.secret),
   ...aiRoutes(db, config.secret),
   ...adminRoutes(db, config.secret),
+  ...adminUserRoutes(db, config.secret, emailer, config.appUrl),
   ...s3KeyRoutes(db, config.secret),
   ...s3Routes(db, store),
   ...appRoutes(db, config.secret),
@@ -167,6 +192,11 @@ const sweepWebauthn = guardedSweep("webauthn_challenges", () => sweepExpiredWeba
 const sweepDeletions = guardedSweep("deleted_accounts", () => sweepDeletedAccounts(db, store))
 const sweepFedInvites = guardedSweep("federation_invites", () => sweepExpiredFederationInvites(db))
 const sweepFedDrains = guardedSweep("federation_drains", () => sweepFederationDrains(db, store))
+const sweepOidcStates = guardedSweep("oidc_states", () => sweepExpiredOidcStates(db))
+// Content-search indexer: picks up files where text_indexed_version is
+// behind the live version, extracts text, writes back to files. Guarded so
+// a slow batch can't stack onto itself.
+const tickContentIndexer = guardedSweep("content_index", () => indexContentBatch(db, store, 5))
 setInterval(() => { void sweepAuthCodes() }, 5 * 60 * 1000)
 setInterval(() => { void sweepDeviceCodes() }, 5 * 60 * 1000)
 setInterval(() => { void sweepRefreshTokens() }, 60 * 60 * 1000)
@@ -177,6 +207,11 @@ setInterval(() => { void sweepWebauthn() }, 5 * 60 * 1000)
 setInterval(() => { void sweepDeletions() }, 60 * 60 * 1000)
 setInterval(() => { void sweepFedInvites() }, 60 * 60 * 1000)
 setInterval(() => { void sweepFedDrains() }, 10 * 60 * 1000)
+setInterval(() => { void sweepOidcStates() }, 5 * 60 * 1000)
+// Run the indexer every 30s. Each tick processes up to 5 files; backlog
+// drains at ~600 files/5min. Bump the batch size in indexContentBatch if
+// you need higher throughput.
+setInterval(() => { void tickContentIndexer() }, 30 * 1000)
 void sweepAuthCodes()
 void sweepDeviceCodes()
 void sweepRefreshTokens()
@@ -185,6 +220,8 @@ void sweepWebauthn()
 void sweepDeletions()
 void sweepFedInvites()
 void sweepFedDrains()
+void sweepOidcStates()
+void tickContentIndexer()
 
 // Production refuses to start with the default SECRET — JWTs signed with a
 // known value would be forgeable by anyone. In development we just warn so
