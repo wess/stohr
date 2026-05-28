@@ -103,6 +103,20 @@
         "typescript": "^5",
       },
     },
+    "libs/atlas/packages/edge": {
+      "name": "@atlas/edge",
+      "version": "0.0.1",
+      "peerDependencies": {
+        "typescript": "^5",
+      },
+    },
+    "libs/atlas/packages/email": {
+      "name": "@atlas/email",
+      "version": "0.0.1",
+      "peerDependencies": {
+        "typescript": "^5",
+      },
+    },
     "libs/atlas/packages/mcp": {
       "name": "@atlas/mcp",
       "version": "0.0.1",
@@ -142,9 +156,30 @@
         "typescript": "^5",
       },
     },
+    "libs/atlas/packages/security": {
+      "name": "@atlas/security",
+      "version": "0.0.1",
+      "dependencies": {
+        "@atlas/auth": "workspace:*",
+        "@atlas/db": "workspace:*",
+      },
+      "peerDependencies": {
+        "typescript": "^5",
+      },
+    },
     "libs/atlas/packages/server": {
       "name": "@atlas/server",
       "version": "0.0.1",
+      "peerDependencies": {
+        "typescript": "^5",
+      },
+    },
+    "libs/atlas/packages/share": {
+      "name": "@atlas/share",
+      "version": "0.0.1",
+      "dependencies": {
+        "@atlas/email": "workspace:*",
+      },
       "peerDependencies": {
         "typescript": "^5",
       },
@@ -200,6 +235,10 @@
 
     "@atlas/db": ["@atlas/db@workspace:libs/atlas/packages/db"],
 
+    "@atlas/edge": ["@atlas/edge@workspace:libs/atlas/packages/edge"],
+
+    "@atlas/email": ["@atlas/email@workspace:libs/atlas/packages/email"],
+
     "@atlas/mcp": ["@atlas/mcp@workspace:libs/atlas/packages/mcp"],
 
     "@atlas/migrate": ["@atlas/migrate@workspace:libs/atlas/packages/migrate"],
@@ -208,7 +247,11 @@
 
     "@atlas/request": ["@atlas/request@workspace:libs/atlas/packages/request"],
 
+    "@atlas/security": ["@atlas/security@workspace:libs/atlas/packages/security"],
+
     "@atlas/server": ["@atlas/server@workspace:libs/atlas/packages/server"],
+
+    "@atlas/share": ["@atlas/share@workspace:libs/atlas/packages/share"],
 
     "@atlas/sso": ["@atlas/sso@workspace:libs/atlas/packages/sso"],
 

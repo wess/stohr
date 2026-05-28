@@ -27,7 +27,7 @@ TypeScript + Bun server + React 19 (client) + Postgres + pluggable blob storage 
 
 ### Monorepo shape
 
-Root `package.json` declares `workspaces: ["libs/atlas/packages/*"]` and depends on `@atlas/{auth,cli,config,db,migrate,server,storage}` via `workspace:*`. `libs/atlas/` is a **git submodule** pointing to `https://github.com/wess/atlas.git` — treat it as vendor source, don't edit it here. To pull upstream changes, run `git -C libs/atlas pull` then commit the bumped pointer in this repo.
+Root `package.json` declares `workspaces: ["libs/atlas/packages/*"]` and depends on `@atlas/{auth,cli,config,db,migrate,server,sso,storage}` via `workspace:*`. `libs/atlas/` is a **git submodule** pointing to `https://github.com/wess/atlas.git` — treat it as vendor source, don't edit it here. To pull upstream changes, run `git submodule update --remote libs/atlas` then commit the bumped pointer. Atlas's per-package reference docs live at `libs/atlas/packages/<name>/AGENTS.md`; `libs/atlas/SOUL.md` and `libs/atlas/llms.txt` are the AI-session entry points.
 
 ### Request pipeline
 
