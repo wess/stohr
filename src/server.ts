@@ -39,6 +39,7 @@ import { adminSettingsRoutes, SETTING_WEBDAV_ENABLED, seedIfMissing } from "./se
 import { aiRoutes } from "./ai/routes.ts"
 import { adminMcpRoutes, mcpRoutes } from "./mcp/index.ts"
 import { mcpServerRoutes } from "./mcp/servers.ts"
+import { castleRoutes } from "./castle/index.ts"
 import { createStorage } from "./storage/index.ts"
 import { createEmailer } from "./email/index.ts"
 import { withSecurityHeaders } from "./security/headers.ts"
@@ -72,6 +73,10 @@ const config = defineConfig({
   // uploads (presign helper already exists in @atlas/storage) to remove the
   // buffering and raise this cap safely.
   maxUploadBytes: env("MAX_UPLOAD_BYTES", { parse: Number, default: String(1024 * 1024 * 1024) }),
+  // Opt-in M2M token for Castle (single-node homelab control plane). When
+  // set, /castle/* routes mount and accept this bearer for user provisioning.
+  // When empty, the integration is invisible and Stohr runs unchanged.
+  castleAdminToken: env("CASTLE_ADMIN_TOKEN", { default: "" }),
 })
 
 const db = connect({ driver: "postgres", url: config.databaseUrl })
@@ -138,6 +143,7 @@ const fetch = router(
   ...mcpRoutes(db, config.secret, store, config.appUrl),
   ...adminMcpRoutes(db, config.secret, config.appUrl),
   ...mcpServerRoutes(db, config.secret),
+  ...castleRoutes(db, config.castleAdminToken),
 )
 
 // OAuth cleanup: expired auth codes (60s TTL) every 5 min, expired device

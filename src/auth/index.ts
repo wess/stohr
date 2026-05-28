@@ -37,7 +37,7 @@ const userCount = async (db: Connection) => {
   return any ? 1 : 0
 }
 
-const resolvePendingCollabs = async (db: Connection, userId: number, email: string) => {
+export const resolvePendingCollabs = async (db: Connection, userId: number, email: string) => {
   const pending = await db.all(
     from("collaborations")
       .where(q => q("user_id").isNull())
