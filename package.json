@@ -1,6 +1,6 @@
 {
   "name": "stohr",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "type": "module",
   "private": true,
   "scripts": {
@@ -22,10 +22,10 @@
     "@types/bun": "latest"
   },
   "dependencies": {
-    "atlas": "github:wess/atlas#main",
     "@simplewebauthn/browser": "^13.3.0",
     "@simplewebauthn/server": "^13.3.0",
     "@types/qrcode": "^1.5.6",
+    "atlas": "github:wess/atlas#main",
     "ldapts": "^7.2.1",
     "lucide-react": "^0.468.0",
     "qrcode": "^1.5.4",
