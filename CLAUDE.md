@@ -27,7 +27,7 @@ TypeScript + Bun server + React 19 (client) + Postgres + pluggable blob storage 
 
 ### Monorepo shape
 
-Root `package.json` declares `workspaces: ["libs/atlas/packages/*"]` and depends on `@atlas/{auth,cli,config,db,migrate,server,sso,storage}` via `workspace:*`. `libs/atlas/` is a **git submodule** pointing to `https://github.com/wess/atlas.git` — treat it as vendor source, don't edit it here. To pull upstream changes, run `git submodule update --remote libs/atlas` then commit the bumped pointer. Atlas's per-package reference docs live at `libs/atlas/packages/<name>/AGENTS.md`; `libs/atlas/SOUL.md` and `libs/atlas/llms.txt` are the AI-session entry points.
+Root `package.json` depends on `atlas` (installed via `github:wess/atlas#main`); the single git package vendors every `@atlas/<name>` subpackage under `node_modules/atlas/packages/`. `@atlas/<name>` imports in `src/` resolve through `tsconfig.json` `paths` entries — bun reads tsconfig at runtime. To bump atlas, run `bun update atlas`. Atlas's per-package reference docs live at `node_modules/atlas/packages/<name>/AGENTS.md`; `node_modules/atlas/SOUL.md` and `node_modules/atlas/llms.txt` are the AI-session entry points (or read them on GitHub at wess/atlas).
 
 ### Request pipeline
 

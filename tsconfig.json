@@ -12,7 +12,33 @@
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "types": ["bun"]
+    "types": ["bun"],
+    "paths": {
+      "@atlas/auth": ["./node_modules/atlas/packages/auth/index.ts"],
+      "@atlas/auth/social": ["./node_modules/atlas/packages/auth/social/index.ts"],
+      "@atlas/cache": ["./node_modules/atlas/packages/cache/index.ts"],
+      "@atlas/cli": ["./node_modules/atlas/packages/cli/index.ts"],
+      "@atlas/config": ["./node_modules/atlas/packages/config/index.ts"],
+      "@atlas/db": ["./node_modules/atlas/packages/db/index.ts"],
+      "@atlas/mcp": ["./node_modules/atlas/packages/mcp/index.ts"],
+      "@atlas/migrate": ["./node_modules/atlas/packages/migrate/index.ts"],
+      "@atlas/oauth": ["./node_modules/atlas/packages/oauth/index.ts"],
+      "@atlas/security": ["./node_modules/atlas/packages/security/index.ts"],
+      "@atlas/server": ["./node_modules/atlas/packages/server/index.ts"],
+      "@atlas/server/ws": ["./node_modules/atlas/packages/server/ws/index.ts"],
+      "@atlas/server/sse": ["./node_modules/atlas/packages/server/sse/index.ts"],
+      "@atlas/share": ["./node_modules/atlas/packages/share/index.ts"],
+      "@atlas/sso": ["./node_modules/atlas/packages/sso/index.ts"],
+      "@atlas/email": ["./node_modules/atlas/packages/email/index.ts"],
+      "@atlas/edge": ["./node_modules/atlas/packages/edge/index.ts"],
+      "@atlas/storage": ["./node_modules/atlas/packages/storage/index.ts"],
+      "@atlas/request": ["./node_modules/atlas/packages/request/index.ts"],
+      "@atlas/request/providers": ["./node_modules/atlas/packages/request/providers/index.ts"],
+      "@atlas/ai": ["./node_modules/atlas/packages/ai/index.ts"],
+      "@atlas/admin": ["./node_modules/atlas/packages/admin/index.ts"],
+      "@atlas/ui": ["./node_modules/atlas/packages/ui/index.ts"],
+      "@atlas/ui/*": ["./node_modules/atlas/packages/ui/*/index.tsx"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.ts"]
 }
