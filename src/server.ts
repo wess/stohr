@@ -53,6 +53,19 @@ import { aiRoutes } from "./ai/routes.ts"
 import { adminMcpRoutes, mcpRoutes } from "./mcp/index.ts"
 import { mcpServerRoutes } from "./mcp/servers.ts"
 import { castleRoutes } from "./castle/index.ts"
+import { setupStohrSso } from "./sso/index.ts"
+
+// Wire @atlas/sso only when all three OIDC env vars are supplied. Returns
+// an empty list otherwise so the router signature doesn't care.
+const maybeSsoRoutes = async (db: any, cfg: { ssoIssuer: string; ssoClientId: string; ssoClientSecret: string; secret: string }) => {
+  if (!cfg.ssoIssuer || !cfg.ssoClientId || !cfg.ssoClientSecret) return []
+  return setupStohrSso(db, {
+    issuerUrl: cfg.ssoIssuer,
+    clientId: cfg.ssoClientId,
+    clientSecret: cfg.ssoClientSecret,
+    secret: cfg.secret,
+  })
+}
 import { createStorage } from "./storage/index.ts"
 import { createEmailer } from "./email/index.ts"
 import { withSecurityHeaders } from "./security/headers.ts"
@@ -90,6 +103,12 @@ const config = defineConfig({
   // set, /castle/* routes mount and accept this bearer for user provisioning.
   // When empty, the integration is invisible and Stohr runs unchanged.
   castleAdminToken: env("CASTLE_ADMIN_TOKEN", { default: "" }),
+  // OIDC SSO — when set, Stohr mounts @atlas/sso and the login page surfaces
+  // a "Sign in with Castle" CTA. All three are required together; any
+  // missing one disables the integration.
+  ssoIssuer: env("SSO_ISSUER", { default: "" }),
+  ssoClientId: env("SSO_CLIENT_ID", { default: "" }),
+  ssoClientSecret: env("SSO_CLIENT_SECRET", { default: "" }),
 })
 
 const db = connect({ driver: "postgres", url: config.databaseUrl })
@@ -116,6 +135,8 @@ await migrate.up(db, "./migrations")
 if (config.webdavEnabledLegacy === "true") {
   await seedIfMissing(db, SETTING_WEBDAV_ENABLED, true)
 }
+
+const ssoRoutes = await maybeSsoRoutes(db, config)
 
 const fetch = router(
   ...authRoutes(db, config.secret),
@@ -169,6 +190,7 @@ const fetch = router(
   ...adminMcpRoutes(db, config.secret, config.appUrl),
   ...mcpServerRoutes(db, config.secret),
   ...castleRoutes(db, config.castleAdminToken),
+  ...ssoRoutes,
 )
 
 // OAuth cleanup: expired auth codes (60s TTL) every 5 min, expired device
