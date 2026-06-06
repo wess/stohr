@@ -14,7 +14,7 @@ export type UsageBreakdown = {
 // Computes active / trash / versions in one round-trip. Each sum is
 // served by a partial / covering index added in 00000031_perf_indexes.
 export const computeUsage = async (db: Connection, userId: number): Promise<UsageBreakdown> => {
-  const rows = await db.execute({
+  const rows = (await db.execute({
     text: `
       SELECT
         COALESCE((SELECT SUM(size) FROM files
@@ -27,7 +27,7 @@ export const computeUsage = async (db: Connection, userId: number): Promise<Usag
                    WHERE f.user_id = $1), 0)                          AS versions
     `,
     values: [userId],
-  }) as Array<{ active: string | number | null; trash: string | number | null; versions: string | number | null }>
+  })) as Array<{ active: string | number | null; trash: string | number | null; versions: string | number | null }>
   const r = rows[0]
   const active = Number(r?.active ?? 0)
   const trash = Number(r?.trash ?? 0)
@@ -46,7 +46,10 @@ export const checkQuota = async (
   userId: number,
   quotaBytes: number,
   incomingBytes: number,
-): Promise<{ ok: true } | { ok: false; quota_bytes: number; used_bytes: number; attempted_bytes: number; breakdown: UsageBreakdown }> => {
+): Promise<
+  | { ok: true }
+  | { ok: false; quota_bytes: number; used_bytes: number; attempted_bytes: number; breakdown: UsageBreakdown }
+> => {
   if (!quotaBytes || quotaBytes <= 0) return { ok: true }
   const breakdown = await computeUsage(db, userId)
   if (breakdown.total + incomingBytes > quotaBytes) {

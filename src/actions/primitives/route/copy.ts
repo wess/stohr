@@ -1,6 +1,6 @@
 import { from } from "@atlas/db"
-import type { Primitive } from "../types.ts"
 import { fetchObject, makeKey, put } from "../../../storage/index.ts"
+import type { Primitive } from "../types.ts"
 import { resolveTemplateChain } from "../util/folders.ts"
 import { expandTemplate } from "../util/template.ts"
 
@@ -31,7 +31,10 @@ const routeCopy: Primitive = {
     const expanded = expandTemplate(template, env.subject)
     if (!expanded.ok) return { kind: "fail", error: expanded.error }
 
-    const segments = expanded.value.split("/").map(s => s.trim()).filter(Boolean)
+    const segments = expanded.value
+      .split("/")
+      .map(s => s.trim())
+      .filter(Boolean)
     if (segments.length === 0) return { kind: "halt", reason: "empty path after expansion" }
 
     const targetFolderId = await resolveTemplateChain(ctx.db, ctx.ownerId, env.folder.id, segments)

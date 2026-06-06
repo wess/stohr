@@ -1,10 +1,14 @@
-import { from, raw } from "@atlas/db"
+import { from } from "@atlas/db"
 import { canWrite, fileAccess, folderAccess } from "../../permissions/index.ts"
 import { drop, makeKey, put } from "../../storage/index.ts"
 import { checkQuota, computeUsage } from "../../usage/index.ts"
 import { asError, asText, type Tool, type ToolContext } from "./index.ts"
 
-const archiveCurrent = async (ctx: ToolContext, file: { id: number; version: number; mime: string; size: number; storage_key: string }, uploaderId: number) => {
+const archiveCurrent = async (
+  ctx: ToolContext,
+  file: { id: number; version: number; mime: string; size: number; storage_key: string },
+  uploaderId: number,
+) => {
   await ctx.db.execute(
     from("file_versions").insert({
       file_id: file.id,
@@ -27,9 +31,11 @@ const createFolder = async (ctx: ToolContext, args: Record<string, unknown>) => 
     if (!access) return asError("Parent folder not found or no access")
     if (!canWrite(access.role)) return asError("Read-only access to parent folder")
   }
-  const rows = await ctx.db.execute(
-    from("folders").insert({ user_id: ctx.userId, parent_id: parentId, name }).returning("id", "name", "parent_id", "created_at"),
-  ) as Array<{ id: number; name: string; parent_id: number | null; created_at: string }>
+  const rows = (await ctx.db.execute(
+    from("folders")
+      .insert({ user_id: ctx.userId, parent_id: parentId, name })
+      .returning("id", "name", "parent_id", "created_at"),
+  )) as Array<{ id: number; name: string; parent_id: number | null; created_at: string }>
   return asText(rows[0])
 }
 
@@ -60,14 +66,18 @@ const writeFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
     ownerId = access.folder.user_id
   }
 
-  const owner = await ctx.db.one(
-    from("users").where(q => q("id").equals(ownerId)).select("storage_quota_bytes"),
-  ) as { storage_quota_bytes: number | string } | null
+  const owner = (await ctx.db.one(
+    from("users")
+      .where(q => q("id").equals(ownerId))
+      .select("storage_quota_bytes"),
+  )) as { storage_quota_bytes: number | string } | null
   const quota = Number(owner?.storage_quota_bytes ?? 0)
   const incoming = bytes.byteLength
   const check = await checkQuota(ctx.db, ownerId, quota, incoming)
   if (!check.ok) {
-    return asError(`Storage quota exceeded (quota=${check.quota_bytes}, used=${check.used_bytes}, attempted=${check.attempted_bytes})`)
+    return asError(
+      `Storage quota exceeded (quota=${check.quota_bytes}, used=${check.used_bytes}, attempted=${check.attempted_bytes})`,
+    )
   }
 
   const key = makeKey(ownerId, name)
@@ -78,21 +88,36 @@ const writeFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const blob = new Blob([buf], { type: mime })
   await put(ctx.store, key, blob, mime)
 
-  const existing = folderId === null
-    ? await ctx.db.one(
-        from("files")
-          .where(q => q("user_id").equals(ownerId))
-          .where(q => q("folder_id").isNull())
-          .where(q => q("name").equals(name))
-          .where(q => q("deleted_at").isNull()),
-      ) as { id: number; version: number; mime: string; size: number; storage_key: string; thumb_key: string | null } | null
-    : await ctx.db.one(
-        from("files")
-          .where(q => q("user_id").equals(ownerId))
-          .where(q => q("folder_id").equals(folderId))
-          .where(q => q("name").equals(name))
-          .where(q => q("deleted_at").isNull()),
-      ) as { id: number; version: number; mime: string; size: number; storage_key: string; thumb_key: string | null } | null
+  const existing =
+    folderId === null
+      ? ((await ctx.db.one(
+          from("files")
+            .where(q => q("user_id").equals(ownerId))
+            .where(q => q("folder_id").isNull())
+            .where(q => q("name").equals(name))
+            .where(q => q("deleted_at").isNull()),
+        )) as {
+          id: number
+          version: number
+          mime: string
+          size: number
+          storage_key: string
+          thumb_key: string | null
+        } | null)
+      : ((await ctx.db.one(
+          from("files")
+            .where(q => q("user_id").equals(ownerId))
+            .where(q => q("folder_id").equals(folderId))
+            .where(q => q("name").equals(name))
+            .where(q => q("deleted_at").isNull()),
+        )) as {
+          id: number
+          version: number
+          mime: string
+          size: number
+          storage_key: string
+          thumb_key: string | null
+        } | null)
 
   let fileId: number
   let isNew: boolean
@@ -108,11 +133,20 @@ const writeFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
     fileId = existing.id
     isNew = false
   } else {
-    const rows = await ctx.db.execute(
+    const rows = (await ctx.db.execute(
       from("files")
-        .insert({ user_id: ownerId, folder_id: folderId, name, mime, size: incoming, storage_key: key, thumb_key: null, version: 1 })
+        .insert({
+          user_id: ownerId,
+          folder_id: folderId,
+          name,
+          mime,
+          size: incoming,
+          storage_key: key,
+          thumb_key: null,
+          version: 1,
+        })
         .returning("id"),
-    ) as Array<{ id: number }>
+    )) as Array<{ id: number }>
     fileId = rows[0]!.id
     isNew = true
   }
@@ -120,14 +154,20 @@ const writeFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
   if (quota > 0) {
     const finalUsage = await computeUsage(ctx.db, ownerId)
     if (finalUsage.total > quota) {
-      await ctx.db.execute(from("files").where(q => q("id").equals(fileId)).del())
+      await ctx.db.execute(
+        from("files")
+          .where(q => q("id").equals(fileId))
+          .del(),
+      )
       await Promise.allSettled([drop(ctx.store, key)])
       return asError("Storage quota exceeded after upload — change rolled back")
     }
   }
 
   const fresh = await ctx.db.one(
-    from("files").where(q => q("id").equals(fileId)).select("id", "name", "mime", "size", "folder_id", "version", "created_at"),
+    from("files")
+      .where(q => q("id").equals(fileId))
+      .select("id", "name", "mime", "size", "folder_id", "version", "created_at"),
   )
   return asText({ ...(fresh as object), new_version: !isNew })
 }
@@ -139,7 +179,11 @@ const renameFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const access = await fileAccess(ctx.db, ctx.userId, id)
   if (!access) return asError("File not found")
   if (!canWrite(access.role)) return asError("Read-only access")
-  await ctx.db.execute(from("files").where(q => q("id").equals(id)).update({ name }))
+  await ctx.db.execute(
+    from("files")
+      .where(q => q("id").equals(id))
+      .update({ name }),
+  )
   return asText({ id, name })
 }
 
@@ -160,7 +204,11 @@ const moveFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
   } else if (access.role !== "owner") {
     return asError("Only the owner can move a file to the root")
   }
-  await ctx.db.execute(from("files").where(q => q("id").equals(id)).update({ folder_id: folderId }))
+  await ctx.db.execute(
+    from("files")
+      .where(q => q("id").equals(id))
+      .update({ folder_id: folderId }),
+  )
   return asText({ id, folder_id: folderId })
 }
 
@@ -171,7 +219,11 @@ const renameFolder = async (ctx: ToolContext, args: Record<string, unknown>) => 
   const access = await folderAccess(ctx.db, ctx.userId, id)
   if (!access) return asError("Folder not found")
   if (!canWrite(access.role)) return asError("Read-only access")
-  await ctx.db.execute(from("folders").where(q => q("id").equals(id)).update({ name }))
+  await ctx.db.execute(
+    from("folders")
+      .where(q => q("id").equals(id))
+      .update({ name }),
+  )
   return asText({ id, name })
 }
 
@@ -189,7 +241,11 @@ const moveFolder = async (ctx: ToolContext, args: Record<string, unknown>) => {
     if (!target || target.role !== "owner") return asError("Target parent folder not found or not owned")
     if (target.folder.user_id !== access.folder.user_id) return asError("Cannot move folder across owners")
   }
-  await ctx.db.execute(from("folders").where(q => q("id").equals(id)).update({ parent_id: parentId }))
+  await ctx.db.execute(
+    from("folders")
+      .where(q => q("id").equals(id))
+      .update({ parent_id: parentId }),
+  )
   return asText({ id, parent_id: parentId })
 }
 
@@ -210,7 +266,8 @@ export const writeTools = (): Tool[] => [
   },
   {
     name: "write_file",
-    description: "Create or overwrite a file. Existing files with the same name in the same folder become a new version; the previous version is archived. content is UTF-8 by default, or base64 if encoding='base64'.",
+    description:
+      "Create or overwrite a file. Existing files with the same name in the same folder become a new version; the previous version is archived. content is UTF-8 by default, or base64 if encoding='base64'.",
     category: "write",
     inputSchema: {
       type: "object",

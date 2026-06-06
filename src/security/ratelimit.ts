@@ -29,7 +29,7 @@ export const checkRate = async (
       END
     RETURNING count, EXTRACT(EPOCH FROM window_started_at)::bigint AS started
   `
-  const rows = await db.execute({ text, values: [bucket, String(windowSeconds)] }) as Array<{
+  const rows = (await db.execute({ text, values: [bucket, String(windowSeconds)] })) as Array<{
     count: number
     started: number | string | bigint
   }>
@@ -57,7 +57,7 @@ const ipv4ToInt = (ip: string): number | null => {
   for (const p of parts) {
     const v = Number(p)
     if (!Number.isInteger(v) || v < 0 || v > 255) return null
-    n = (n * 256) + v
+    n = n * 256 + v
   }
   return n >>> 0
 }
@@ -67,7 +67,7 @@ const parseCidr = (raw: string): Cidr | null => {
   if (!ip || !Number.isInteger(bits) || bits < 0 || bits > 32) return null
   const addr = ipv4ToInt(ip)
   if (addr === null) return null
-  const mask = bits === 0 ? 0 : (~((1 << (32 - bits)) - 1)) >>> 0
+  const mask = bits === 0 ? 0 : ~((1 << (32 - bits)) - 1) >>> 0
   return { addr: (addr & mask) >>> 0, mask, bits }
 }
 const TRUSTED_PROXIES: Cidr[] = (process.env.TRUSTED_PROXIES ?? "")
@@ -81,13 +81,12 @@ const ipInTrusted = (ip: string): boolean => {
   if (TRUSTED_PROXIES.length === 0) return false
   const n = ipv4ToInt(ip)
   if (n === null) return false
-  return TRUSTED_PROXIES.some(c => ((n & c.mask) >>> 0) === c.addr)
+  return TRUSTED_PROXIES.some(c => (n & c.mask) >>> 0 === c.addr)
 }
 
 // withSecurityHeaders stashes the Bun.serve socket peer onto the request as
 // `req.peerIp`. We fall back to "unknown" when it isn't set (e.g. tests).
-const peerIp = (req: Request): string =>
-  (req as { peerIp?: string }).peerIp ?? "unknown"
+const peerIp = (req: Request): string => (req as { peerIp?: string }).peerIp ?? "unknown"
 
 export const clientIp = (req: Request): string => {
   const peer = peerIp(req)
@@ -107,5 +106,4 @@ export const clientIp = (req: Request): string => {
   return peer
 }
 
-export const userAgent = (req: Request): string =>
-  (req.headers.get("user-agent") ?? "").slice(0, 256)
+export const userAgent = (req: Request): string => (req.headers.get("user-agent") ?? "").slice(0, 256)

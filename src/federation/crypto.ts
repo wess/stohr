@@ -9,7 +9,10 @@ import { ecdhX25519, generateX25519, rawX25519ToPem } from "./keys.ts"
 
 export const generateSymmetricKey = (): Buffer => randomBytes(32)
 
-export const aesGcmEncrypt = (key: Buffer, plaintext: Uint8Array | string): { ciphertext: string; iv: string; tag: string } => {
+export const aesGcmEncrypt = (
+  key: Buffer,
+  plaintext: Uint8Array | string,
+): { ciphertext: string; iv: string; tag: string } => {
   const iv = randomBytes(12)
   const cipher = createCipheriv("aes-256-gcm", key, iv)
   const bytes = typeof plaintext === "string" ? new TextEncoder().encode(plaintext) : plaintext
@@ -31,11 +34,16 @@ export const aesGcmDecrypt = (key: Buffer, ciphertextB64: string, ivB64: string,
 // HKDF-SHA256: extract + expand. salt may be empty; info disambiguates the
 // derived key from other derivations using the same secret.
 const hkdf = (ikm: Buffer, salt: Buffer, info: string, length: number = 32): Buffer => {
-  const prk = createHmac("sha256", salt.length === 0 ? Buffer.alloc(32) : salt).update(ikm).digest()
+  const prk = createHmac("sha256", salt.length === 0 ? Buffer.alloc(32) : salt)
+    .update(ikm)
+    .digest()
   // Single-block expand is enough for length ≤ 32, which is the only call
   // path we use. Hardcoding T=1 keeps this trivial to audit.
   if (length > 32) throw new Error("hkdf single-block: length must be ≤ 32")
-  const t1 = createHmac("sha256", prk).update(Buffer.from(info, "utf-8")).update(Buffer.from([0x01])).digest()
+  const t1 = createHmac("sha256", prk)
+    .update(Buffer.from(info, "utf-8"))
+    .update(Buffer.from([0x01]))
+    .digest()
   return t1.subarray(0, length)
 }
 

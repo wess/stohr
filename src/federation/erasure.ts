@@ -15,9 +15,9 @@
 // shard_index % R is the replica number.
 
 export type ErasureConfig = {
-  k: number       // logical fragments
-  r: number       // replicas per fragment
-  totalShards: number  // k * r
+  k: number // logical fragments
+  r: number // replicas per fragment
+  totalShards: number // k * r
 }
 
 export const erasureConfig = (k: number, m: number): ErasureConfig => {
@@ -85,7 +85,7 @@ export const decode = (
       fragments[fragIdx] = s.bytes
     }
   }
-  const missing = fragments.findIndex(f => f === null)
+  const missing = fragments.indexOf(null)
   if (missing !== -1) {
     throw new Error(`Cannot reconstruct: fragment ${missing} has no available shards`)
   }

@@ -62,6 +62,25 @@ These three must be set together. A passkey created against one `RP_ID` cannot b
 | `RP_NAME` | `Stohr` | Display name shown in the OS-level passkey UI |
 | `RP_ORIGIN` | `http://localhost:3001` | Full origin the SPA is served from. Must match what the browser sees |
 
+### Social sign-in (OAuth consumer)
+
+Stohr can let users sign in with Google (OpenID Connect) and GitHub (plain OAuth2). Each provider is **disabled unless both its `CLIENT_ID` and `CLIENT_SECRET` are set** — if either half is blank, that provider's routes return `404` and the SPA hides its button. Secrets live only in the environment; there is no DB-stored config or admin UI for them.
+
+| var | default | purpose |
+| --- | --- | --- |
+| `GOOGLE_CLIENT_ID` | (empty) | Google OAuth client ID. Create at <https://console.cloud.google.com/apis/credentials>. Inert unless `GOOGLE_CLIENT_SECRET` is also set |
+| `GOOGLE_CLIENT_SECRET` | (empty) | Google OAuth client secret. Inert unless `GOOGLE_CLIENT_ID` is also set |
+| `GITHUB_CLIENT_ID` | (empty) | GitHub OAuth App client ID. Create at <https://github.com/settings/developers>. Inert unless `GITHUB_CLIENT_SECRET` is also set |
+| `GITHUB_CLIENT_SECRET` | (empty) | GitHub OAuth App client secret. Inert unless `GITHUB_CLIENT_ID` is also set |
+| `SOCIAL_AUTO_PROVISION` | `true` | When `true`, a new local user is created on first social login. Set to `false` (also accepts `0` / `no`) to require a pre-existing local account — no auto-provisioning |
+
+**Callback / redirect URLs to register with each provider** (substitute your real `APP_URL` — your HTTPS web origin in production):
+
+- Google — Authorized redirect URI: `<APP_URL>/api/auth/google/callback`
+- GitHub — Authorization callback URL: `<APP_URL>/api/auth/github/callback`
+
+The server builds these from `APP_URL`, so it must match the origin browsers actually hit or the provider will reject the redirect. The matching start endpoints are `<APP_URL>/api/auth/google/start` and `<APP_URL>/api/auth/github/start`.
+
 ### Federation
 
 | var | default | purpose |
@@ -84,6 +103,34 @@ WebDAV has no env var on new deploys — it's an owner toggle (`webdav_enabled`)
 | --- | --- | --- |
 | `MAX_UPLOAD_BYTES` | `1073741824` (1 GiB) | Hard cap on a single request body. Bun buffers the body in memory; with `STORAGE_DRIVER=s3` the `@atlas/storage` driver re-buffers it to compute the SigV4 payload hash, so this is effectively a per-upload memory ceiling. The `local` driver streams to disk after Bun's initial buffer |
 | `TRUSTED_PROXIES` | (empty) | Comma-separated IPv4 addresses or CIDRs allowed to set `X-Forwarded-For` / `X-Real-IP`. With Docker Compose set this to `172.16.0.0/12` (covers the bridge). Leave empty for direct-to-API traffic. Untrusted XFF is ignored; the socket peer is used instead |
+
+### Antivirus scanning (ClamAV)
+
+Uploads can be scanned for malware with a ClamAV daemon (`clamd`). The whole feature is keyed off `CLAMD_HOST`.
+
+| var | default | purpose |
+| --- | --- | --- |
+| `CLAMD_HOST` | (empty) | Hostname of the `clamd` daemon. **When empty, scanning is disabled** — every upload is recorded with scan status `skipped` and is never gated. When set, new uploads are scanned (in the background sweep) and a download of a file that came back `infected` is blocked |
+| `CLAMD_PORT` | `3310` | TCP port of the `clamd` daemon. Only used when `CLAMD_HOST` is set |
+
+Behavior:
+
+- **Disabled** (`CLAMD_HOST` empty): uploads succeed and the file's scan status is `skipped`. A `skipped` result never blocks an upload or a download, so existing deployments are unaffected.
+- **Enabled** (`CLAMD_HOST` set): each new file is scanned via `clamd`; a download of a file flagged `infected` returns **403 Forbidden**. Files larger than clamd's 25 MB `INSTREAM` limit are recorded `skipped`. Point `CLAMD_HOST` only at a local / self-hosted `clamd` — never a third-party API — so file bytes never leave the host.
+
+`compose.yaml` ships a commented-out `clamav` sidecar (`clamav/clamav:latest`, port `3310`). To enable it: uncomment that service, set `CLAMD_HOST=clamav` in your `.env` (`CLAMD_PORT` defaults to `3310`), and add `clamav` to the `api` service's `depends_on`.
+
+### Observability
+
+| var | default | purpose |
+| --- | --- | --- |
+| `LOG_LEVEL` | `info` | Structured-logging verbosity — one of `debug`, `info`, `warn`, `error`. Logs are emitted as one-line JSON to stdout; meta keys matching `password` / `secret` / `key` / `token` / `authorization` are auto-redacted. Read once at startup, so a change needs a process restart |
+
+Three public, unauthenticated endpoints are exposed for orchestrators and scrapers (they exist before any credential does, so they never require auth):
+
+- `GET /healthz` — liveness. Always `200 {"status":"alive"}` while the process is up; touches no dependencies.
+- `GET /readyz` — readiness. Probes Postgres (`SELECT 1`) and the blob backend; `200 {"status":"ready",...}` when both pass, else `503`.
+- `GET /metrics` — Prometheus exposition (`text/plain; version=0.0.4`): `http_requests_total` and `http_request_duration_ms` keyed by method + status. Metrics are per-process and in-memory (reset on restart) — scrape each replica.
 
 ### Compose-only
 
@@ -153,3 +200,10 @@ On a fresh database, the first signup auto-bypasses the invite gate and is flagg
 Per-user storage caps live in the `users.storage_quota_bytes` column. It defaults to `0`, which means **unlimited**. The owner sets a cap for any user from **Admin → Users → Set quota** (`POST /admin/users/:id/quota`).
 
 The cap is enforced at upload time (see `src/files/index.ts` and the S3-compatible API) — an over-quota upload returns **402 Payment Required** with a JSON body `{ error, quota_bytes, used_bytes, attempted_bytes, breakdown }`. Concurrent uploads from the same user are rolled back if the post-write usage check exceeds the cap.
+
+## Other capabilities
+
+No extra env vars beyond the core config above — listed here so the surface is discoverable. See [API.md](API.md) for request/response details.
+
+- **Resumable uploads** — chunked, resumable upload sessions under `/files/upload/*` (`POST /files/upload/init`, `POST /files/upload/:id/chunk`, `GET /files/upload/:id/status`, `POST /files/upload/:id/finalize`, `DELETE /files/upload/:id`). Authenticated; honors the same per-user [quota](#quotas) up front and, when enabled, [antivirus scanning](#antivirus-scanning-clamav). Implemented in `src/uploads/`.
+- **Per-user webhooks** — users register outbound webhooks under `/webhooks` (`GET`/`POST` `/webhooks`, `PATCH`/`DELETE` `/webhooks/:id`, `GET /webhooks/:id/deliveries`) to receive event callbacks; an optional per-hook signing secret is write-only. Implemented in `src/webhooks/`.

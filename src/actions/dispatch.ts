@@ -1,18 +1,12 @@
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
-import type { StorageHandle } from "../storage/index.ts"
 import type { FileRow, FolderRow } from "../permissions/index.ts"
+import type { StorageHandle } from "../storage/index.ts"
 import { getAction } from "./registry.ts"
-import type {
-  Action,
-  EventName,
-  FolderActionRow,
-  RunStatus,
-  Subject,
-} from "./types.ts"
+import type { Action, EventName, FolderActionRow, RunStatus, Subject } from "./types.ts"
 import { loadUserAction, runUserAction } from "./user/execute.ts"
-import { parseUserAction, type UserActionRow } from "./user/types.ts"
 import { parseUserSlug } from "./user/slug.ts"
+import { parseUserAction, type UserActionRow } from "./user/types.ts"
 
 const ACTION_TIMEOUT_MS = 30_000
 const MAX_DEPTH = 1
@@ -38,7 +32,7 @@ const wrapUserActionAsAction = (row: UserActionRow): Action => {
     events: parsed.triggers,
     subjects: ["file", "folder"],
     configSchema: {},
-    run: async (ctx) => runUserAction(ctx, row),
+    run: async ctx => runUserAction(ctx, row),
   }
 }
 
@@ -86,13 +80,13 @@ export const fireEvent = async (args: FireEventArgs): Promise<RunSummary[]> => {
   const depth = args.depth ?? 0
   if (depth > MAX_DEPTH) return []
 
-  const rows = await db.all(
+  const rows = (await db.all(
     from("folder_actions")
       .where(q => q("folder_id").equals(folder.id))
       .where(q => q("event").equals(event))
       .where(q => q("enabled").equals(true))
       .orderBy("created_at", "ASC"),
-  ) as FolderActionRow[]
+  )) as FolderActionRow[]
 
   if (rows.length === 0) return []
 
@@ -101,7 +95,7 @@ export const fireEvent = async (args: FireEventArgs): Promise<RunSummary[]> => {
 
   for (const row of rows) {
     const action = await resolveAction(db, row.slug)
-    const inserted = await db.execute(
+    const inserted = (await db.execute(
       from("folder_action_runs")
         .insert({
           folder_action_id: row.id,
@@ -111,7 +105,7 @@ export const fireEvent = async (args: FireEventArgs): Promise<RunSummary[]> => {
           status: "succeeded",
         })
         .returning("id"),
-    ) as Array<{ id: number }>
+    )) as Array<{ id: number }>
     const runId = inserted[0]!.id
 
     if (!action) {
@@ -197,13 +191,9 @@ export const fireEvent = async (args: FireEventArgs): Promise<RunSummary[]> => {
 
 const refreshSubject = async (db: Connection, subject: Subject): Promise<Subject | null> => {
   if (subject.kind === "file") {
-    const row = await db.one(
-      from("files").where(q => q("id").equals(subject.row.id)),
-    ) as FileRow | null
+    const row = (await db.one(from("files").where(q => q("id").equals(subject.row.id)))) as FileRow | null
     return row ? { kind: "file", row } : null
   }
-  const row = await db.one(
-    from("folders").where(q => q("id").equals(subject.row.id)),
-  ) as FolderRow | null
+  const row = (await db.one(from("folders").where(q => q("id").equals(subject.row.id)))) as FolderRow | null
   return row ? { kind: "folder", row } : null
 }

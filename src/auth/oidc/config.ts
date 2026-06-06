@@ -15,7 +15,7 @@ export type OidcConfig = {
 }
 
 export const loadOidcConfig = async (db: Connection): Promise<OidcConfig> => {
-  const row = await db.one(
+  const row = (await db.one(
     from("oidc_config")
       .where(q => q("id").equals(1))
       .select(
@@ -30,19 +30,21 @@ export const loadOidcConfig = async (db: Connection): Promise<OidcConfig> => {
         "name_claim",
         "username_claim",
       ),
-  ) as OidcConfig | null
-  return row ?? {
-    enabled: false,
-    issuer_url: null,
-    client_id: null,
-    client_secret: null,
-    scopes: "openid profile email",
-    button_label: "Sign in with SSO",
-    auto_provision: true,
-    email_claim: "email",
-    name_claim: "name",
-    username_claim: "preferred_username",
-  }
+  )) as OidcConfig | null
+  return (
+    row ?? {
+      enabled: false,
+      issuer_url: null,
+      client_id: null,
+      client_secret: null,
+      scopes: "openid profile email",
+      button_label: "Sign in with SSO",
+      auto_provision: true,
+      email_claim: "email",
+      name_claim: "name",
+      username_claim: "preferred_username",
+    }
+  )
 }
 
 export const isOidcReady = (cfg: OidcConfig): boolean =>
@@ -56,13 +58,13 @@ export const updateOidcConfig = async (
   // Upsert: if the singleton row got wiped (tests truncate, fresh DB
   // before migration seed) we re-create it instead of silently no-op'ing
   // the update.
-  const existing = await db.one(
-    from("oidc_config").where(q => q("id").equals(1)).select("id"),
-  ) as { id: number } | null
+  const existing = (await db.one(
+    from("oidc_config")
+      .where(q => q("id").equals(1))
+      .select("id"),
+  )) as { id: number } | null
   if (!existing) {
-    await db.execute(
-      from("oidc_config").insert({ id: 1, updated_by: userId }),
-    )
+    await db.execute(from("oidc_config").insert({ id: 1, updated_by: userId }))
   }
 
   const allowed: (keyof OidcConfig)[] = [
@@ -82,7 +84,9 @@ export const updateOidcConfig = async (
     if (key in patch) update[key] = (patch as Record<string, unknown>)[key]
   }
   await db.execute(
-    from("oidc_config").where(q => q("id").equals(1)).update(update),
+    from("oidc_config")
+      .where(q => q("id").equals(1))
+      .update(update),
   )
   return loadOidcConfig(db)
 }

@@ -37,41 +37,40 @@ export type MemberRow = {
 }
 
 export const federationById = async (db: Connection, id: number): Promise<FederationRow | null> =>
-  await db.one(from("federations").where(q => q("id").equals(id))) as FederationRow | null
+  (await db.one(from("federations").where(q => q("id").equals(id)))) as FederationRow | null
 
 export const federationBySlug = async (db: Connection, slug: string): Promise<FederationRow | null> =>
-  await db.one(from("federations").where(q => q("slug").equals(slug))) as FederationRow | null
+  (await db.one(from("federations").where(q => q("slug").equals(slug)))) as FederationRow | null
 
 export const membersForFederation = async (db: Connection, federationId: number): Promise<MemberRow[]> =>
-  await db.all(
+  (await db.all(
     from("federation_members")
       .where(q => q("federation_id").equals(federationId))
       .where(q => q("status").equals("active"))
       .orderBy("joined_at", "ASC"),
-  ) as MemberRow[]
+  )) as MemberRow[]
 
 export const remoteMembersForFederation = async (db: Connection, federationId: number): Promise<MemberRow[]> =>
-  await db.all(
+  (await db.all(
     from("federation_members")
       .where(q => q("federation_id").equals(federationId))
       .where(q => q("is_local").equals(false))
       .where(q => q("status").equals("active")),
-  ) as MemberRow[]
+  )) as MemberRow[]
 
-export const localMemberFor = async (
-  db: Connection,
-  federationId: number,
-  userId: number,
-): Promise<MemberRow | null> =>
-  await db.one(
+export const localMemberFor = async (db: Connection, federationId: number, userId: number): Promise<MemberRow | null> =>
+  (await db.one(
     from("federation_members")
       .where(q => q("federation_id").equals(federationId))
       .where(q => q("user_id").equals(userId))
       .where(q => q("is_local").equals(true)),
-  ) as MemberRow | null
+  )) as MemberRow | null
 
-export const federationsForUser = async (db: Connection, userId: number): Promise<Array<FederationRow & { local_member: MemberRow }>> => {
-  const rows = await db.execute({
+export const federationsForUser = async (
+  db: Connection,
+  userId: number,
+): Promise<Array<FederationRow & { local_member: MemberRow }>> => {
+  const rows = (await db.execute({
     text: `
       SELECT f.*, m.id AS m_id, m.user_id AS m_user_id, m.peer_pubkey AS m_peer_pubkey,
              m.peer_base_url AS m_peer_base_url, m.is_admin AS m_is_admin,
@@ -83,7 +82,7 @@ export const federationsForUser = async (db: Connection, userId: number): Promis
        ORDER BY f.created_at DESC
     `,
     values: [userId],
-  }) as Array<Record<string, unknown>>
+  })) as Array<Record<string, unknown>>
   return rows.map(r => ({
     id: r.id as number,
     slug: r.slug as string,

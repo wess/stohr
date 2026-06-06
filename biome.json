@@ -12,10 +12,24 @@
     "rules": {
       "recommended": true,
       "suspicious": {
-        "noExplicitAny": "off"
+        "noExplicitAny": "off",
+        "noImplicitAnyLet": "warn",
+        "noArrayIndexKey": "warn"
       },
       "style": {
         "noNonNullAssertion": "off"
+      },
+      "correctness": {
+        "useExhaustiveDependencies": "warn"
+      },
+      "a11y": {
+        "useButtonType": "warn",
+        "noStaticElementInteractions": "warn",
+        "useKeyWithClickEvents": "warn",
+        "noLabelWithoutControl": "warn",
+        "useMediaCaption": "warn",
+        "useSemanticElements": "warn",
+        "useAriaPropsSupportedByRole": "warn"
       }
     }
   },
@@ -25,10 +39,18 @@
     "indentWidth": 2,
     "lineWidth": 120
   },
+  "javascript": {
+    "formatter": {
+      "semicolons": "asNeeded",
+      "quoteStyle": "double",
+      "arrowParentheses": "asNeeded"
+    }
+  },
   "files": {
     "includes": [
-      "packages/**/*.ts",
-      "packages/**/*.tsx",
+      "src/**/*.ts",
+      "src/**/*.tsx",
+      "scripts/**/*.ts",
       "!**/node_modules/**",
       "!**/dist/**",
       "!**/build/**",

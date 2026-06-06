@@ -13,7 +13,7 @@ export const sendSystem = async (
   body: string,
 ): Promise<number | null> => {
   try {
-    const inserted = await db.execute(
+    const inserted = (await db.execute(
       from("messages")
         .insert({
           thread_id: 0,
@@ -24,13 +24,15 @@ export const sendSystem = async (
           kind: "system",
         })
         .returning("id"),
-    ) as Array<{ id: number }>
+    )) as Array<{ id: number }>
     const id = inserted[0]?.id
     if (id == null) return null
     // Backfill thread_id = id for the root message; replies (which the
     // recipient cannot send back to "system") would inherit.
     await db.execute(
-      from("messages").where(q => q("id").equals(id)).update({ thread_id: id }),
+      from("messages")
+        .where(q => q("id").equals(id))
+        .update({ thread_id: id }),
     )
     void emit(db, {
       userId: toUserId,
@@ -49,14 +51,12 @@ export const sendSystem = async (
 // Broadcast a system message to every active (non-deleted) user. Used by
 // the owner's "Send announcement" tool — one row per recipient so each
 // user can mark-read / archive independently. Returns count delivered.
-export const broadcastSystem = async (
-  db: Connection,
-  subject: string,
-  body: string,
-): Promise<number> => {
-  const users = await db.all(
-    from("users").where(q => q("deleted_at").isNull()).select("id"),
-  ) as Array<{ id: number }>
+export const broadcastSystem = async (db: Connection, subject: string, body: string): Promise<number> => {
+  const users = (await db.all(
+    from("users")
+      .where(q => q("deleted_at").isNull())
+      .select("id"),
+  )) as Array<{ id: number }>
   let count = 0
   for (const u of users) {
     const id = await sendSystem(db, u.id, subject, body)
@@ -78,20 +78,24 @@ export const insertRootMessage = async (
     kind: "user" | "system"
   },
 ): Promise<{ id: number; thread_id: number; created_at: string } | null> => {
-  const inserted = await db.execute(
-    from("messages").insert({
-      thread_id: 0,
-      from_user_id: input.fromUserId,
-      to_user_id: input.toUserId,
-      subject: input.subject,
-      body: input.body,
-      kind: input.kind,
-    }).returning("id", "created_at"),
-  ) as Array<{ id: number; created_at: string }>
+  const inserted = (await db.execute(
+    from("messages")
+      .insert({
+        thread_id: 0,
+        from_user_id: input.fromUserId,
+        to_user_id: input.toUserId,
+        subject: input.subject,
+        body: input.body,
+        kind: input.kind,
+      })
+      .returning("id", "created_at"),
+  )) as Array<{ id: number; created_at: string }>
   const row = inserted[0]
   if (!row) return null
   await db.execute(
-    from("messages").where(q => q("id").equals(row.id)).update({ thread_id: row.id }),
+    from("messages")
+      .where(q => q("id").equals(row.id))
+      .update({ thread_id: row.id }),
   )
   return { id: row.id, thread_id: row.id, created_at: row.created_at }
 }

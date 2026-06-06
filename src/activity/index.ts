@@ -19,7 +19,7 @@ type Activity = {
 const fileActivity = async (db: Connection, fileId: number): Promise<Activity[]> => {
   const rows: Activity[] = []
 
-  const comments = await db.execute({
+  const comments = (await db.execute({
     text: `
       SELECT c.id, c.body, c.created_at, c.deleted_at, c.user_id,
              u.username, u.name
@@ -30,7 +30,15 @@ const fileActivity = async (db: Connection, fileId: number): Promise<Activity[]>
        LIMIT 100
     `,
     values: [fileId],
-  }) as Array<{ id: number; body: string; created_at: string; deleted_at: string | null; user_id: number; username: string; name: string }>
+  })) as Array<{
+    id: number
+    body: string
+    created_at: string
+    deleted_at: string | null
+    user_id: number
+    username: string
+    name: string
+  }>
   for (const r of comments) {
     rows.push({
       kind: "comment",
@@ -40,7 +48,7 @@ const fileActivity = async (db: Connection, fileId: number): Promise<Activity[]>
     })
   }
 
-  const versions = await db.execute({
+  const versions = (await db.execute({
     text: `
       SELECT v.id, v.version, v.uploaded_at, v.uploaded_by, v.size,
              u.username, u.name
@@ -51,7 +59,15 @@ const fileActivity = async (db: Connection, fileId: number): Promise<Activity[]>
        LIMIT 50
     `,
     values: [fileId],
-  }) as Array<{ id: number; version: number; uploaded_at: string; uploaded_by: number | null; size: number | string; username: string | null; name: string | null }>
+  })) as Array<{
+    id: number
+    version: number
+    uploaded_at: string
+    uploaded_by: number | null
+    size: number | string
+    username: string | null
+    name: string | null
+  }>
   for (const r of versions) {
     rows.push({
       kind: "version",
@@ -61,7 +77,7 @@ const fileActivity = async (db: Connection, fileId: number): Promise<Activity[]>
     })
   }
 
-  const shares = await db.execute({
+  const shares = (await db.execute({
     text: `
       SELECT s.id, s.created_at, s.expires_at, s.user_id,
              u.username, u.name
@@ -72,7 +88,14 @@ const fileActivity = async (db: Connection, fileId: number): Promise<Activity[]>
        LIMIT 50
     `,
     values: [fileId],
-  }) as Array<{ id: number; created_at: string; expires_at: string | null; user_id: number; username: string; name: string }>
+  })) as Array<{
+    id: number
+    created_at: string
+    expires_at: string | null
+    user_id: number
+    username: string
+    name: string
+  }>
   for (const r of shares) {
     rows.push({
       kind: "share",
@@ -82,7 +105,7 @@ const fileActivity = async (db: Connection, fileId: number): Promise<Activity[]>
     })
   }
 
-  const collabs = await db.execute({
+  const collabs = (await db.execute({
     text: `
       SELECT c.id, c.created_at, c.role, c.invited_by, c.user_id, c.email,
              actor.username AS actor_username, actor.name AS actor_name,
@@ -95,7 +118,18 @@ const fileActivity = async (db: Connection, fileId: number): Promise<Activity[]>
        LIMIT 50
     `,
     values: [fileId],
-  }) as Array<{ id: number; created_at: string; role: string; invited_by: number | null; user_id: number | null; email: string | null; actor_username: string | null; actor_name: string | null; invitee_username: string | null; invitee_name: string | null }>
+  })) as Array<{
+    id: number
+    created_at: string
+    role: string
+    invited_by: number | null
+    user_id: number | null
+    email: string | null
+    actor_username: string | null
+    actor_name: string | null
+    invitee_username: string | null
+    invitee_name: string | null
+  }>
   for (const r of collabs) {
     rows.push({
       kind: "collab",
@@ -117,7 +151,7 @@ const fileActivity = async (db: Connection, fileId: number): Promise<Activity[]>
 const folderActivity = async (db: Connection, folderId: number): Promise<Activity[]> => {
   const rows: Activity[] = []
 
-  const comments = await db.execute({
+  const comments = (await db.execute({
     text: `
       SELECT c.id, c.body, c.created_at, c.deleted_at, c.user_id,
              u.username, u.name
@@ -128,7 +162,15 @@ const folderActivity = async (db: Connection, folderId: number): Promise<Activit
        LIMIT 100
     `,
     values: [folderId],
-  }) as Array<{ id: number; body: string; created_at: string; deleted_at: string | null; user_id: number; username: string; name: string }>
+  })) as Array<{
+    id: number
+    body: string
+    created_at: string
+    deleted_at: string | null
+    user_id: number
+    username: string
+    name: string
+  }>
   for (const r of comments) {
     rows.push({
       kind: "comment",
@@ -138,7 +180,7 @@ const folderActivity = async (db: Connection, folderId: number): Promise<Activit
     })
   }
 
-  const collabs = await db.execute({
+  const collabs = (await db.execute({
     text: `
       SELECT c.id, c.created_at, c.role, c.invited_by, c.user_id, c.email,
              actor.username AS actor_username, actor.name AS actor_name,
@@ -151,7 +193,18 @@ const folderActivity = async (db: Connection, folderId: number): Promise<Activit
        LIMIT 50
     `,
     values: [folderId],
-  }) as Array<{ id: number; created_at: string; role: string; invited_by: number | null; user_id: number | null; email: string | null; actor_username: string | null; actor_name: string | null; invitee_username: string | null; invitee_name: string | null }>
+  })) as Array<{
+    id: number
+    created_at: string
+    role: string
+    invited_by: number | null
+    user_id: number | null
+    email: string | null
+    actor_username: string | null
+    actor_name: string | null
+    invitee_username: string | null
+    invitee_name: string | null
+  }>
   for (const r of collabs) {
     rows.push({
       kind: "collab",
@@ -174,22 +227,28 @@ export const activityRoutes = (db: Connection, secret: string) => {
   const guard = pipeline(requireAuth({ secret, db }))
 
   return [
-    get("/files/:id/activity", guard(async (c) => {
-      const userId = authId(c)
-      const id = Number(c.params.id)
-      const access = await fileAccess(db, userId, id)
-      if (!access) return json(c, 404, { error: "Not found" })
-      const events = await fileActivity(db, id)
-      return json(c, 200, { events })
-    })),
+    get(
+      "/files/:id/activity",
+      guard(async c => {
+        const userId = authId(c)
+        const id = Number(c.params.id)
+        const access = await fileAccess(db, userId, id)
+        if (!access) return json(c, 404, { error: "Not found" })
+        const events = await fileActivity(db, id)
+        return json(c, 200, { events })
+      }),
+    ),
 
-    get("/folders/:id/activity", guard(async (c) => {
-      const userId = authId(c)
-      const id = Number(c.params.id)
-      const access = await folderAccess(db, userId, id)
-      if (!access) return json(c, 404, { error: "Not found" })
-      const events = await folderActivity(db, id)
-      return json(c, 200, { events })
-    })),
+    get(
+      "/folders/:id/activity",
+      guard(async c => {
+        const userId = authId(c)
+        const id = Number(c.params.id)
+        const access = await folderAccess(db, userId, id)
+        if (!access) return json(c, 404, { error: "Not found" })
+        const events = await folderActivity(db, id)
+        return json(c, 200, { events })
+      }),
+    ),
   ]
 }

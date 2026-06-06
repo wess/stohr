@@ -1,8 +1,8 @@
-import sharp from "sharp"
 import { from } from "@atlas/db"
-import type { Action } from "../types.ts"
+import sharp from "sharp"
 import { drop, fetchObject, makeKey, put } from "../../storage/index.ts"
 import { generateImageThumb, isThumbable, thumbKeyFor } from "../../storage/thumb.ts"
+import type { Action } from "../types.ts"
 
 const SUPPORTED_MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"])
 
@@ -55,7 +55,7 @@ const resizeAction: Action = {
     },
   },
 
-  run: async (ctx) => {
+  run: async ctx => {
     if (ctx.subject.kind !== "file") return { ok: false, error: "Subject is not a file" }
     const file = ctx.subject.row
 

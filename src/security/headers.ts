@@ -54,9 +54,8 @@ const HEADERS: Record<string, string> = {
 // peer rather than trusting whatever a client puts in X-Forwarded-For.
 type BunServer = { requestIP?: (req: Request) => { address: string } | null }
 
-export const withSecurityHeaders = (
-  fetch: (req: Request) => Response | Promise<Response>,
-): ((req: Request, server?: BunServer) => Promise<Response>) =>
+export const withSecurityHeaders =
+  (fetch: (req: Request) => Response | Promise<Response>): ((req: Request, server?: BunServer) => Promise<Response>) =>
   async (req, server) => {
     if (server?.requestIP) {
       const peer = server.requestIP(req)

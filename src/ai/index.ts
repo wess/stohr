@@ -1,6 +1,6 @@
-import { createOpenAiDriver, type OpenAiConfig } from "./openai/index.ts"
-import { createAnthropicDriver, type AnthropicConfig } from "./anthropic/index.ts"
+import { type AnthropicConfig, createAnthropicDriver } from "./anthropic/index.ts"
 import { createLocalDriver, type LocalConfig } from "./local/index.ts"
+import { createOpenAiDriver, type OpenAiConfig } from "./openai/index.ts"
 
 export type AiMessage = { role: "system" | "user" | "assistant"; content: string }
 
@@ -30,5 +30,4 @@ export const createAi = (cfg: AiConfig): AiHandle => {
   throw new Error(`Unknown AI driver: ${(cfg as { driver: string }).driver}`)
 }
 
-export const chat = (h: AiHandle, messages: AiMessage[], opts?: ChatOpts) =>
-  h.chat(messages, opts)
+export const chat = (h: AiHandle, messages: AiMessage[], opts?: ChatOpts) => h.chat(messages, opts)

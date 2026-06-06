@@ -51,6 +51,11 @@ services:
       # SigV4 hashing both buffer; with STORAGE_DRIVER=local the buffer
       # only lives until it lands on disk.
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-1073741824}
+      # Optional ClamAV malware scanning. Uncomment + enable the `clamav`
+      # service below to gate downloads of infected uploads. Leave CLAMD_HOST
+      # blank to disable scanning entirely (uploads are marked 'skipped').
+      CLAMD_HOST: ${CLAMD_HOST:-}
+      CLAMD_PORT: ${CLAMD_PORT:-3310}
     volumes:
       - blobs:/data/blobs
     depends_on:
@@ -69,6 +74,21 @@ services:
     depends_on:
       - api
     restart: unless-stopped
+
+  # Optional ClamAV sidecar for malware scanning. To enable:
+  #   1. Uncomment this whole service.
+  #   2. Set CLAMD_HOST=clamav in your .env (CLAMD_PORT defaults to 3310).
+  #   3. Add `clamav` under the api service's `depends_on`.
+  # Privacy note: clamd runs locally; no file bytes ever leave the host.
+  # clamav:
+  #   image: clamav/clamav:latest
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "echo PING | nc -w 5 localhost 3310 | grep -q PONG"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 10
+  #     start_period: 120s
 
   caddy:
     image: caddy:2-alpine

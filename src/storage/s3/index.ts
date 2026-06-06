@@ -15,7 +15,7 @@ export const createS3Driver = (cfg: S3Config): StorageDriver => {
     put: async (key, body, contentType) => {
       await upload(store, { key, body, contentType })
     },
-    get: (key) => download(store, key),
-    drop: (key) => remove(store, key),
+    get: key => download(store, key),
+    drop: key => remove(store, key),
   }
 }

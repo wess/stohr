@@ -15,7 +15,7 @@ export type CloudinitInput = {
 const b64 = (s: string) => Buffer.from(s).toString("base64")
 
 export const generateCloudInit = (input: CloudinitInput): string => {
-  const envFile = [
+  const envFile = `${[
     `POSTGRES_PASSWORD=${input.postgresPassword}`,
     `SECRET=${input.secret}`,
     `S3_ENDPOINT=${input.s3Endpoint}`,
@@ -23,7 +23,7 @@ export const generateCloudInit = (input: CloudinitInput): string => {
     `S3_REGION=${input.s3Region}`,
     `S3_ACCESS_KEY=${input.s3AccessKey}`,
     `S3_SECRET_KEY=${input.s3SecretKey}`,
-  ].join("\n") + "\n"
+  ].join("\n")}\n`
 
   const caddyfile = input.domain
     ? `${input.domain} {\n\treverse_proxy web:3001\n}\n`

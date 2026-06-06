@@ -40,6 +40,11 @@ RUN bun install --frozen-lockfile --production
 FROM oven/bun:1-alpine AS runtime
 WORKDIR /app
 
+# poppler-utils provides pdftoppm (PDF thumbnails) and pdftotext (content
+# search). generatePdfThumb falls back to a MIME icon if the binary is
+# missing, so the runtime never crashes on its absence.
+RUN apk add --no-cache poppler-utils
+
 # NODE_ENV=production is mandatory: src/web/serve.ts only bundles the SPA
 # with the production React runtime when it's set, and src/server.ts
 # refuses to boot on the default SECRET outside development.

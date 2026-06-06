@@ -19,7 +19,7 @@ const TTL_MS = 60 * 60 * 1000
 
 const discoveryCache = new Map<string, Cached<Discovery>>()
 
-const trimRight = (s: string, ch: string) => s.endsWith(ch) ? s.slice(0, -1) : s
+const trimRight = (s: string, ch: string) => (s.endsWith(ch) ? s.slice(0, -1) : s)
 
 export const fetchDiscovery = async (issuerUrl: string): Promise<Discovery> => {
   const key = trimRight(issuerUrl, "/")
@@ -31,7 +31,7 @@ export const fetchDiscovery = async (issuerUrl: string): Promise<Discovery> => {
   if (!res.ok) {
     throw new Error(`OIDC discovery failed: ${res.status} ${res.statusText}`)
   }
-  const value = await res.json() as Discovery
+  const value = (await res.json()) as Discovery
   if (!value.authorization_endpoint || !value.token_endpoint || !value.jwks_uri) {
     throw new Error("OIDC discovery document missing required endpoints")
   }

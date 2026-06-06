@@ -11,7 +11,8 @@ export const mimeClass = (mime: string): MimeClass => {
     mime === "application/msword" ||
     mime.includes("officedocument") ||
     mime.includes("opendocument")
-  ) return "document"
+  )
+    return "document"
   if (
     mime === "application/zip" ||
     mime === "application/gzip" ||
@@ -19,6 +20,7 @@ export const mimeClass = (mime: string): MimeClass => {
     mime === "application/x-7z-compressed" ||
     mime === "application/x-bzip2" ||
     mime === "application/x-rar-compressed"
-  ) return "archive"
+  )
+    return "archive"
   return "other"
 }

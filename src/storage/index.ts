@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto"
-import { createS3Driver, type S3Config } from "./s3/index.ts"
 import { createLocalDriver, type LocalConfig } from "./local/index.ts"
+import { createS3Driver, type S3Config } from "./s3/index.ts"
 
 export type StorageDriver = {
   put(key: string, body: Blob | Uint8Array | string, contentType?: string): Promise<void>
@@ -10,9 +10,7 @@ export type StorageDriver = {
 
 export type StorageHandle = StorageDriver
 
-export type StorageConfig =
-  | ({ driver: "s3" } & S3Config)
-  | ({ driver: "local" } & LocalConfig)
+export type StorageConfig = ({ driver: "s3" } & S3Config) | ({ driver: "local" } & LocalConfig)
 
 export const createStorage = (cfg: StorageConfig): StorageHandle => {
   if (cfg.driver === "s3") return createS3Driver(cfg)

@@ -1,14 +1,14 @@
+import { hash, token, verify } from "@atlas/auth"
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { get, json, parseJson, pipeline, post } from "@atlas/server"
-import { hash, token, verify } from "@atlas/auth"
+import { sendSystem } from "../messages/system.ts"
+import { logEvent } from "../security/audit.ts"
+import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
+import { issueSession } from "../security/sessions.ts"
+import { verifyTotp } from "../security/totp.ts"
 import { sha256Hex } from "../util/token.ts"
 import { isEmail, isValidUsername, normalizeUsername } from "../util/username.ts"
-import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
-import { logEvent } from "../security/audit.ts"
-import { verifyTotp } from "../security/totp.ts"
-import { issueSession } from "../security/sessions.ts"
-import { sendSystem } from "../messages/system.ts"
 
 type UserRow = {
   id: number
@@ -39,31 +39,37 @@ const userCount = async (db: Connection) => {
 }
 
 export const resolvePendingCollabs = async (db: Connection, userId: number, email: string) => {
-  const pending = await db.all(
+  const pending = (await db.all(
     from("collaborations")
       .where(q => q("user_id").isNull())
       .where(q => q("email").ilike(email))
       .select("id", "resource_type", "resource_id"),
-  ) as Array<{ id: number; resource_type: string; resource_id: number }>
+  )) as Array<{ id: number; resource_type: string; resource_id: number }>
 
   for (const row of pending) {
-    const existing = await db.one(
+    const existing = (await db.one(
       from("collaborations")
         .where(q => q("resource_type").equals(row.resource_type))
         .where(q => q("resource_id").equals(row.resource_id))
         .where(q => q("user_id").equals(userId))
         .select("id"),
-    ) as { id: number } | null
+    )) as { id: number } | null
 
     if (existing) {
-      await db.execute(from("collaborations").where(q => q("id").equals(row.id)).del())
+      await db.execute(
+        from("collaborations")
+          .where(q => q("id").equals(row.id))
+          .del(),
+      )
     } else {
       await db.execute(
-        from("collaborations").where(q => q("id").equals(row.id)).update({
-          user_id: userId,
-          email: null,
-          accepted_at: raw("NOW()"),
-        }),
+        from("collaborations")
+          .where(q => q("id").equals(row.id))
+          .update({
+            user_id: userId,
+            email: null,
+            accepted_at: raw("NOW()"),
+          }),
       )
     }
   }
@@ -80,9 +86,11 @@ const consumeBackupCode = async (
     if (ok) {
       const remaining = [...storedCodes.slice(0, i), ...storedCodes.slice(i + 1)]
       await db.execute(
-        from("users").where(q => q("id").equals(userId)).update({
-          totp_backup_codes: JSON.stringify(remaining),
-        }),
+        from("users")
+          .where(q => q("id").equals(userId))
+          .update({
+            totp_backup_codes: JSON.stringify(remaining),
+          }),
       )
       return true
     }
@@ -94,287 +102,368 @@ export const authRoutes = (db: Connection, secret: string) => {
   const api = pipeline(parseJson)
 
   return [
-    get("/setup", async (c) => {
+    get("/setup", async c => {
       const count = await userCount(db)
       return json(c, 200, { needsSetup: count === 0 })
     }),
 
-    post("/signup", api(async (c) => {
-      const ip = clientIp(c.request)
-      const ua = userAgent(c.request)
+    post(
+      "/signup",
+      api(async c => {
+        const ip = clientIp(c.request)
+        const ua = userAgent(c.request)
 
-      const ipRate = await checkRate(db, `signup:ip:${ip}`, 10, 3600)
-      if (!ipRate.ok) {
-        logEvent(db, { event: "signup.rate_limited", ip, userAgent: ua })
-        return json(c, 429, { error: "Too many signup attempts. Try again later.", retry_after: ipRate.retryAfterSeconds })
-      }
-
-      const body = c.body as {
-        name?: string
-        email?: string
-        username?: string
-        password?: string
-        invite_token?: string
-        inviteToken?: string
-      }
-
-      const name = body.name?.trim()
-      const email = body.email?.trim().toLowerCase()
-      const usernameInput = body.username?.trim()
-      const username = usernameInput ? normalizeUsername(usernameInput) : ""
-      const password = body.password
-      const inviteToken = body.invite_token ?? body.inviteToken
-
-      if (!name || !email || !username || !password) {
-        return json(c, 422, { error: "name, email, username, and password are required" })
-      }
-      if (!isEmail(email)) return json(c, 422, { error: "Invalid email format" })
-      if (!isValidUsername(username)) {
-        return json(c, 422, { error: "Username must be 3-32 chars, lowercase letters, digits, and underscores" })
-      }
-      if (password.length < 8) return json(c, 422, { error: "Password must be at least 8 characters" })
-
-      const isFirstUser = (await userCount(db)) === 0
-
-      let invite: { id: number; email: string | null; used_at: string | null } | null = null
-      if (!isFirstUser) {
-        if (!inviteToken) return json(c, 403, { error: "Invite token required" })
-        invite = await db.one(
-          from("invites")
-            .where(q => q("token_hash").equals(sha256Hex(inviteToken)))
-            .select("id", "email", "used_at"),
-        ) as { id: number; email: string | null; used_at: string | null } | null
-        if (!invite) return json(c, 403, { error: "Invalid invite token" })
-        if (invite.used_at) return json(c, 403, { error: "Invite already used" })
-        if (invite.email && invite.email.toLowerCase() !== email) {
-          return json(c, 403, { error: "Invite is bound to a different email" })
-        }
-      }
-
-      const emailTaken = await db.one(
-        from("users").where(q => q("email").equals(email)).select("id"),
-      )
-      if (emailTaken) return json(c, 409, { error: "Email already in use" })
-
-      const usernameTaken = await db.one(
-        from("users").where(q => q("username").equals(username)).select("id"),
-      )
-      if (usernameTaken) return json(c, 409, { error: "Username already in use" })
-
-      const hashed = await hash(password)
-      // New accounts have no storage cap (storage_quota_bytes defaults to 0,
-      // meaning unlimited). The owner can set a per-user cap from
-      // Admin → Users if they want one.
-      const inserted = await db.execute(
-        from("users")
-          .insert({
-            name,
-            email,
-            username,
-            password: hashed,
-            is_owner: isFirstUser,
+        const ipRate = await checkRate(db, `signup:ip:${ip}`, 10, 3600)
+        if (!ipRate.ok) {
+          logEvent(db, { event: "signup.rate_limited", ip, userAgent: ua })
+          return json(c, 429, {
+            error: "Too many signup attempts. Try again later.",
+            retry_after: ipRate.retryAfterSeconds,
           })
-          .returning("id", "email", "username", "name", "is_owner"),
-      ) as Array<AuthUser>
-      const user = inserted[0]!
-
-      if (invite) {
-        await db.execute(
-          from("invites").where(q => q("id").equals(invite!.id)).update({
-            used_at: raw("NOW()"),
-            used_by: user.id,
-          }),
-        )
-      }
-
-      await resolvePendingCollabs(db, user.id, email)
-
-      // Welcome message lands in the new account's inbox so the first
-      // login shows something. Fire-and-forget; signup must not fail if
-      // the messages table or notifier hiccups.
-      void sendSystem(
-        db,
-        user.id,
-        isFirstUser ? "Welcome to Stohr — you're the owner" : "Welcome to Stohr",
-        isFirstUser
-          ? "You created the first account on this instance, so you're the owner.\n\nFrom Admin → Settings you can toggle WebDAV, federation, MCP, and other features. Admin → Users lets you invite others and manage their accounts.\n\nFiles live in My Files (your personal drive) or in Spaces (shared team workspaces)."
-          : "Welcome! Your files live in My Files (your personal drive) or in Spaces (shared workspaces you join).\n\nUse Settings → Apps to create a personal access token for SDKs and the mobile app.",
-      )
-
-      logEvent(db, {
-        userId: user.id,
-        event: "signup.ok",
-        metadata: { is_first_user: isFirstUser, invite_id: invite?.id ?? null },
-        ip,
-        userAgent: ua,
-      })
-
-      const sess = await issueSession(db, user, secret, { ip, userAgent: ua })
-      return json(c, 201, {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        name: user.name,
-        is_owner: user.is_owner,
-        token: sess.token,
-      })
-    })),
-
-    post("/login", api(async (c) => {
-      const ip = clientIp(c.request)
-      const ua = userAgent(c.request)
-
-      const body = c.body as {
-        identity?: string
-        email?: string
-        username?: string
-        password?: string
-      }
-      const identity = (body.identity ?? body.email ?? body.username ?? "").trim()
-      const password = body.password ?? ""
-      if (!identity || !password) return json(c, 422, { error: "identity and password are required" })
-
-      const ipRate = await checkRate(db, `login:ip:${ip}`, 30, 900)
-      if (!ipRate.ok) {
-        logEvent(db, { event: "login.rate_limited", metadata: { scope: "ip", identity }, ip, userAgent: ua })
-        return json(c, 429, { error: "Too many attempts. Try again later.", retry_after: ipRate.retryAfterSeconds })
-      }
-      const idRate = await checkRate(db, `login:id:${identity.toLowerCase()}`, 5, 900)
-      if (!idRate.ok) {
-        logEvent(db, { event: "login.rate_limited", metadata: { scope: "identity", identity }, ip, userAgent: ua })
-        return json(c, 429, { error: "Too many attempts for this account. Try again later.", retry_after: idRate.retryAfterSeconds })
-      }
-
-      const lookup = identity.includes("@") ? identity.toLowerCase() : normalizeUsername(identity)
-      const user = await db.one(
-        from("users")
-          .where(q => identity.includes("@") ? q("email").equals(lookup) : q("username").equals(lookup))
-          .select("id", "email", "username", "name", "password", "is_owner", "totp_enabled", "totp_secret", "totp_backup_codes", "deleted_at", "suspended_at"),
-      ) as (UserRow & { deleted_at: string | null; suspended_at: string | null }) | null
-
-      // Always run a verify, even when the user doesn't exist, so the
-      // response timing doesn't leak account existence. The decoy hash is a
-      // real argon2id encoding so verify() does the full key derivation.
-      const verifyTarget = user?.password ?? DECOY_PASSWORD_HASH
-      const verifyOk = await verify(password, verifyTarget).catch(() => false)
-
-      if (!user) {
-        logEvent(db, { event: "login.fail", metadata: { reason: "no_user", identity }, ip, userAgent: ua })
-        return json(c, 401, { error: "Invalid credentials" })
-      }
-      if (!verifyOk) {
-        logEvent(db, { userId: user.id, event: "login.fail", metadata: { reason: "bad_password" }, ip, userAgent: ua })
-        return json(c, 401, { error: "Invalid credentials" })
-      }
-      // If the account is mid-grace-window, reject login. The user has the
-      // cancel link in their email — they should restore via that, not by
-      // logging in (which could be an attacker who triggered the deletion).
-      if (user.deleted_at) {
-        logEvent(db, { userId: user.id, event: "login.fail", metadata: { reason: "account_deleted" }, ip, userAgent: ua })
-        return json(c, 403, {
-          error: "Account is scheduled for deletion. Click the cancel link in your email to restore it.",
-          account_deleted: true,
-        })
-      }
-      // Suspended accounts: reject after password verify so we don't leak
-      // suspension state to unauthenticated probes.
-      if (user.suspended_at) {
-        logEvent(db, { userId: user.id, event: "login.fail", metadata: { reason: "account_suspended" }, ip, userAgent: ua })
-        return json(c, 403, {
-          error: "Account has been suspended by the owner. Contact the instance owner to restore access.",
-          account_suspended: true,
-        })
-      }
-
-      if (user.totp_enabled) {
-        logEvent(db, { userId: user.id, event: "login.mfa_required", ip, userAgent: ua })
-        return json(c, 200, {
-          mfa_required: true,
-          mfa_token: await issueMfaChallenge(secret, user.id),
-        })
-      }
-
-      logEvent(db, { userId: user.id, event: "login.ok", ip, userAgent: ua })
-      const sess = await issueSession(db, {
-        id: user.id, email: user.email, username: user.username, name: user.name, is_owner: user.is_owner,
-      }, secret, { ip, userAgent: ua })
-      return json(c, 200, {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        name: user.name,
-        is_owner: user.is_owner,
-        token: sess.token,
-      })
-    })),
-
-    post("/login/mfa", api(async (c) => {
-      const ip = clientIp(c.request)
-      const ua = userAgent(c.request)
-      const body = c.body as { mfa_token?: string; mfaToken?: string; code?: string; backup_code?: string; backupCode?: string }
-      const mfaToken = body.mfa_token ?? body.mfaToken
-      const code = body.code?.trim()
-      const backupCode = (body.backup_code ?? body.backupCode)?.trim()
-      if (!mfaToken) return json(c, 422, { error: "mfa_token required" })
-      if (!code && !backupCode) return json(c, 422, { error: "code or backup_code required" })
-
-      let payload: { kind?: string; uid?: number }
-      try {
-        payload = await token.verify(mfaToken, secret) as { kind?: string; uid?: number }
-      } catch {
-        return json(c, 401, { error: "Invalid or expired MFA challenge — start over" })
-      }
-      if (payload.kind !== "mfa" || !payload.uid) {
-        return json(c, 401, { error: "Invalid MFA challenge" })
-      }
-
-      const ipRate = await checkRate(db, `mfa:ip:${ip}`, 30, 900)
-      if (!ipRate.ok) {
-        return json(c, 429, { error: "Too many attempts.", retry_after: ipRate.retryAfterSeconds })
-      }
-      const userRate = await checkRate(db, `mfa:user:${payload.uid}`, 6, 900)
-      if (!userRate.ok) {
-        logEvent(db, { userId: payload.uid, event: "login.mfa_locked", ip, userAgent: ua })
-        return json(c, 429, { error: "Too many MFA attempts. Try again later.", retry_after: userRate.retryAfterSeconds })
-      }
-
-      const user = await db.one(
-        from("users")
-          .where(q => q("id").equals(payload.uid!))
-          .select("id", "email", "username", "name", "is_owner", "totp_enabled", "totp_secret", "totp_backup_codes"),
-      ) as Pick<UserRow, "id" | "email" | "username" | "name" | "is_owner" | "totp_enabled" | "totp_secret" | "totp_backup_codes"> | null
-      if (!user || !user.totp_enabled || !user.totp_secret) {
-        return json(c, 401, { error: "MFA not enabled for this user" })
-      }
-
-      let verified = false
-      if (code) {
-        verified = verifyTotp(user.totp_secret, code)
-      } else if (backupCode) {
-        const stored = user.totp_backup_codes ? (JSON.parse(user.totp_backup_codes) as string[]) : []
-        verified = await consumeBackupCode(db, user.id, stored, backupCode)
-        if (verified) {
-          logEvent(db, { userId: user.id, event: "login.mfa_backup_used", ip, userAgent: ua })
         }
-      }
 
-      if (!verified) {
-        logEvent(db, { userId: user.id, event: "login.mfa_fail", ip, userAgent: ua })
-        return json(c, 401, { error: "Invalid code" })
-      }
+        const body = c.body as {
+          name?: string
+          email?: string
+          username?: string
+          password?: string
+          invite_token?: string
+          inviteToken?: string
+        }
 
-      logEvent(db, { userId: user.id, event: "login.ok", metadata: { mfa: true }, ip, userAgent: ua })
-      const sess = await issueSession(db, {
-        id: user.id, email: user.email, username: user.username, name: user.name, is_owner: user.is_owner,
-      }, secret, { ip, userAgent: ua })
-      return json(c, 200, {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        name: user.name,
-        is_owner: user.is_owner,
-        token: sess.token,
-      })
-    })),
+        const name = body.name?.trim()
+        const email = body.email?.trim().toLowerCase()
+        const usernameInput = body.username?.trim()
+        const username = usernameInput ? normalizeUsername(usernameInput) : ""
+        const password = body.password
+        const inviteToken = body.invite_token ?? body.inviteToken
+
+        if (!name || !email || !username || !password) {
+          return json(c, 422, { error: "name, email, username, and password are required" })
+        }
+        if (!isEmail(email)) return json(c, 422, { error: "Invalid email format" })
+        if (!isValidUsername(username)) {
+          return json(c, 422, { error: "Username must be 3-32 chars, lowercase letters, digits, and underscores" })
+        }
+        if (password.length < 8) return json(c, 422, { error: "Password must be at least 8 characters" })
+
+        const isFirstUser = (await userCount(db)) === 0
+
+        let invite: { id: number; email: string | null; used_at: string | null } | null = null
+        if (!isFirstUser) {
+          if (!inviteToken) return json(c, 403, { error: "Invite token required" })
+          invite = (await db.one(
+            from("invites")
+              .where(q => q("token_hash").equals(sha256Hex(inviteToken)))
+              .select("id", "email", "used_at"),
+          )) as { id: number; email: string | null; used_at: string | null } | null
+          if (!invite) return json(c, 403, { error: "Invalid invite token" })
+          if (invite.used_at) return json(c, 403, { error: "Invite already used" })
+          if (invite.email && invite.email.toLowerCase() !== email) {
+            return json(c, 403, { error: "Invite is bound to a different email" })
+          }
+        }
+
+        const emailTaken = await db.one(
+          from("users")
+            .where(q => q("email").equals(email))
+            .select("id"),
+        )
+        if (emailTaken) return json(c, 409, { error: "Email already in use" })
+
+        const usernameTaken = await db.one(
+          from("users")
+            .where(q => q("username").equals(username))
+            .select("id"),
+        )
+        if (usernameTaken) return json(c, 409, { error: "Username already in use" })
+
+        const hashed = await hash(password)
+        // New accounts have no storage cap (storage_quota_bytes defaults to 0,
+        // meaning unlimited). The owner can set a per-user cap from
+        // Admin → Users if they want one.
+        const inserted = (await db.execute(
+          from("users")
+            .insert({
+              name,
+              email,
+              username,
+              password: hashed,
+              is_owner: isFirstUser,
+            })
+            .returning("id", "email", "username", "name", "is_owner"),
+        )) as Array<AuthUser>
+        const user = inserted[0]!
+
+        if (invite) {
+          await db.execute(
+            from("invites")
+              .where(q => q("id").equals(invite!.id))
+              .update({
+                used_at: raw("NOW()"),
+                used_by: user.id,
+              }),
+          )
+        }
+
+        await resolvePendingCollabs(db, user.id, email)
+
+        // Welcome message lands in the new account's inbox so the first
+        // login shows something. Fire-and-forget; signup must not fail if
+        // the messages table or notifier hiccups.
+        void sendSystem(
+          db,
+          user.id,
+          isFirstUser ? "Welcome to Stohr — you're the owner" : "Welcome to Stohr",
+          isFirstUser
+            ? "You created the first account on this instance, so you're the owner.\n\nFrom Admin → Settings you can toggle WebDAV, federation, MCP, and other features. Admin → Users lets you invite others and manage their accounts.\n\nFiles live in My Files (your personal drive) or in Spaces (shared team workspaces)."
+            : "Welcome! Your files live in My Files (your personal drive) or in Spaces (shared workspaces you join).\n\nUse Settings → Apps to create a personal access token for SDKs and the mobile app.",
+        )
+
+        logEvent(db, {
+          userId: user.id,
+          event: "signup.ok",
+          metadata: { is_first_user: isFirstUser, invite_id: invite?.id ?? null },
+          ip,
+          userAgent: ua,
+        })
+
+        const sess = await issueSession(db, user, secret, { ip, userAgent: ua })
+        return json(c, 201, {
+          id: user.id,
+          email: user.email,
+          username: user.username,
+          name: user.name,
+          is_owner: user.is_owner,
+          token: sess.token,
+        })
+      }),
+    ),
+
+    post(
+      "/login",
+      api(async c => {
+        const ip = clientIp(c.request)
+        const ua = userAgent(c.request)
+
+        const body = c.body as {
+          identity?: string
+          email?: string
+          username?: string
+          password?: string
+        }
+        const identity = (body.identity ?? body.email ?? body.username ?? "").trim()
+        const password = body.password ?? ""
+        if (!identity || !password) return json(c, 422, { error: "identity and password are required" })
+
+        const ipRate = await checkRate(db, `login:ip:${ip}`, 30, 900)
+        if (!ipRate.ok) {
+          logEvent(db, { event: "login.rate_limited", metadata: { scope: "ip", identity }, ip, userAgent: ua })
+          return json(c, 429, { error: "Too many attempts. Try again later.", retry_after: ipRate.retryAfterSeconds })
+        }
+        const idRate = await checkRate(db, `login:id:${identity.toLowerCase()}`, 5, 900)
+        if (!idRate.ok) {
+          logEvent(db, { event: "login.rate_limited", metadata: { scope: "identity", identity }, ip, userAgent: ua })
+          return json(c, 429, {
+            error: "Too many attempts for this account. Try again later.",
+            retry_after: idRate.retryAfterSeconds,
+          })
+        }
+
+        const lookup = identity.includes("@") ? identity.toLowerCase() : normalizeUsername(identity)
+        const user = (await db.one(
+          from("users")
+            .where(q => (identity.includes("@") ? q("email").equals(lookup) : q("username").equals(lookup)))
+            .select(
+              "id",
+              "email",
+              "username",
+              "name",
+              "password",
+              "is_owner",
+              "totp_enabled",
+              "totp_secret",
+              "totp_backup_codes",
+              "deleted_at",
+              "suspended_at",
+            ),
+        )) as (UserRow & { deleted_at: string | null; suspended_at: string | null }) | null
+
+        // Always run a verify, even when the user doesn't exist, so the
+        // response timing doesn't leak account existence. The decoy hash is a
+        // real argon2id encoding so verify() does the full key derivation.
+        const verifyTarget = user?.password ?? DECOY_PASSWORD_HASH
+        const verifyOk = await verify(password, verifyTarget).catch(() => false)
+
+        if (!user) {
+          logEvent(db, { event: "login.fail", metadata: { reason: "no_user", identity }, ip, userAgent: ua })
+          return json(c, 401, { error: "Invalid credentials" })
+        }
+        if (!verifyOk) {
+          logEvent(db, {
+            userId: user.id,
+            event: "login.fail",
+            metadata: { reason: "bad_password" },
+            ip,
+            userAgent: ua,
+          })
+          return json(c, 401, { error: "Invalid credentials" })
+        }
+        // If the account is mid-grace-window, reject login. The user has the
+        // cancel link in their email — they should restore via that, not by
+        // logging in (which could be an attacker who triggered the deletion).
+        if (user.deleted_at) {
+          logEvent(db, {
+            userId: user.id,
+            event: "login.fail",
+            metadata: { reason: "account_deleted" },
+            ip,
+            userAgent: ua,
+          })
+          return json(c, 403, {
+            error: "Account is scheduled for deletion. Click the cancel link in your email to restore it.",
+            account_deleted: true,
+          })
+        }
+        // Suspended accounts: reject after password verify so we don't leak
+        // suspension state to unauthenticated probes.
+        if (user.suspended_at) {
+          logEvent(db, {
+            userId: user.id,
+            event: "login.fail",
+            metadata: { reason: "account_suspended" },
+            ip,
+            userAgent: ua,
+          })
+          return json(c, 403, {
+            error: "Account has been suspended by the owner. Contact the instance owner to restore access.",
+            account_suspended: true,
+          })
+        }
+
+        if (user.totp_enabled) {
+          logEvent(db, { userId: user.id, event: "login.mfa_required", ip, userAgent: ua })
+          return json(c, 200, {
+            mfa_required: true,
+            mfa_token: await issueMfaChallenge(secret, user.id),
+          })
+        }
+
+        logEvent(db, { userId: user.id, event: "login.ok", ip, userAgent: ua })
+        const sess = await issueSession(
+          db,
+          {
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            name: user.name,
+            is_owner: user.is_owner,
+          },
+          secret,
+          { ip, userAgent: ua },
+        )
+        return json(c, 200, {
+          id: user.id,
+          email: user.email,
+          username: user.username,
+          name: user.name,
+          is_owner: user.is_owner,
+          token: sess.token,
+        })
+      }),
+    ),
+
+    post(
+      "/login/mfa",
+      api(async c => {
+        const ip = clientIp(c.request)
+        const ua = userAgent(c.request)
+        const body = c.body as {
+          mfa_token?: string
+          mfaToken?: string
+          code?: string
+          backup_code?: string
+          backupCode?: string
+        }
+        const mfaToken = body.mfa_token ?? body.mfaToken
+        const code = body.code?.trim()
+        const backupCode = (body.backup_code ?? body.backupCode)?.trim()
+        if (!mfaToken) return json(c, 422, { error: "mfa_token required" })
+        if (!code && !backupCode) return json(c, 422, { error: "code or backup_code required" })
+
+        let payload: { kind?: string; uid?: number }
+        try {
+          payload = (await token.verify(mfaToken, secret)) as { kind?: string; uid?: number }
+        } catch {
+          return json(c, 401, { error: "Invalid or expired MFA challenge — start over" })
+        }
+        if (payload.kind !== "mfa" || !payload.uid) {
+          return json(c, 401, { error: "Invalid MFA challenge" })
+        }
+
+        const ipRate = await checkRate(db, `mfa:ip:${ip}`, 30, 900)
+        if (!ipRate.ok) {
+          return json(c, 429, { error: "Too many attempts.", retry_after: ipRate.retryAfterSeconds })
+        }
+        const userRate = await checkRate(db, `mfa:user:${payload.uid}`, 6, 900)
+        if (!userRate.ok) {
+          logEvent(db, { userId: payload.uid, event: "login.mfa_locked", ip, userAgent: ua })
+          return json(c, 429, {
+            error: "Too many MFA attempts. Try again later.",
+            retry_after: userRate.retryAfterSeconds,
+          })
+        }
+
+        const user = (await db.one(
+          from("users")
+            .where(q => q("id").equals(payload.uid!))
+            .select("id", "email", "username", "name", "is_owner", "totp_enabled", "totp_secret", "totp_backup_codes"),
+        )) as Pick<
+          UserRow,
+          "id" | "email" | "username" | "name" | "is_owner" | "totp_enabled" | "totp_secret" | "totp_backup_codes"
+        > | null
+        if (!user?.totp_enabled || !user.totp_secret) {
+          return json(c, 401, { error: "MFA not enabled for this user" })
+        }
+
+        let verified = false
+        if (code) {
+          verified = verifyTotp(user.totp_secret, code)
+        } else if (backupCode) {
+          const stored = user.totp_backup_codes ? (JSON.parse(user.totp_backup_codes) as string[]) : []
+          verified = await consumeBackupCode(db, user.id, stored, backupCode)
+          if (verified) {
+            logEvent(db, { userId: user.id, event: "login.mfa_backup_used", ip, userAgent: ua })
+          }
+        }
+
+        if (!verified) {
+          logEvent(db, { userId: user.id, event: "login.mfa_fail", ip, userAgent: ua })
+          return json(c, 401, { error: "Invalid code" })
+        }
+
+        logEvent(db, { userId: user.id, event: "login.ok", metadata: { mfa: true }, ip, userAgent: ua })
+        const sess = await issueSession(
+          db,
+          {
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            name: user.name,
+            is_owner: user.is_owner,
+          },
+          secret,
+          { ip, userAgent: ua },
+        )
+        return json(c, 200, {
+          id: user.id,
+          email: user.email,
+          username: user.username,
+          name: user.name,
+          is_owner: user.is_owner,
+          token: sess.token,
+        })
+      }),
+    ),
   ]
 }

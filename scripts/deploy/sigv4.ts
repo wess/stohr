@@ -1,10 +1,8 @@
 import { createHash, createHmac } from "node:crypto"
 
-const sha256hex = (data: string | Buffer) =>
-  createHash("sha256").update(data).digest("hex")
+const sha256hex = (data: string | Buffer) => createHash("sha256").update(data).digest("hex")
 
-const hmac = (key: string | Buffer, data: string) =>
-  createHmac("sha256", key).update(data).digest()
+const hmac = (key: string | Buffer, data: string) => createHmac("sha256", key).update(data).digest()
 
 export type SignInput = {
   method: string
@@ -32,26 +30,16 @@ export const signRequest = (opts: SignInput): Record<string, string> => {
     ...(opts.extraHeaders ?? {}),
   }
 
-  const sortedKeys = Object.keys(headers).map(k => k.toLowerCase()).sort()
+  const sortedKeys = Object.keys(headers)
+    .map(k => k.toLowerCase())
+    .sort()
   const canonicalHeaders = sortedKeys.map(k => `${k}:${(headers[k] ?? "").trim()}\n`).join("")
   const signedHeaders = sortedKeys.join(";")
 
-  const canonicalRequest = [
-    opts.method,
-    opts.path,
-    "",
-    canonicalHeaders,
-    signedHeaders,
-    payloadHash,
-  ].join("\n")
+  const canonicalRequest = [opts.method, opts.path, "", canonicalHeaders, signedHeaders, payloadHash].join("\n")
 
   const credentialScope = `${dateStamp}/${opts.region}/${opts.service}/aws4_request`
-  const stringToSign = [
-    "AWS4-HMAC-SHA256",
-    amzDate,
-    credentialScope,
-    sha256hex(canonicalRequest),
-  ].join("\n")
+  const stringToSign = ["AWS4-HMAC-SHA256", amzDate, credentialScope, sha256hex(canonicalRequest)].join("\n")
 
   const kDate = hmac(`AWS4${opts.secretKey}`, dateStamp)
   const kRegion = hmac(kDate, opts.region)

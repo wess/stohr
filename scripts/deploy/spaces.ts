@@ -7,11 +7,7 @@ export type SpacesKey = {
   secret_key: string
 }
 
-export const createSpacesKey = async (
-  api: ApiClient,
-  name: string,
-  bucket: string,
-): Promise<SpacesKey> => {
+export const createSpacesKey = async (api: ApiClient, name: string, bucket: string): Promise<SpacesKey> => {
   const res = await api.request<{ key: SpacesKey }>("POST", "/spaces/keys", {
     name,
     grants: [{ bucket, permission: "fullaccess" }],

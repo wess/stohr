@@ -37,11 +37,11 @@ export const selectPlacement = async (
   size: number,
   excludePubkeys: Set<string> = new Set(),
 ): Promise<Placement> => {
-  const members = await db.all(
+  const members = (await db.all(
     from("federation_members")
       .where(q => q("federation_id").equals(federationId))
       .where(q => q("status").equals("active")),
-  ) as MemberRow[]
+  )) as MemberRow[]
 
   const ranked = members
     .filter(m => !excludePubkeys.has(m.peer_pubkey))

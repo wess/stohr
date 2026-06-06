@@ -20,7 +20,9 @@ export const inviteEmail = (input: {
     "If you weren't expecting this, you can ignore the email.",
     "",
     "— Stohr",
-  ].filter(line => line !== undefined).join("\n")
+  ]
+    .filter(line => line !== undefined)
+    .join("\n")
 
   const noteBlock = input.note
     ? `<blockquote style="border-left: 3px solid #5E81AC; padding: 4px 14px; color: #3B4252; margin: 16px 0; font-style: italic;">${escapeHtml(input.note)}</blockquote>`

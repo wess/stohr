@@ -25,9 +25,7 @@ const CLONE_MAP: Record<string, ClonePlan> = {
     description: "Sorts uploads into year and month subfolders based on when they were added.",
     icon: "Calendar",
     triggers: ["file.created", "file.moved.in"],
-    steps: [
-      { kind: "route.move", config: { path_template: "{YYYY}/{MM}" } },
-    ],
+    steps: [{ kind: "route.move", config: { path_template: "{YYYY}/{MM}" } }],
   },
 }
 

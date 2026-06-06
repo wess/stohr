@@ -1,6 +1,6 @@
 import type { Connection } from "@atlas/db"
-import type { StorageHandle } from "../../storage/index.ts"
 import type { FileRow, FolderRow } from "../../permissions/index.ts"
+import type { StorageHandle } from "../../storage/index.ts"
 
 export type StepEnvelope = {
   subject: { kind: "file"; row: FileRow } | { kind: "folder"; row: FolderRow }

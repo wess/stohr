@@ -12,9 +12,11 @@ import { halt } from "@atlas/server"
 export const ownerOnly = (db: Connection) => async (c: any) => {
   const id = c.assigns?.auth?.id as number | undefined
   if (!id) return halt(c, 403, { error: "Owner access required" })
-  const row = await db.one(
-    from("users").where(q => q("id").equals(id)).select("is_owner"),
-  ) as { is_owner: boolean } | null
+  const row = (await db.one(
+    from("users")
+      .where(q => q("id").equals(id))
+      .select("is_owner"),
+  )) as { is_owner: boolean } | null
   if (!row?.is_owner) return halt(c, 403, { error: "Owner access required" })
   return c
 }

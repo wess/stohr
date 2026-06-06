@@ -1,4 +1,4 @@
-import React from "react"
+import type React from "react"
 
 type Props = {
   className?: string
@@ -7,17 +7,10 @@ type Props = {
 }
 
 export const Logo: React.FC<Props> = ({ className, size, ariaLabel = "Stohr" }) => {
-  const fontSize = size != null
-    ? (typeof size === "number" ? `${Math.round(size * 0.55)}px` : size)
-    : undefined
+  const fontSize = size != null ? (typeof size === "number" ? `${Math.round(size * 0.55)}px` : size) : undefined
   const cls = `wordmark${className ? ` ${className}` : ""}`
   return (
-    <span
-      className={cls}
-      aria-label={ariaLabel}
-      role="img"
-      style={fontSize ? { fontSize } : undefined}
-    >
+    <span className={cls} aria-label={ariaLabel} role="img" style={fontSize ? { fontSize } : undefined}>
       stohr
     </span>
   )

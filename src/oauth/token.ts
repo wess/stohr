@@ -1,16 +1,16 @@
 import { timingSafeEqual } from "node:crypto"
+import { token as jwt } from "@atlas/auth"
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { json, parseForm, parseJson, pipeline, post } from "@atlas/server"
-import { token as jwt } from "@atlas/auth"
 import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
 import {
   ACCESS_TOKEN_TTL_SECONDS,
   DEVICE_POLL_INTERVAL_SECONDS,
-  REFRESH_TOKEN_TTL_SECONDS,
   formatScope,
   parseScope,
+  REFRESH_TOKEN_TTL_SECONDS,
   randomId,
   sha256,
   verifyPkceS256,
@@ -57,9 +57,7 @@ type UserRow = {
 }
 
 const findClient = async (db: Connection, clientId: string): Promise<ClientRow | null> =>
-  await db.one(
-    from("oauth_clients").where(q => q("client_id").equals(clientId)),
-  ) as ClientRow | null
+  (await db.one(from("oauth_clients").where(q => q("client_id").equals(clientId)))) as ClientRow | null
 
 const oauthError = (c: any, status: number, error: string, description?: string) =>
   json(c, status, description ? { error, error_description: description } : { error })
@@ -107,10 +105,7 @@ const issueTokens = async (
   }
 }
 
-const verifyClientCredentials = async (
-  client: ClientRow,
-  providedSecret: string | undefined,
-): Promise<boolean> => {
+const verifyClientCredentials = async (client: ClientRow, providedSecret: string | undefined): Promise<boolean> => {
   // Public clients (no stored secret) skip secret verification — PKCE is the
   // proof-of-possession instead.
   if (!client.client_secret_hash) return true
@@ -154,13 +149,15 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
       }
 
       // Atomic single-use: only succeed if used_at was still null.
-      const claimed = await db.execute(
+      const claimed = (await db.execute(
         from("oauth_authorization_codes")
           .where(q => q("code").equals(code))
           .where(q => q("used_at").isNull())
           .update({ used_at: raw("NOW()") })
           .returning("code", "client_id", "user_id", "redirect_uri", "code_challenge", "scope", "expires_at"),
-      ) as Array<Pick<AuthCodeRow, "code" | "client_id" | "user_id" | "redirect_uri" | "code_challenge" | "scope" | "expires_at">>
+      )) as Array<
+        Pick<AuthCodeRow, "code" | "client_id" | "user_id" | "redirect_uri" | "code_challenge" | "scope" | "expires_at">
+      >
 
       const claimedCode = claimed[0]
       if (!claimedCode) {
@@ -179,10 +176,11 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
         return oauthError(c, 400, "invalid_grant", "PKCE verifier did not match the challenge")
       }
 
-      const user = await db.one(
-        from("users").where(q => q("id").equals(claimedCode.user_id))
+      const user = (await db.one(
+        from("users")
+          .where(q => q("id").equals(claimedCode.user_id))
           .select("id", "email", "username", "name", "is_owner"),
-      ) as UserRow | null
+      )) as UserRow | null
       if (!user) {
         return oauthError(c, 400, "invalid_grant", "User no longer exists")
       }
@@ -216,9 +214,9 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
       }
 
       const tokenHash = sha256(refreshToken)
-      const row = await db.one(
+      const row = (await db.one(
         from("oauth_refresh_tokens").where(q => q("token_hash").equals(tokenHash)),
-      ) as RefreshRow | null
+      )) as RefreshRow | null
 
       if (!row) {
         return oauthError(c, 400, "invalid_grant", "Unknown refresh token")
@@ -251,7 +249,9 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
 
       // Rotate: revoke this refresh, mint a new pair.
       await db.execute(
-        from("oauth_refresh_tokens").where(q => q("token_hash").equals(tokenHash)).update({ revoked_at: raw("NOW()") }),
+        from("oauth_refresh_tokens")
+          .where(q => q("token_hash").equals(tokenHash))
+          .update({ revoked_at: raw("NOW()") }),
       )
 
       // Scope down-narrowing only — never widen.
@@ -266,10 +266,11 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
         scope = formatScope(downscoped)
       }
 
-      const user = await db.one(
-        from("users").where(q => q("id").equals(row.user_id))
+      const user = (await db.one(
+        from("users")
+          .where(q => q("id").equals(row.user_id))
           .select("id", "email", "username", "name", "is_owner"),
-      ) as UserRow | null
+      )) as UserRow | null
       if (!user) {
         return oauthError(c, 400, "invalid_grant", "User no longer exists")
       }
@@ -300,9 +301,7 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
         return oauthError(c, 401, "invalid_client", "Bad client credentials")
       }
 
-      const row = await db.one(
-        from("oauth_device_codes").where(q => q("device_code").equals(deviceCode)),
-      ) as {
+      const row = (await db.one(from("oauth_device_codes").where(q => q("device_code").equals(deviceCode)))) as {
         device_code: string
         user_code: string
         client_id: string
@@ -315,7 +314,8 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
       } | null
 
       if (!row) return oauthError(c, 400, "invalid_grant", "Unknown device_code")
-      if (row.client_id !== clientId) return oauthError(c, 400, "invalid_grant", "Code was issued for a different client")
+      if (row.client_id !== clientId)
+        return oauthError(c, 400, "invalid_grant", "Code was issued for a different client")
 
       const expiredAt = new Date(row.expires_at).getTime()
       if (expiredAt < Date.now()) return oauthError(c, 400, "expired_token", "Device code expired")
@@ -326,13 +326,15 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
       const last = row.last_polled_at ? new Date(row.last_polled_at).getTime() : 0
       if (last && now - last < (DEVICE_POLL_INTERVAL_SECONDS - 1) * 1000) {
         await db.execute(
-          from("oauth_device_codes").where(q => q("device_code").equals(deviceCode))
+          from("oauth_device_codes")
+            .where(q => q("device_code").equals(deviceCode))
             .update({ last_polled_at: raw("NOW()") }),
         )
         return oauthError(c, 400, "slow_down", "Polling too fast — wait at least the advertised interval")
       }
       await db.execute(
-        from("oauth_device_codes").where(q => q("device_code").equals(deviceCode))
+        from("oauth_device_codes")
+          .where(q => q("device_code").equals(deviceCode))
           .update({ last_polled_at: raw("NOW()") }),
       )
 
@@ -345,13 +347,16 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
 
       // Approved — burn the code (single use) and issue tokens.
       await db.execute(
-        from("oauth_device_codes").where(q => q("device_code").equals(deviceCode)).del(),
+        from("oauth_device_codes")
+          .where(q => q("device_code").equals(deviceCode))
+          .del(),
       )
 
-      const user = await db.one(
-        from("users").where(q => q("id").equals(row.user_id))
+      const user = (await db.one(
+        from("users")
+          .where(q => q("id").equals(row.user_id))
           .select("id", "email", "username", "name", "is_owner"),
-      ) as UserRow | null
+      )) as UserRow | null
       if (!user) return oauthError(c, 400, "invalid_grant", "User no longer exists")
 
       const tokens = await issueTokens(db, secret, user, clientId, row.scope)
@@ -368,9 +373,7 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
     return oauthError(c, 400, "unsupported_grant_type", `Unknown grant_type: ${grantType ?? "(missing)"}`)
   }
 
-  return [
-    post("/oauth/token", parseBody(handle)),
-  ]
+  return [post("/oauth/token", parseBody(handle))]
 }
 
 export const oauthRevokeRoutes = (db: Connection) => {
@@ -387,21 +390,23 @@ export const oauthRevokeRoutes = (db: Connection) => {
     if (tokenStr.startsWith("oat_")) {
       const tokenHash = sha256(tokenStr)
       await db.execute(
-        from("oauth_refresh_tokens").where(q => q("token_hash").equals(tokenHash)).update({ revoked_at: raw("NOW()") }),
+        from("oauth_refresh_tokens")
+          .where(q => q("token_hash").equals(tokenHash))
+          .update({ revoked_at: raw("NOW()") }),
       )
     }
     return json(c, 200, {})
   }
 
-  return [
-    post("/oauth/revoke", parseBody(handle)),
-  ]
+  return [post("/oauth/revoke", parseBody(handle))]
 }
 
 export const sweepExpiredRefreshTokens = async (db: Connection): Promise<void> => {
   try {
     await db.execute(
-      from("oauth_refresh_tokens").where(q => q("expires_at").lessThan(raw("NOW()"))).del(),
+      from("oauth_refresh_tokens")
+        .where(q => q("expires_at").lessThan(raw("NOW()")))
+        .del(),
     )
   } catch (err) {
     console.error("[oauth] refresh-token sweep failed:", err)

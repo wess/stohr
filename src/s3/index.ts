@@ -1,18 +1,13 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { del, get, head, put, putHeader, setStatus, stream, text } from "@atlas/server"
-import {
-  computeSignature,
-  constantTimeEquals,
-  parseAuthHeader,
-  sha256OfBytes,
-} from "./sigv4.ts"
-import { drop, fetchObject, makeKey, put as putStorage } from "../storage/index.ts"
-import type { StorageHandle } from "../storage/index.ts"
-import { normalizeUsername } from "../util/username.ts"
-import { checkQuota } from "../usage/index.ts"
 import { fireEvent } from "../actions/dispatch.ts"
 import type { FileRow, FolderRow } from "../permissions/index.ts"
+import type { StorageHandle } from "../storage/index.ts"
+import { drop, fetchObject, makeKey, put as putStorage } from "../storage/index.ts"
+import { checkQuota } from "../usage/index.ts"
+import { normalizeUsername } from "../util/username.ts"
+import { computeSignature, constantTimeEquals, parseAuthHeader, sha256OfBytes } from "./sigv4.ts"
 
 type S3Owner = {
   id: number
@@ -37,7 +32,9 @@ const escapeXml = (s: string): string =>
 
 const headersFromRequest = (req: Request): Record<string, string> => {
   const out: Record<string, string> = {}
-  req.headers.forEach((v, k) => { out[k.toLowerCase()] = v })
+  req.headers.forEach((v, k) => {
+    out[k.toLowerCase()] = v
+  })
   return out
 }
 
@@ -53,16 +50,18 @@ const verifyAndAuthorize = async (
   const sig = parseAuthHeader(auth)
   if (!sig) return { fail: errXml(c, "InvalidArgument", "Malformed Authorization", 400) }
 
-  const keyRow = await db.one(
-    from("s3_access_keys").where(q => q("access_key").equals(sig.accessKey)),
-  ) as { id: number; user_id: number; secret_key: string } | null
+  const keyRow = (await db.one(from("s3_access_keys").where(q => q("access_key").equals(sig.accessKey)))) as {
+    id: number
+    user_id: number
+    secret_key: string
+  } | null
   if (!keyRow) return { fail: errXml(c, "InvalidAccessKeyId", "Unknown access key", 403) }
 
-  const owner = await db.one(
+  const owner = (await db.one(
     from("users")
       .where(q => q("id").equals(keyRow.user_id))
       .select("id", "username", "storage_quota_bytes"),
-  ) as S3Owner | null
+  )) as S3Owner | null
   if (!owner) return { fail: errXml(c, "InvalidAccessKeyId", "User not found", 403) }
 
   const expectedUsername = normalizeUsername(expectedBucket)
@@ -100,7 +99,9 @@ const verifyAndAuthorize = async (
   }
 
   await db.execute(
-    from("s3_access_keys").where(q => q("id").equals(keyRow.id)).update({ last_used_at: raw("NOW()") }),
+    from("s3_access_keys")
+      .where(q => q("id").equals(keyRow.id))
+      .update({ last_used_at: raw("NOW()") }),
   )
 
   return { owner }
@@ -113,30 +114,24 @@ const splitKeyPath = (key: string): { folderPath: string[]; fileName: string } =
   return { folderPath: parts, fileName }
 }
 
-const ensureFolderPath = async (
-  db: Connection,
-  ownerId: number,
-  segments: string[],
-): Promise<number | null> => {
+const ensureFolderPath = async (db: Connection, ownerId: number, segments: string[]): Promise<number | null> => {
   let parentId: number | null = null
   for (const segment of segments) {
-    const existing = await db.one(
+    const existing = (await db.one(
       from("folders")
         .where(q => q("user_id").equals(ownerId))
-        .where(q => parentId == null ? q("parent_id").isNull() : q("parent_id").equals(parentId))
+        .where(q => (parentId == null ? q("parent_id").isNull() : q("parent_id").equals(parentId)))
         .where(q => q("name").equals(segment))
         .where(q => q("deleted_at").isNull())
         .select("id"),
-    ) as { id: number } | null
+    )) as { id: number } | null
     if (existing) {
       parentId = existing.id
       continue
     }
-    const inserted = await db.execute(
-      from("folders")
-        .insert({ user_id: ownerId, parent_id: parentId, name: segment })
-        .returning("id"),
-    ) as Array<{ id: number }>
+    const inserted = (await db.execute(
+      from("folders").insert({ user_id: ownerId, parent_id: parentId, name: segment }).returning("id"),
+    )) as Array<{ id: number }>
     parentId = inserted[0]!.id
   }
   return parentId
@@ -150,33 +145,28 @@ const findFolderByPath = async (
   if (segments.length === 0) return null
   let parentId: number | null = null
   for (const segment of segments) {
-    const existing = await db.one(
+    const existing = (await db.one(
       from("folders")
         .where(q => q("user_id").equals(ownerId))
-        .where(q => parentId == null ? q("parent_id").isNull() : q("parent_id").equals(parentId))
+        .where(q => (parentId == null ? q("parent_id").isNull() : q("parent_id").equals(parentId)))
         .where(q => q("name").equals(segment))
         .where(q => q("deleted_at").isNull())
         .select("id"),
-    ) as { id: number } | null
+    )) as { id: number } | null
     if (!existing) return "missing"
     parentId = existing.id
   }
   return parentId
 }
 
-const findFile = async (
-  db: Connection,
-  ownerId: number,
-  folderId: number | null,
-  fileName: string,
-) => {
-  return await db.one(
+const findFile = async (db: Connection, ownerId: number, folderId: number | null, fileName: string) => {
+  return (await db.one(
     from("files")
       .where(q => q("user_id").equals(ownerId))
-      .where(q => folderId == null ? q("folder_id").isNull() : q("folder_id").equals(folderId))
+      .where(q => (folderId == null ? q("folder_id").isNull() : q("folder_id").equals(folderId)))
       .where(q => q("name").equals(fileName))
       .where(q => q("deleted_at").isNull()),
-  ) as {
+  )) as {
     id: number
     name: string
     mime: string
@@ -213,7 +203,12 @@ export const s3Routes = (db: Connection, store: StorageHandle) => [
     const quota = Number(owner.storage_quota_bytes)
     const quotaCheck = await checkQuota(db, owner.id, quota, body.byteLength)
     if (!quotaCheck.ok) {
-      return errXml(c, "EntityTooLarge", `Storage quota exceeded (${quotaCheck.used_bytes + body.byteLength} > ${quotaCheck.quota_bytes})`, 413)
+      return errXml(
+        c,
+        "EntityTooLarge",
+        `Storage quota exceeded (${quotaCheck.used_bytes + body.byteLength} > ${quotaCheck.quota_bytes})`,
+        413,
+      )
     }
 
     const folderId = await ensureFolderPath(db, owner.id, folderPath)
@@ -262,18 +257,18 @@ export const s3Routes = (db: Connection, store: StorageHandle) => [
     }
 
     if (folderId != null) {
-      const targetFolder = await db.one(
+      const targetFolder = (await db.one(
         from("folders")
           .where(q => q("id").equals(folderId))
           .where(q => q("deleted_at").isNull()),
-      ) as FolderRow | null
-      const fresh = await db.one(
+      )) as FolderRow | null
+      const fresh = (await db.one(
         from("files")
           .where(q => q("user_id").equals(owner.id))
           .where(q => q("folder_id").equals(folderId))
           .where(q => q("name").equals(fileName))
           .where(q => q("deleted_at").isNull()),
-      ) as FileRow | null
+      )) as FileRow | null
       if (targetFolder && fresh) {
         await fireEvent({
           db,
@@ -311,11 +306,7 @@ export const s3Routes = (db: Connection, store: StorageHandle) => [
     if (!res.body) return errXml(c, "InternalError", "Storage returned empty body", 500)
 
     const withHeaders = putHeader(
-      putHeader(
-        putHeader(c, "content-type", file.mime),
-        "content-length",
-        String(file.size),
-      ),
+      putHeader(putHeader(c, "content-type", file.mime), "content-length", String(file.size)),
       "last-modified",
       new Date(file.created_at).toUTCString(),
     )
@@ -337,11 +328,7 @@ export const s3Routes = (db: Connection, store: StorageHandle) => [
     if (!file) return emptyConn(c, 404)
 
     const headed = putHeader(
-      putHeader(
-        putHeader(c, "content-type", file.mime),
-        "content-length",
-        String(file.size),
-      ),
+      putHeader(putHeader(c, "content-type", file.mime), "content-length", String(file.size)),
       "last-modified",
       new Date(file.created_at).toUTCString(),
     )
@@ -362,36 +349,35 @@ export const s3Routes = (db: Connection, store: StorageHandle) => [
     const file = await findFile(db, owner.id, folderId, fileName)
     if (!file) return emptyConn(c, 204)
 
-    await db.execute(from("files").where(q => q("id").equals(file.id)).del())
+    await db.execute(
+      from("files")
+        .where(q => q("id").equals(file.id))
+        .del(),
+    )
     await drop(store, file.storage_key).catch(() => {})
 
     return emptyConn(c, 204)
   }),
 ]
 
-const listBucket = async (
-  c: any,
-  db: Connection,
-  owner: S3Owner,
-  params: URLSearchParams,
-) => {
+const listBucket = async (c: any, db: Connection, owner: S3Owner, params: URLSearchParams) => {
   const prefix = params.get("prefix") ?? ""
   const maxKeys = Math.min(1000, Number(params.get("max-keys") ?? "1000") || 1000)
 
-  const allFiles = await db.all(
+  const allFiles = (await db.all(
     from("files")
       .where(q => q("user_id").equals(owner.id))
       .where(q => q("deleted_at").isNull())
       .select("id", "name", "mime", "size", "folder_id", "created_at")
       .orderBy("id", "ASC"),
-  ) as Array<{ id: number; name: string; mime: string; size: number; folder_id: number | null; created_at: string }>
+  )) as Array<{ id: number; name: string; mime: string; size: number; folder_id: number | null; created_at: string }>
 
-  const folders = await db.all(
+  const folders = (await db.all(
     from("folders")
       .where(q => q("user_id").equals(owner.id))
       .where(q => q("deleted_at").isNull())
       .select("id", "parent_id", "name"),
-  ) as Array<{ id: number; parent_id: number | null; name: string }>
+  )) as Array<{ id: number; parent_id: number | null; name: string }>
 
   const folderById = new Map(folders.map(f => [f.id, f]))
   const pathFor = (folderId: number | null): string[] => {
@@ -417,13 +403,15 @@ const listBucket = async (
     .slice(0, maxKeys)
 
   const contents = items
-    .map(item => `  <Contents>
+    .map(
+      item => `  <Contents>
     <Key>${escapeXml(item.key)}</Key>
     <LastModified>${escapeXml(new Date(item.lastModified).toISOString())}</LastModified>
     <ETag>"${escapeXml(String(item.size))}"</ETag>
     <Size>${item.size}</Size>
     <StorageClass>STANDARD</StorageClass>
-  </Contents>`)
+  </Contents>`,
+    )
     .join("\n")
 
   const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>

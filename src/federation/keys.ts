@@ -1,4 +1,13 @@
-import { createHash, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, randomBytes, sign as cryptoSign, verify as cryptoVerify } from "node:crypto"
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  sign as cryptoSign,
+  verify as cryptoVerify,
+  diffieHellman,
+  generateKeyPairSync,
+  randomBytes,
+} from "node:crypto"
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 
@@ -57,9 +66,11 @@ type InstanceKeyRow = {
 // ON CONFLICT clause makes concurrent first-callers idempotent — only one
 // row ever exists.
 export const getInstanceKeys = async (db: Connection): Promise<InstanceKeys> => {
-  const existing = await db.one(
-    from("instance_keys").where(q => q("id").equals(1)).select("public_key", "private_key", "x25519_public_key", "x25519_private_key"),
-  ) as InstanceKeyRow | null
+  const existing = (await db.one(
+    from("instance_keys")
+      .where(q => q("id").equals(1))
+      .select("public_key", "private_key", "x25519_public_key", "x25519_private_key"),
+  )) as InstanceKeyRow | null
   if (existing) {
     return {
       ed25519PublicPem: existing.public_key,
@@ -91,7 +102,12 @@ export const signEd25519 = (privatePem: string, message: Uint8Array | string): s
 export const verifyEd25519 = (publicPem: string, message: Uint8Array | string, signatureBase64Url: string): boolean => {
   try {
     const bytes = typeof message === "string" ? new TextEncoder().encode(message) : message
-    return cryptoVerify(null, Buffer.from(bytes), createPublicKey(publicPem), Buffer.from(signatureBase64Url, "base64url"))
+    return cryptoVerify(
+      null,
+      Buffer.from(bytes),
+      createPublicKey(publicPem),
+      Buffer.from(signatureBase64Url, "base64url"),
+    )
   } catch {
     return false
   }
@@ -108,7 +124,11 @@ export const ecdhX25519 = (ourPrivatePem: string, theirPublicPem: string): Buffe
 // Helpers that take raw base64url pubkeys (the form used over the wire and
 // for compact display) and reconstruct the PEM internally. Useful for
 // verifying signatures from peers identified only by their compact pubkey.
-export const verifyEd25519Raw = (publicRaw: string, message: Uint8Array | string, signatureBase64Url: string): boolean => {
+export const verifyEd25519Raw = (
+  publicRaw: string,
+  message: Uint8Array | string,
+  signatureBase64Url: string,
+): boolean => {
   try {
     return verifyEd25519(rawToPemPubEd25519(publicRaw), message, signatureBase64Url)
   } catch {
@@ -120,7 +140,6 @@ export const rawX25519ToPem = (raw: string): string => rawToPemPubX25519(raw)
 export const rawEd25519ToPem = (raw: string): string => rawToPemPubEd25519(raw)
 export const pubPemToRaw = (pem: string): string => pemToRawPub(pem)
 
-export const fingerprintPubkey = (raw: string): string =>
-  createHash("sha256").update(raw).digest("hex").slice(0, 16)
+export const fingerprintPubkey = (raw: string): string => createHash("sha256").update(raw).digest("hex").slice(0, 16)
 
 export const randomToken = (bytes: number = 32): string => randomBytes(bytes).toString("base64url")

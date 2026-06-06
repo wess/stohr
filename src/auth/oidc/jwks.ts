@@ -37,7 +37,7 @@ const fetchJwks = async (jwksUri: string, force: boolean): Promise<Jwks> => {
   }
   const res = await fetch(jwksUri, { headers: { accept: "application/json" } })
   if (!res.ok) throw new Error(`JWKS fetch failed: ${res.status}`)
-  const value = await res.json() as Jwks
+  const value = (await res.json()) as Jwks
   jwksCache.set(jwksUri, { value, expiresAt: Date.now() + TTL_MS })
   return value
 }
@@ -57,23 +57,15 @@ const b64uToText = (s: string): string => new TextDecoder().decode(b64uToBytes(s
 const importKey = async (jwk: Jwk, alg: string): Promise<CryptoKey> => {
   if (jwk.kty === "RSA") {
     const hash = alg === "RS256" ? "SHA-256" : alg === "RS384" ? "SHA-384" : "SHA-512"
-    return crypto.subtle.importKey(
-      "jwk",
-      jwk as unknown as JsonWebKey,
-      { name: "RSASSA-PKCS1-v1_5", hash },
-      false,
-      ["verify"],
-    )
+    return crypto.subtle.importKey("jwk", jwk as unknown as JsonWebKey, { name: "RSASSA-PKCS1-v1_5", hash }, false, [
+      "verify",
+    ])
   }
   const hash = alg === "ES256" ? "SHA-256" : "SHA-384"
   const namedCurve = jwk.crv
-  return crypto.subtle.importKey(
-    "jwk",
-    jwk as unknown as JsonWebKey,
-    { name: "ECDSA", namedCurve, hash },
-    false,
-    ["verify"],
-  )
+  return crypto.subtle.importKey("jwk", jwk as unknown as JsonWebKey, { name: "ECDSA", namedCurve, hash }, false, [
+    "verify",
+  ])
 }
 
 const algParams = (alg: string): AlgorithmIdentifier => {
@@ -141,12 +133,7 @@ export const verifyIdToken = async (
   // Cast to BufferSource — Uint8Array<ArrayBuffer> is structurally fine for
   // SubtleCrypto but TS narrows it to ArrayBufferView<ArrayBuffer> which has
   // a stricter buffer type than what some lib-dom versions emit here.
-  const ok = await crypto.subtle.verify(
-    algParams(headerObj.alg),
-    cryptoKey,
-    sig as BufferSource,
-    data as BufferSource,
-  )
+  const ok = await crypto.subtle.verify(algParams(headerObj.alg), cryptoKey, sig as BufferSource, data as BufferSource)
   if (!ok) throw new Error("ID token signature failed")
 
   const claims = JSON.parse(b64uToText(payload)) as IdTokenClaims

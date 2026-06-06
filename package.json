@@ -1,6 +1,6 @@
 {
   "name": "stohr",
-  "version": "0.7.6",
+  "version": "0.7.10",
   "type": "module",
   "private": true,
   "scripts": {
@@ -8,15 +8,17 @@
     "api": "bun --hot src/server.ts",
     "web": "bun --hot src/web/serve.ts",
     "test": "bun test --concurrency=1 tests/",
-    "lint": "bunx biome lint packages/",
-    "format": "bunx biome format packages/",
-    "check": "bunx biome check packages/",
-    "lint:fix": "bunx biome lint --write packages/",
-    "format:fix": "bunx biome format --write packages/",
-    "check:fix": "bunx biome check --write packages/",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint src/ scripts/",
+    "format": "biome format src/ scripts/",
+    "check": "biome check src/ scripts/",
+    "lint:fix": "biome lint --write src/ scripts/",
+    "format:fix": "biome format --write src/ scripts/",
+    "check:fix": "biome check --write src/ scripts/",
     "tidy": "bun run format:fix && bun run lint:fix"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.10",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@types/bun": "latest"

@@ -94,7 +94,9 @@ export const generateBackupCodes = (count = 10): string[] => {
   const codes: string[] = []
   for (let i = 0; i < count; i++) {
     const buf = randomBytes(5)
-    const hex = Array.from(buf).map(b => b.toString(16).padStart(2, "0")).join("")
+    const hex = Array.from(buf)
+      .map(b => b.toString(16).padStart(2, "0"))
+      .join("")
     codes.push(`${hex.slice(0, 5)}-${hex.slice(5)}`)
   }
   return codes

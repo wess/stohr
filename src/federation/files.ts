@@ -1,17 +1,17 @@
 import { randomUUID } from "node:crypto"
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { del, get, json, parseJson, parseMultipart, pipeline, post, putHeader, stream } from "@atlas/server"
+import { del, get, json, parseMultipart, pipeline, post, putHeader, stream } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { requireSettingEnabled, SETTING_FEDERATION_ENABLED } from "../settings/index.ts"
-import { drop, fetchObject, makeKey, put } from "../storage/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
-import { aesGcmDecrypt, aesGcmEncrypt, generateSymmetricKey, openSealedX25519, sealForX25519, sha256Hex } from "./crypto.ts"
-import { getInstanceKeys } from "./keys.ts"
-import { federationById, federationBySlug, localMemberFor, membersForFederation, remoteMembersForFederation } from "./membership.ts"
-import type { FederationRow, MemberRow } from "./membership.ts"
-import { selectPlacement } from "./placement.ts"
+import { drop, fetchObject, put } from "../storage/index.ts"
+import { aesGcmDecrypt, aesGcmEncrypt, generateSymmetricKey, openSealedX25519, sealForX25519 } from "./crypto.ts"
 import { decode, encode, erasureConfig } from "./erasure.ts"
+import { getInstanceKeys } from "./keys.ts"
+import type { FederationRow } from "./membership.ts"
+import { federationById, federationBySlug, localMemberFor } from "./membership.ts"
+import { selectPlacement } from "./placement.ts"
 import { memberForPeer, peerFetch, requirePeerSignature } from "./transport.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -29,15 +29,15 @@ const openGroupKey = async (db: Connection, fed: FederationRow): Promise<Buffer>
   return openSealedX25519(keys.x25519PrivatePem, fed.group_key_encrypted)
 }
 
-const localContributionFolder = async (db: Connection, federationId: number, userId: number) =>
-  await db.one(
+const _localContributionFolder = async (db: Connection, federationId: number, userId: number) =>
+  (await db.one(
     from("folders")
       .where(q => q("user_id").equals(userId))
       .where(q => q("federation_id").equals(federationId))
       .where(q => q("federation_role").equals("contribution"))
       .where(q => q("deleted_at").isNull())
       .select("id", "federation_quota_bytes"),
-  ) as { id: number; federation_quota_bytes: number | string } | null
+  )) as { id: number; federation_quota_bytes: number | string } | null
 
 const localStorageKeyForFedBlob = (userId: number, blobId: string, shardIndex: number | null) => {
   const suffix = shardIndex === null ? "blob" : `shard-${shardIndex}`
@@ -54,11 +54,19 @@ const pushBlobToPeer = async (
   blobId: string,
   shardIndex: number | null,
   bytes: Uint8Array,
-  meta: { owner_pubkey: string; size: number; total_size: number; shard_k?: number; shard_m?: number; encrypted_metadata: string | null },
+  meta: {
+    owner_pubkey: string
+    size: number
+    total_size: number
+    shard_k?: number
+    shard_m?: number
+    encrypted_metadata: string | null
+  },
 ): Promise<boolean> => {
-  const path = shardIndex === null
-    ? `/federation/blob/${encodeURIComponent(fedSlug)}/${blobId}`
-    : `/federation/shard/${encodeURIComponent(fedSlug)}/${blobId}/${shardIndex}`
+  const path =
+    shardIndex === null
+      ? `/federation/blob/${encodeURIComponent(fedSlug)}/${blobId}`
+      : `/federation/shard/${encodeURIComponent(fedSlug)}/${blobId}/${shardIndex}`
   try {
     const res = await peerFetch(db, baseUrl, path, {
       method: "PUT",
@@ -87,9 +95,10 @@ const fetchBlobFromPeer = async (
   blobId: string,
   shardIndex: number | null,
 ): Promise<Uint8Array | null> => {
-  const path = shardIndex === null
-    ? `/federation/blob/${encodeURIComponent(fedSlug)}/${blobId}`
-    : `/federation/shard/${encodeURIComponent(fedSlug)}/${blobId}/${shardIndex}`
+  const path =
+    shardIndex === null
+      ? `/federation/blob/${encodeURIComponent(fedSlug)}/${blobId}`
+      : `/federation/shard/${encodeURIComponent(fedSlug)}/${blobId}/${shardIndex}`
   try {
     const res = await peerFetch(db, baseUrl, path, { method: "GET" })
     if (!res.ok) return null
@@ -107,9 +116,10 @@ const dropBlobOnPeer = async (
   blobId: string,
   shardIndex: number | null,
 ): Promise<void> => {
-  const path = shardIndex === null
-    ? `/federation/blob/${encodeURIComponent(fedSlug)}/${blobId}`
-    : `/federation/shard/${encodeURIComponent(fedSlug)}/${blobId}/${shardIndex}`
+  const path =
+    shardIndex === null
+      ? `/federation/blob/${encodeURIComponent(fedSlug)}/${blobId}`
+      : `/federation/shard/${encodeURIComponent(fedSlug)}/${blobId}/${shardIndex}`
   try {
     await peerFetch(db, baseUrl, path, { method: "DELETE" })
   } catch (err) {
@@ -134,7 +144,7 @@ const encryptedFileMeta = (groupKey: Buffer, meta: { name: string; mime: string;
   return JSON.stringify(sealed)
 }
 
-const decryptFileMeta = (groupKey: Buffer, encrypted: string): { name: string; mime: string; size: number } | null => {
+const _decryptFileMeta = (groupKey: Buffer, encrypted: string): { name: string; mime: string; size: number } | null => {
   try {
     const sealed = JSON.parse(encrypted) as { ciphertext: string; iv: string; tag: string }
     const buf = aesGcmDecrypt(groupKey, sealed.ciphertext, sealed.iv, sealed.tag)
@@ -219,18 +229,20 @@ const uploadContentSharing = async (
   // Materialize a row in `files` so the regular listing/UI/WebDAV path sees
   // the file. storage_key uses the fed: sentinel; readers detect this and
   // route through the federation fetch path instead of the local store.
-  const fileRow = await db.execute(
-    from("files").insert({
-      user_id: userId,
-      folder_id: folderId,
-      name: fileName,
-      mime: fileMime,
-      size: bytes.length,
-      storage_key: FED_KEY(fed.id, blobId),
-      thumb_key: null,
-      version: 1,
-    }).returning("id"),
-  ) as Array<{ id: number }>
+  const fileRow = (await db.execute(
+    from("files")
+      .insert({
+        user_id: userId,
+        folder_id: folderId,
+        name: fileName,
+        mime: fileMime,
+        size: bytes.length,
+        storage_key: FED_KEY(fed.id, blobId),
+        thumb_key: null,
+        version: 1,
+      })
+      .returning("id"),
+  )) as Array<{ id: number }>
 
   await db.execute({
     text: `UPDATE federation_blobs SET file_id = $1 WHERE federation_id = $2 AND blob_id = $3 AND owner_user_id = $4`,
@@ -247,13 +259,13 @@ const fetchContentSharing = async (
   blobId: string,
 ): Promise<Uint8Array | null> => {
   // Try local first.
-  const local = await db.one(
+  const local = (await db.one(
     from("federation_blobs")
       .where(q => q("federation_id").equals(fed.id))
       .where(q => q("blob_id").equals(blobId))
       .where(q => q("local_storage_key").isNotNull())
       .select("local_storage_key"),
-  ) as { local_storage_key: string } | null
+  )) as { local_storage_key: string } | null
 
   let payload: Uint8Array | null = null
   if (local?.local_storage_key) {
@@ -261,24 +273,27 @@ const fetchContentSharing = async (
     payload = new Uint8Array(await res.arrayBuffer())
   } else {
     // Walk remote placements.
-    const remotes = await db.all(
+    const remotes = (await db.all(
       from("federation_blobs")
         .where(q => q("federation_id").equals(fed.id))
         .where(q => q("blob_id").equals(blobId))
         .where(q => q("local_storage_key").isNull())
         .select("peer_pubkey"),
-    ) as Array<{ peer_pubkey: string }>
+    )) as Array<{ peer_pubkey: string }>
     for (const r of remotes) {
-      const member = await db.one(
+      const member = (await db.one(
         from("federation_members")
           .where(q => q("federation_id").equals(fed.id))
           .where(q => q("peer_pubkey").equals(r.peer_pubkey))
           .where(q => q("is_local").equals(false))
           .select("peer_base_url"),
-      ) as { peer_base_url: string } | null
+      )) as { peer_base_url: string } | null
       if (!member) continue
       const bytes = await fetchBlobFromPeer(db, member.peer_base_url, fed.slug, blobId, null)
-      if (bytes) { payload = bytes; break }
+      if (bytes) {
+        payload = bytes
+        break
+      }
     }
   }
   if (!payload) return null
@@ -288,7 +303,12 @@ const fetchContentSharing = async (
     const iv = payload.subarray(0, 12)
     const tag = payload.subarray(12, 28)
     const cipher = payload.subarray(28)
-    const plaintext = aesGcmDecrypt(groupKey, Buffer.from(cipher).toString("base64url"), Buffer.from(iv).toString("base64url"), Buffer.from(tag).toString("base64url"))
+    const plaintext = aesGcmDecrypt(
+      groupKey,
+      Buffer.from(cipher).toString("base64url"),
+      Buffer.from(iv).toString("base64url"),
+      Buffer.from(tag).toString("base64url"),
+    )
     return new Uint8Array(plaintext)
   } finally {
     groupKey.fill(0)
@@ -349,7 +369,10 @@ const uploadSpaceOffering = async (
   for (const shard of shards) {
     const placement = await selectPlacement(db, fed.id, 1, shard.size)
     const m = placement.members[0]
-    if (!m) { shortBy++; continue }
+    if (!m) {
+      shortBy++
+      continue
+    }
 
     if (m.peer_pubkey === keys.ed25519PublicRaw) {
       const localKey = localStorageKeyForFedBlob(userId, blobId, shard.index)
@@ -404,18 +427,20 @@ const uploadSpaceOffering = async (
     }
   }
 
-  const fileRow = await db.execute(
-    from("files").insert({
-      user_id: userId,
-      folder_id: folderId,
-      name: fileName,
-      mime: fileMime,
-      size: bytes.length,
-      storage_key: FED_SHARD_KEY(fed.id, blobId),
-      thumb_key: null,
-      version: 1,
-    }).returning("id"),
-  ) as Array<{ id: number }>
+  const fileRow = (await db.execute(
+    from("files")
+      .insert({
+        user_id: userId,
+        folder_id: folderId,
+        name: fileName,
+        mime: fileMime,
+        size: bytes.length,
+        storage_key: FED_SHARD_KEY(fed.id, blobId),
+        thumb_key: null,
+        version: 1,
+      })
+      .returning("id"),
+  )) as Array<{ id: number }>
 
   await db.execute({
     text: `UPDATE federation_shards SET file_id = $1 WHERE federation_id = $2 AND blob_id = $3 AND owner_user_id = $4`,
@@ -431,12 +456,20 @@ const fetchSpaceOffering = async (
   fed: FederationRow,
   blobId: string,
 ): Promise<Uint8Array | null> => {
-  const shards = await db.all(
+  const shards = (await db.all(
     from("federation_shards")
       .where(q => q("federation_id").equals(fed.id))
       .where(q => q("blob_id").equals(blobId))
       .orderBy("shard_index", "ASC"),
-  ) as Array<{ shard_index: number; shard_k: number; shard_m: number; total_size: number | string; peer_pubkey: string; local_storage_key: string | null; encrypted_metadata: string | null }>
+  )) as Array<{
+    shard_index: number
+    shard_k: number
+    shard_m: number
+    total_size: number | string
+    peer_pubkey: string
+    local_storage_key: string | null
+    encrypted_metadata: string | null
+  }>
   if (shards.length === 0) return null
 
   const k = shards[0]!.shard_k
@@ -455,13 +488,13 @@ const fetchSpaceOffering = async (
       const res = await fetchObject(store, s.local_storage_key)
       bytes = new Uint8Array(await res.arrayBuffer())
     } else {
-      const peer = await db.one(
+      const peer = (await db.one(
         from("federation_members")
           .where(q => q("federation_id").equals(fed.id))
           .where(q => q("peer_pubkey").equals(s.peer_pubkey))
           .where(q => q("is_local").equals(false))
           .select("peer_base_url"),
-      ) as { peer_base_url: string } | null
+      )) as { peer_base_url: string } | null
       if (peer) bytes = await fetchBlobFromPeer(db, peer.peer_base_url, fed.slug, blobId, s.shard_index)
     }
     if (bytes) {
@@ -536,11 +569,7 @@ export const fetchFederationBytes = async (
   return isShard ? await fetchSpaceOffering(db, store, fed, blobId) : await fetchContentSharing(db, store, fed, blobId)
 }
 
-export const dropFederationBlob = async (
-  db: Connection,
-  store: StorageHandle,
-  storageKey: string,
-): Promise<void> => {
+export const dropFederationBlob = async (db: Connection, store: StorageHandle, storageKey: string): Promise<void> => {
   let federationId: number
   let blobId: string
   let isShard: boolean
@@ -548,50 +577,72 @@ export const dropFederationBlob = async (
     isShard = true
     const rest = storageKey.slice("fed-shard:".length)
     const [fid, bid] = rest.split(":")
-    federationId = Number(fid); blobId = bid!
+    federationId = Number(fid)
+    blobId = bid!
   } else if (storageKey.startsWith("fed:")) {
     isShard = false
     const rest = storageKey.slice("fed:".length)
     const [fid, bid] = rest.split(":")
-    federationId = Number(fid); blobId = bid!
-  } else { return }
+    federationId = Number(fid)
+    blobId = bid!
+  } else {
+    return
+  }
 
   const fed = await federationById(db, federationId)
   if (!fed) return
 
   if (isShard) {
-    const shards = await db.all(
-      from("federation_shards").where(q => q("federation_id").equals(federationId)).where(q => q("blob_id").equals(blobId)),
-    ) as Array<{ shard_index: number; peer_pubkey: string; local_storage_key: string | null }>
+    const shards = (await db.all(
+      from("federation_shards")
+        .where(q => q("federation_id").equals(federationId))
+        .where(q => q("blob_id").equals(blobId)),
+    )) as Array<{ shard_index: number; peer_pubkey: string; local_storage_key: string | null }>
     for (const s of shards) {
       if (s.local_storage_key) {
         await drop(store, s.local_storage_key).catch(() => {})
       } else {
-        const peer = await db.one(
-          from("federation_members").where(q => q("federation_id").equals(federationId)).where(q => q("peer_pubkey").equals(s.peer_pubkey)).where(q => q("is_local").equals(false)).select("peer_base_url"),
-        ) as { peer_base_url: string } | null
+        const peer = (await db.one(
+          from("federation_members")
+            .where(q => q("federation_id").equals(federationId))
+            .where(q => q("peer_pubkey").equals(s.peer_pubkey))
+            .where(q => q("is_local").equals(false))
+            .select("peer_base_url"),
+        )) as { peer_base_url: string } | null
         if (peer) await dropBlobOnPeer(db, peer.peer_base_url, fed.slug, blobId, s.shard_index)
       }
     }
     await db.execute(
-      from("federation_shards").where(q => q("federation_id").equals(federationId)).where(q => q("blob_id").equals(blobId)).del(),
+      from("federation_shards")
+        .where(q => q("federation_id").equals(federationId))
+        .where(q => q("blob_id").equals(blobId))
+        .del(),
     )
   } else {
-    const placements = await db.all(
-      from("federation_blobs").where(q => q("federation_id").equals(federationId)).where(q => q("blob_id").equals(blobId)),
-    ) as Array<{ peer_pubkey: string; local_storage_key: string | null }>
+    const placements = (await db.all(
+      from("federation_blobs")
+        .where(q => q("federation_id").equals(federationId))
+        .where(q => q("blob_id").equals(blobId)),
+    )) as Array<{ peer_pubkey: string; local_storage_key: string | null }>
     for (const p of placements) {
       if (p.local_storage_key) {
         await drop(store, p.local_storage_key).catch(() => {})
       } else {
-        const peer = await db.one(
-          from("federation_members").where(q => q("federation_id").equals(federationId)).where(q => q("peer_pubkey").equals(p.peer_pubkey)).where(q => q("is_local").equals(false)).select("peer_base_url"),
-        ) as { peer_base_url: string } | null
+        const peer = (await db.one(
+          from("federation_members")
+            .where(q => q("federation_id").equals(federationId))
+            .where(q => q("peer_pubkey").equals(p.peer_pubkey))
+            .where(q => q("is_local").equals(false))
+            .select("peer_base_url"),
+        )) as { peer_base_url: string } | null
         if (peer) await dropBlobOnPeer(db, peer.peer_base_url, fed.slug, blobId, null)
       }
     }
     await db.execute(
-      from("federation_blobs").where(q => q("federation_id").equals(federationId)).where(q => q("blob_id").equals(blobId)).del(),
+      from("federation_blobs")
+        .where(q => q("federation_id").equals(federationId))
+        .where(q => q("blob_id").equals(blobId))
+        .del(),
     )
   }
 }
@@ -613,360 +664,409 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
     // single file. The destination folder must be a federation-tied
     // folder; we use the user's contribution folder for both modes (in
     // content-sharing mode the user's mount folder also works).
-    post("/me/federations/:id/files", upload(async (c) => {
-      const userId = authId(c)
-      const fedId = Number(c.params.id)
-      const fed = await federationById(db, fedId)
-      if (!fed) return json(c, 404, { error: "Federation not found" })
-      const member = await localMemberFor(db, fedId, userId)
-      if (!member) return json(c, 404, { error: "Federation not found" })
+    post(
+      "/me/federations/:id/files",
+      upload(async c => {
+        const userId = authId(c)
+        const fedId = Number(c.params.id)
+        const fed = await federationById(db, fedId)
+        if (!fed) return json(c, 404, { error: "Federation not found" })
+        const member = await localMemberFor(db, fedId, userId)
+        if (!member) return json(c, 404, { error: "Federation not found" })
 
-      const body = c.body as { fields: Record<string, string>; files: Record<string, Blob & { name?: string }> }
-      const entries = Object.values(body?.files ?? {})
-      if (entries.length === 0) return json(c, 422, { error: "No file uploaded" })
+        const body = c.body as { fields: Record<string, string>; files: Record<string, Blob & { name?: string }> }
+        const entries = Object.values(body?.files ?? {})
+        if (entries.length === 0) return json(c, 422, { error: "No file uploaded" })
 
-      const targetFolderId = body.fields?.folder_id ?? body.fields?.folderId
-      const folderId = targetFolderId ? Number(targetFolderId) : null
+        const targetFolderId = body.fields?.folder_id ?? body.fields?.folderId
+        const folderId = targetFolderId ? Number(targetFolderId) : null
 
-      const folder = folderId
-        ? await db.one(
-            from("folders").where(q => q("id").equals(folderId)).where(q => q("user_id").equals(userId))
-              .where(q => q("federation_id").equals(fedId)).where(q => q("deleted_at").isNull()),
-          ) as { id: number; federation_role: string } | null
-        : null
-      if (!folder) return json(c, 422, { error: "Target folder_id must be a federation folder you own" })
+        const folder = folderId
+          ? ((await db.one(
+              from("folders")
+                .where(q => q("id").equals(folderId))
+                .where(q => q("user_id").equals(userId))
+                .where(q => q("federation_id").equals(fedId))
+                .where(q => q("deleted_at").isNull()),
+            )) as { id: number; federation_role: string } | null)
+          : null
+        if (!folder) return json(c, 422, { error: "Target folder_id must be a federation folder you own" })
 
-      const allowance = Math.floor(Number(member.contributed_bytes) * (Number(fed.quota_multiplier) || 1))
-      const incoming = entries.reduce((acc, f) => acc + (f.size ?? 0), 0)
-      if (allowance > 0 && Number(member.used_bytes) + incoming > allowance) {
-        return json(c, 402, {
-          error: "Federation quota exceeded",
-          allowance_bytes: allowance,
-          used_bytes: Number(member.used_bytes),
-          attempted_bytes: incoming,
+        const allowance = Math.floor(Number(member.contributed_bytes) * (Number(fed.quota_multiplier) || 1))
+        const incoming = entries.reduce((acc, f) => acc + (f.size ?? 0), 0)
+        if (allowance > 0 && Number(member.used_bytes) + incoming > allowance) {
+          return json(c, 402, {
+            error: "Federation quota exceeded",
+            allowance_bytes: allowance,
+            used_bytes: Number(member.used_bytes),
+            attempted_bytes: incoming,
+          })
+        }
+
+        const results: UploadResult[] = []
+        for (const file of entries) {
+          const bytes = new Uint8Array(await file.arrayBuffer())
+          const name = (file as any).name ?? "upload.bin"
+          const mime = file.type || "application/octet-stream"
+          const result =
+            fed.type === "content-sharing"
+              ? await uploadContentSharing(db, store, fed, userId, folder.id, name, mime, bytes)
+              : await uploadSpaceOffering(db, store, fed, userId, folder.id, name, mime, bytes)
+          results.push(result)
+          await db.execute({
+            text: `UPDATE federation_members SET used_bytes = used_bytes + $1 WHERE id = $2`,
+            values: [bytes.length, member.id],
+          })
+        }
+        return json(c, 201, { results })
+      }),
+    ),
+
+    get(
+      "/me/federations/:id/files/:blob_id/download",
+      guard(async c => {
+        const userId = authId(c)
+        const fedId = Number(c.params.id)
+        const blobId = c.params.blob_id
+        const fed = await federationById(db, fedId)
+        if (!fed) return json(c, 404, { error: "Federation not found" })
+        const member = await localMemberFor(db, fedId, userId)
+        if (!member) return json(c, 404, { error: "Federation not found" })
+
+        const bytes =
+          fed.type === "content-sharing"
+            ? await fetchContentSharing(db, store, fed, blobId)
+            : await fetchSpaceOffering(db, store, fed, blobId)
+        if (!bytes) return json(c, 404, { error: "Blob not found or unrecoverable" })
+
+        // Find a corresponding file row for content-disposition naming.
+        const row = (await db.one(
+          from("files")
+            .where(q =>
+              q("storage_key").equals(
+                fed.type === "content-sharing" ? FED_KEY(fed.id, blobId) : FED_SHARD_KEY(fed.id, blobId),
+              ),
+            )
+            .select("name", "mime"),
+        )) as { name: string; mime: string } | null
+
+        const ct = row?.mime ?? "application/octet-stream"
+        const name = row?.name ?? blobId
+        const headered = putHeader(
+          putHeader(
+            putHeader(c, "content-type", ct),
+            "content-disposition",
+            `attachment; filename="${name.replace(/"/g, "_")}"`,
+          ),
+          "content-length",
+          String(bytes.length),
+        )
+        const rs = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes)
+            controller.close()
+          },
         })
-      }
+        return stream(headered, 200, rs)
+      }),
+    ),
 
-      const results: UploadResult[] = []
-      for (const file of entries) {
-        const bytes = new Uint8Array(await file.arrayBuffer())
-        const name = (file as any).name ?? "upload.bin"
-        const mime = file.type || "application/octet-stream"
-        const result = fed.type === "content-sharing"
-          ? await uploadContentSharing(db, store, fed, userId, folder.id, name, mime, bytes)
-          : await uploadSpaceOffering(db, store, fed, userId, folder.id, name, mime, bytes)
-        results.push(result)
+    del(
+      "/me/federations/:id/files/:blob_id",
+      guard(async c => {
+        const userId = authId(c)
+        const fedId = Number(c.params.id)
+        const blobId = c.params.blob_id
+        const fed = await federationById(db, fedId)
+        if (!fed) return json(c, 404, { error: "Federation not found" })
+        const member = await localMemberFor(db, fedId, userId)
+        if (!member) return json(c, 404, { error: "Federation not found" })
+
+        const storageKey = fed.type === "content-sharing" ? FED_KEY(fed.id, blobId) : FED_SHARD_KEY(fed.id, blobId)
+        const row = (await db.one(
+          from("files")
+            .where(q => q("storage_key").equals(storageKey))
+            .where(q => q("user_id").equals(userId))
+            .select("id", "size"),
+        )) as { id: number; size: number | string } | null
+        if (!row) return json(c, 404, { error: "File not found" })
+
+        await dropFederationBlob(db, store, storageKey)
+        await db.execute(
+          from("files")
+            .where(q => q("id").equals(row.id))
+            .del(),
+        )
         await db.execute({
-          text: `UPDATE federation_members SET used_bytes = used_bytes + $1 WHERE id = $2`,
-          values: [bytes.length, member.id],
+          text: `UPDATE federation_members SET used_bytes = GREATEST(0, used_bytes - $1) WHERE id = $2`,
+          values: [Number(row.size), member.id],
         })
-      }
-      return json(c, 201, { results })
-    })),
-
-    get("/me/federations/:id/files/:blob_id/download", guard(async (c) => {
-      const userId = authId(c)
-      const fedId = Number(c.params.id)
-      const blobId = c.params.blob_id
-      const fed = await federationById(db, fedId)
-      if (!fed) return json(c, 404, { error: "Federation not found" })
-      const member = await localMemberFor(db, fedId, userId)
-      if (!member) return json(c, 404, { error: "Federation not found" })
-
-      const bytes = fed.type === "content-sharing"
-        ? await fetchContentSharing(db, store, fed, blobId)
-        : await fetchSpaceOffering(db, store, fed, blobId)
-      if (!bytes) return json(c, 404, { error: "Blob not found or unrecoverable" })
-
-      // Find a corresponding file row for content-disposition naming.
-      const row = await db.one(
-        from("files").where(q => q("storage_key").equals(fed.type === "content-sharing" ? FED_KEY(fed.id, blobId) : FED_SHARD_KEY(fed.id, blobId)))
-          .select("name", "mime"),
-      ) as { name: string; mime: string } | null
-
-      const ct = row?.mime ?? "application/octet-stream"
-      const name = row?.name ?? blobId
-      const headered = putHeader(
-        putHeader(
-          putHeader(c, "content-type", ct),
-          "content-disposition",
-          `attachment; filename="${name.replace(/"/g, "_")}"`,
-        ),
-        "content-length",
-        String(bytes.length),
-      )
-      const rs = new ReadableStream<Uint8Array>({
-        start(controller) { controller.enqueue(bytes); controller.close() },
-      })
-      return stream(headered, 200, rs)
-    })),
-
-    del("/me/federations/:id/files/:blob_id", guard(async (c) => {
-      const userId = authId(c)
-      const fedId = Number(c.params.id)
-      const blobId = c.params.blob_id
-      const fed = await federationById(db, fedId)
-      if (!fed) return json(c, 404, { error: "Federation not found" })
-      const member = await localMemberFor(db, fedId, userId)
-      if (!member) return json(c, 404, { error: "Federation not found" })
-
-      const storageKey = fed.type === "content-sharing" ? FED_KEY(fed.id, blobId) : FED_SHARD_KEY(fed.id, blobId)
-      const row = await db.one(
-        from("files").where(q => q("storage_key").equals(storageKey)).where(q => q("user_id").equals(userId)).select("id", "size"),
-      ) as { id: number; size: number | string } | null
-      if (!row) return json(c, 404, { error: "File not found" })
-
-      await dropFederationBlob(db, store, storageKey)
-      await db.execute(from("files").where(q => q("id").equals(row.id)).del())
-      await db.execute({
-        text: `UPDATE federation_members SET used_bytes = GREATEST(0, used_bytes - $1) WHERE id = $2`,
-        values: [Number(row.size), member.id],
-      })
-      return json(c, 200, { deleted: blobId })
-    })),
+        return json(c, 200, { deleted: blobId })
+      }),
+    ),
 
     // ────────────────────────────────────────────────────────────────────
     // Peer-to-peer receiver routes (signed peer transport)
     // ────────────────────────────────────────────────────────────────────
 
-    post("/federation/blob/:slug/:blob_id", receiver(async (c) => {
-      const slug = c.params.slug
-      const blobId = c.params.blob_id
-      const fed = await federationBySlug(db, slug)
-      if (!fed) return json(c, 404, { error: "Federation not found" })
+    post(
+      "/federation/blob/:slug/:blob_id",
+      receiver(async c => {
+        const slug = c.params.slug
+        const blobId = c.params.blob_id
+        const fed = await federationBySlug(db, slug)
+        if (!fed) return json(c, 404, { error: "Federation not found" })
 
-      const peer = (c.assigns as any).peer as { pubkeyRaw: string; body: Uint8Array }
-      const member = await memberForPeer(db, fed.id, peer.pubkeyRaw)
-      if (!member || member.status !== "active") return json(c, 403, { error: "Not an active federation peer" })
+        const peer = (c.assigns as any).peer as { pubkeyRaw: string; body: Uint8Array }
+        const member = await memberForPeer(db, fed.id, peer.pubkeyRaw)
+        if (!member || member.status !== "active") return json(c, 403, { error: "Not an active federation peer" })
 
-      const ownerPubkey = c.request.headers.get("x-fed-owner-pubkey")
-      const sizeHeader = c.request.headers.get("x-fed-size")
-      const encMeta = c.request.headers.get("x-fed-meta")
-      if (!ownerPubkey || !sizeHeader) return json(c, 422, { error: "Missing x-fed-owner-pubkey or x-fed-size" })
-      const size = Number(sizeHeader)
+        const ownerPubkey = c.request.headers.get("x-fed-owner-pubkey")
+        const sizeHeader = c.request.headers.get("x-fed-size")
+        const encMeta = c.request.headers.get("x-fed-meta")
+        if (!ownerPubkey || !sizeHeader) return json(c, 422, { error: "Missing x-fed-owner-pubkey or x-fed-size" })
+        const size = Number(sizeHeader)
 
-      // Find our local contribution folder for the owner's user — peers
-      // sending blobs don't know our user IDs; we host on behalf of "any
-      // user with a contribution folder for this federation," round-robin
-      // pick the first one with available capacity.
-      const localContrib = await db.one({
-        text: `SELECT f.id, f.user_id, f.federation_quota_bytes
+        // Find our local contribution folder for the owner's user — peers
+        // sending blobs don't know our user IDs; we host on behalf of "any
+        // user with a contribution folder for this federation," round-robin
+        // pick the first one with available capacity.
+        const localContrib = (await db.one({
+          text: `SELECT f.id, f.user_id, f.federation_quota_bytes
                  FROM folders f
                  JOIN federation_members m ON m.user_id = f.user_id AND m.federation_id = f.federation_id AND m.is_local = TRUE
                 WHERE f.federation_id = $1 AND f.federation_role = 'contribution' AND f.deleted_at IS NULL
                   AND m.contributed_bytes - m.used_bytes >= $2
                 ORDER BY (m.contributed_bytes - m.used_bytes) DESC
                 LIMIT 1`,
-        values: [fed.id, size],
-      }) as { id: number; user_id: number; federation_quota_bytes: number | string } | null
-      if (!localContrib) return json(c, 507, { error: "No local contribution capacity available" })
+          values: [fed.id, size],
+        })) as { id: number; user_id: number; federation_quota_bytes: number | string } | null
+        if (!localContrib) return json(c, 507, { error: "No local contribution capacity available" })
 
-      const localKey = localStorageKeyForFedBlob(localContrib.user_id, blobId, null)
-      await put(store, localKey, peer.body, "application/octet-stream")
+        const localKey = localStorageKeyForFedBlob(localContrib.user_id, blobId, null)
+        await put(store, localKey, peer.body, "application/octet-stream")
 
-      const ownerLocal = await db.one(
-        from("users").where(q => q("id").equals(localContrib.user_id)).select("id"),
-      )
-      const keys = await getInstanceKeys(db)
-      try {
-        await db.execute(
-          from("federation_blobs").insert({
-            federation_id: fed.id,
-            blob_id: blobId,
-            size,
-            owner_pubkey: ownerPubkey,
-            owner_user_id: null,
-            peer_pubkey: keys.ed25519PublicRaw,
-            local_storage_key: localKey,
-            encrypted_metadata: encMeta,
-          }),
+        const ownerLocal = await db.one(
+          from("users")
+            .where(q => q("id").equals(localContrib.user_id))
+            .select("id"),
         )
-      } catch {
-        // Duplicate placement — already had it. Drop the new bytes.
-        await drop(store, localKey).catch(() => {})
-      }
-      await db.execute({
-        text: `UPDATE federation_members SET used_bytes = used_bytes + $1 WHERE federation_id = $2 AND user_id = $3 AND is_local = TRUE`,
-        values: [size, fed.id, localContrib.user_id],
-      })
+        const keys = await getInstanceKeys(db)
+        try {
+          await db.execute(
+            from("federation_blobs").insert({
+              federation_id: fed.id,
+              blob_id: blobId,
+              size,
+              owner_pubkey: ownerPubkey,
+              owner_user_id: null,
+              peer_pubkey: keys.ed25519PublicRaw,
+              local_storage_key: localKey,
+              encrypted_metadata: encMeta,
+            }),
+          )
+        } catch {
+          // Duplicate placement — already had it. Drop the new bytes.
+          await drop(store, localKey).catch(() => {})
+        }
+        await db.execute({
+          text: `UPDATE federation_members SET used_bytes = used_bytes + $1 WHERE federation_id = $2 AND user_id = $3 AND is_local = TRUE`,
+          values: [size, fed.id, localContrib.user_id],
+        })
 
-      return json(c, 200, { stored: blobId, host_user: ownerLocal ? localContrib.user_id : null })
-    })),
+        return json(c, 200, { stored: blobId, host_user: ownerLocal ? localContrib.user_id : null })
+      }),
+    ),
 
-    get("/federation/blob/:slug/:blob_id", receiver(async (c) => {
-      const slug = c.params.slug
-      const blobId = c.params.blob_id
-      const fed = await federationBySlug(db, slug)
-      if (!fed) return json(c, 404, { error: "Federation not found" })
+    get(
+      "/federation/blob/:slug/:blob_id",
+      receiver(async c => {
+        const slug = c.params.slug
+        const blobId = c.params.blob_id
+        const fed = await federationBySlug(db, slug)
+        if (!fed) return json(c, 404, { error: "Federation not found" })
 
-      const peer = (c.assigns as any).peer as { pubkeyRaw: string }
-      const member = await memberForPeer(db, fed.id, peer.pubkeyRaw)
-      if (!member || member.status !== "active") return json(c, 403, { error: "Not an active federation peer" })
+        const peer = (c.assigns as any).peer as { pubkeyRaw: string }
+        const member = await memberForPeer(db, fed.id, peer.pubkeyRaw)
+        if (!member || member.status !== "active") return json(c, 403, { error: "Not an active federation peer" })
 
-      const placement = await db.one(
-        from("federation_blobs")
-          .where(q => q("federation_id").equals(fed.id))
-          .where(q => q("blob_id").equals(blobId))
-          .where(q => q("local_storage_key").isNotNull())
-          .select("local_storage_key"),
-      ) as { local_storage_key: string } | null
-      if (!placement) return json(c, 404, { error: "Blob not held locally" })
-      const res = await fetchObject(store, placement.local_storage_key)
-      return stream(putHeader(c, "content-type", "application/octet-stream"), 200, res.body!)
-    })),
+        const placement = (await db.one(
+          from("federation_blobs")
+            .where(q => q("federation_id").equals(fed.id))
+            .where(q => q("blob_id").equals(blobId))
+            .where(q => q("local_storage_key").isNotNull())
+            .select("local_storage_key"),
+        )) as { local_storage_key: string } | null
+        if (!placement) return json(c, 404, { error: "Blob not held locally" })
+        const res = await fetchObject(store, placement.local_storage_key)
+        return stream(putHeader(c, "content-type", "application/octet-stream"), 200, res.body!)
+      }),
+    ),
 
-    del("/federation/blob/:slug/:blob_id", receiver(async (c) => {
-      const slug = c.params.slug
-      const blobId = c.params.blob_id
-      const fed = await federationBySlug(db, slug)
-      if (!fed) return json(c, 404, { error: "Federation not found" })
-      const peer = (c.assigns as any).peer as { pubkeyRaw: string }
-      const member = await memberForPeer(db, fed.id, peer.pubkeyRaw)
-      if (!member || member.status !== "active") return json(c, 403, { error: "Not an active federation peer" })
+    del(
+      "/federation/blob/:slug/:blob_id",
+      receiver(async c => {
+        const slug = c.params.slug
+        const blobId = c.params.blob_id
+        const fed = await federationBySlug(db, slug)
+        if (!fed) return json(c, 404, { error: "Federation not found" })
+        const peer = (c.assigns as any).peer as { pubkeyRaw: string }
+        const member = await memberForPeer(db, fed.id, peer.pubkeyRaw)
+        if (!member || member.status !== "active") return json(c, 403, { error: "Not an active federation peer" })
 
-      // Only the owner of a blob may instruct deletion.
-      const row = await db.one(
-        from("federation_blobs")
-          .where(q => q("federation_id").equals(fed.id))
-          .where(q => q("blob_id").equals(blobId))
-          .where(q => q("local_storage_key").isNotNull())
-          .select("local_storage_key", "owner_pubkey", "size"),
-      ) as { local_storage_key: string; owner_pubkey: string; size: number | string } | null
-      if (!row) return json(c, 404, { error: "Blob not held locally" })
-      if (row.owner_pubkey !== peer.pubkeyRaw) return json(c, 403, { error: "Only the owner can delete" })
+        // Only the owner of a blob may instruct deletion.
+        const row = (await db.one(
+          from("federation_blobs")
+            .where(q => q("federation_id").equals(fed.id))
+            .where(q => q("blob_id").equals(blobId))
+            .where(q => q("local_storage_key").isNotNull())
+            .select("local_storage_key", "owner_pubkey", "size"),
+        )) as { local_storage_key: string; owner_pubkey: string; size: number | string } | null
+        if (!row) return json(c, 404, { error: "Blob not held locally" })
+        if (row.owner_pubkey !== peer.pubkeyRaw) return json(c, 403, { error: "Only the owner can delete" })
 
-      await drop(store, row.local_storage_key).catch(() => {})
-      const selfPubkey = (await getInstanceKeys(db)).ed25519PublicRaw
-      await db.execute(
-        from("federation_blobs")
-          .where(q => q("federation_id").equals(fed.id))
-          .where(q => q("blob_id").equals(blobId))
-          .where(q => q("peer_pubkey").equals(selfPubkey))
-          .del(),
-      )
-      return json(c, 200, { deleted: blobId })
-    })),
+        await drop(store, row.local_storage_key).catch(() => {})
+        const selfPubkey = (await getInstanceKeys(db)).ed25519PublicRaw
+        await db.execute(
+          from("federation_blobs")
+            .where(q => q("federation_id").equals(fed.id))
+            .where(q => q("blob_id").equals(blobId))
+            .where(q => q("peer_pubkey").equals(selfPubkey))
+            .del(),
+        )
+        return json(c, 200, { deleted: blobId })
+      }),
+    ),
 
     // Shard variants — same semantics as blob but include shard_index in path.
-    post("/federation/shard/:slug/:blob_id/:shard_index", receiver(async (c) => {
-      const slug = c.params.slug
-      const blobId = c.params.blob_id
-      const shardIndex = Number(c.params.shard_index)
-      const fed = await federationBySlug(db, slug)
-      if (!fed) return json(c, 404, { error: "Federation not found" })
-      const peer = (c.assigns as any).peer as { pubkeyRaw: string; body: Uint8Array }
-      const member = await memberForPeer(db, fed.id, peer.pubkeyRaw)
-      if (!member || member.status !== "active") return json(c, 403, { error: "Not an active federation peer" })
+    post(
+      "/federation/shard/:slug/:blob_id/:shard_index",
+      receiver(async c => {
+        const slug = c.params.slug
+        const blobId = c.params.blob_id
+        const shardIndex = Number(c.params.shard_index)
+        const fed = await federationBySlug(db, slug)
+        if (!fed) return json(c, 404, { error: "Federation not found" })
+        const peer = (c.assigns as any).peer as { pubkeyRaw: string; body: Uint8Array }
+        const member = await memberForPeer(db, fed.id, peer.pubkeyRaw)
+        if (!member || member.status !== "active") return json(c, 403, { error: "Not an active federation peer" })
 
-      const ownerPubkey = c.request.headers.get("x-fed-owner-pubkey")
-      const sizeHeader = c.request.headers.get("x-fed-size")
-      const totalSize = c.request.headers.get("x-fed-total-size")
-      const k = c.request.headers.get("x-fed-shard-k")
-      const m = c.request.headers.get("x-fed-shard-m")
-      const encMeta = c.request.headers.get("x-fed-meta")
-      if (!ownerPubkey || !sizeHeader || !totalSize || !k || !m) {
-        return json(c, 422, { error: "Missing shard headers" })
-      }
-      const size = Number(sizeHeader)
+        const ownerPubkey = c.request.headers.get("x-fed-owner-pubkey")
+        const sizeHeader = c.request.headers.get("x-fed-size")
+        const totalSize = c.request.headers.get("x-fed-total-size")
+        const k = c.request.headers.get("x-fed-shard-k")
+        const m = c.request.headers.get("x-fed-shard-m")
+        const encMeta = c.request.headers.get("x-fed-meta")
+        if (!ownerPubkey || !sizeHeader || !totalSize || !k || !m) {
+          return json(c, 422, { error: "Missing shard headers" })
+        }
+        const size = Number(sizeHeader)
 
-      const localContrib = await db.one({
-        text: `SELECT f.id, f.user_id
+        const localContrib = (await db.one({
+          text: `SELECT f.id, f.user_id
                  FROM folders f
                  JOIN federation_members m ON m.user_id = f.user_id AND m.federation_id = f.federation_id AND m.is_local = TRUE
                 WHERE f.federation_id = $1 AND f.federation_role = 'contribution' AND f.deleted_at IS NULL
                   AND m.contributed_bytes - m.used_bytes >= $2
                 ORDER BY (m.contributed_bytes - m.used_bytes) DESC
                 LIMIT 1`,
-        values: [fed.id, size],
-      }) as { id: number; user_id: number } | null
-      if (!localContrib) return json(c, 507, { error: "No local contribution capacity" })
+          values: [fed.id, size],
+        })) as { id: number; user_id: number } | null
+        if (!localContrib) return json(c, 507, { error: "No local contribution capacity" })
 
-      const localKey = localStorageKeyForFedBlob(localContrib.user_id, blobId, shardIndex)
-      await put(store, localKey, peer.body, "application/octet-stream")
+        const localKey = localStorageKeyForFedBlob(localContrib.user_id, blobId, shardIndex)
+        await put(store, localKey, peer.body, "application/octet-stream")
 
-      const keys = await getInstanceKeys(db)
-      try {
+        const keys = await getInstanceKeys(db)
+        try {
+          await db.execute(
+            from("federation_shards").insert({
+              federation_id: fed.id,
+              blob_id: blobId,
+              shard_index: shardIndex,
+              shard_k: Number(k),
+              shard_m: Number(m),
+              size,
+              total_size: Number(totalSize),
+              owner_pubkey: ownerPubkey,
+              owner_user_id: null,
+              peer_pubkey: keys.ed25519PublicRaw,
+              local_storage_key: localKey,
+              encrypted_metadata: encMeta,
+            }),
+          )
+        } catch {
+          await drop(store, localKey).catch(() => {})
+        }
+        await db.execute({
+          text: `UPDATE federation_members SET used_bytes = used_bytes + $1 WHERE federation_id = $2 AND user_id = $3 AND is_local = TRUE`,
+          values: [size, fed.id, localContrib.user_id],
+        })
+        return json(c, 200, { stored: blobId, shard_index: shardIndex })
+      }),
+    ),
+
+    get(
+      "/federation/shard/:slug/:blob_id/:shard_index",
+      receiver(async c => {
+        const slug = c.params.slug
+        const blobId = c.params.blob_id
+        const shardIndex = Number(c.params.shard_index)
+        const fed = await federationBySlug(db, slug)
+        if (!fed) return json(c, 404, { error: "Federation not found" })
+        const peer = (c.assigns as any).peer as { pubkeyRaw: string }
+        const member = await memberForPeer(db, fed.id, peer.pubkeyRaw)
+        if (!member || member.status !== "active") return json(c, 403, { error: "Not an active federation peer" })
+
+        const placement = (await db.one(
+          from("federation_shards")
+            .where(q => q("federation_id").equals(fed.id))
+            .where(q => q("blob_id").equals(blobId))
+            .where(q => q("shard_index").equals(shardIndex))
+            .where(q => q("local_storage_key").isNotNull())
+            .select("local_storage_key"),
+        )) as { local_storage_key: string } | null
+        if (!placement) return json(c, 404, { error: "Shard not held locally" })
+        const res = await fetchObject(store, placement.local_storage_key)
+        return stream(putHeader(c, "content-type", "application/octet-stream"), 200, res.body!)
+      }),
+    ),
+
+    del(
+      "/federation/shard/:slug/:blob_id/:shard_index",
+      receiver(async c => {
+        const slug = c.params.slug
+        const blobId = c.params.blob_id
+        const shardIndex = Number(c.params.shard_index)
+        const fed = await federationBySlug(db, slug)
+        if (!fed) return json(c, 404, { error: "Federation not found" })
+        const peer = (c.assigns as any).peer as { pubkeyRaw: string }
+        const member = await memberForPeer(db, fed.id, peer.pubkeyRaw)
+        if (!member || member.status !== "active") return json(c, 403, { error: "Not an active federation peer" })
+
+        const row = (await db.one(
+          from("federation_shards")
+            .where(q => q("federation_id").equals(fed.id))
+            .where(q => q("blob_id").equals(blobId))
+            .where(q => q("shard_index").equals(shardIndex))
+            .select("local_storage_key", "owner_pubkey", "size"),
+        )) as { local_storage_key: string | null; owner_pubkey: string; size: number | string } | null
+        if (!row?.local_storage_key) return json(c, 404, { error: "Shard not held locally" })
+        if (row.owner_pubkey !== peer.pubkeyRaw) return json(c, 403, { error: "Only the owner can delete" })
+
+        await drop(store, row.local_storage_key).catch(() => {})
+        const selfShardKey = (await getInstanceKeys(db)).ed25519PublicRaw
         await db.execute(
-          from("federation_shards").insert({
-            federation_id: fed.id,
-            blob_id: blobId,
-            shard_index: shardIndex,
-            shard_k: Number(k),
-            shard_m: Number(m),
-            size,
-            total_size: Number(totalSize),
-            owner_pubkey: ownerPubkey,
-            owner_user_id: null,
-            peer_pubkey: keys.ed25519PublicRaw,
-            local_storage_key: localKey,
-            encrypted_metadata: encMeta,
-          }),
+          from("federation_shards")
+            .where(q => q("federation_id").equals(fed.id))
+            .where(q => q("blob_id").equals(blobId))
+            .where(q => q("shard_index").equals(shardIndex))
+            .where(q => q("peer_pubkey").equals(selfShardKey))
+            .del(),
         )
-      } catch {
-        await drop(store, localKey).catch(() => {})
-      }
-      await db.execute({
-        text: `UPDATE federation_members SET used_bytes = used_bytes + $1 WHERE federation_id = $2 AND user_id = $3 AND is_local = TRUE`,
-        values: [size, fed.id, localContrib.user_id],
-      })
-      return json(c, 200, { stored: blobId, shard_index: shardIndex })
-    })),
-
-    get("/federation/shard/:slug/:blob_id/:shard_index", receiver(async (c) => {
-      const slug = c.params.slug
-      const blobId = c.params.blob_id
-      const shardIndex = Number(c.params.shard_index)
-      const fed = await federationBySlug(db, slug)
-      if (!fed) return json(c, 404, { error: "Federation not found" })
-      const peer = (c.assigns as any).peer as { pubkeyRaw: string }
-      const member = await memberForPeer(db, fed.id, peer.pubkeyRaw)
-      if (!member || member.status !== "active") return json(c, 403, { error: "Not an active federation peer" })
-
-      const placement = await db.one(
-        from("federation_shards")
-          .where(q => q("federation_id").equals(fed.id))
-          .where(q => q("blob_id").equals(blobId))
-          .where(q => q("shard_index").equals(shardIndex))
-          .where(q => q("local_storage_key").isNotNull())
-          .select("local_storage_key"),
-      ) as { local_storage_key: string } | null
-      if (!placement) return json(c, 404, { error: "Shard not held locally" })
-      const res = await fetchObject(store, placement.local_storage_key)
-      return stream(putHeader(c, "content-type", "application/octet-stream"), 200, res.body!)
-    })),
-
-    del("/federation/shard/:slug/:blob_id/:shard_index", receiver(async (c) => {
-      const slug = c.params.slug
-      const blobId = c.params.blob_id
-      const shardIndex = Number(c.params.shard_index)
-      const fed = await federationBySlug(db, slug)
-      if (!fed) return json(c, 404, { error: "Federation not found" })
-      const peer = (c.assigns as any).peer as { pubkeyRaw: string }
-      const member = await memberForPeer(db, fed.id, peer.pubkeyRaw)
-      if (!member || member.status !== "active") return json(c, 403, { error: "Not an active federation peer" })
-
-      const row = await db.one(
-        from("federation_shards")
-          .where(q => q("federation_id").equals(fed.id))
-          .where(q => q("blob_id").equals(blobId))
-          .where(q => q("shard_index").equals(shardIndex))
-          .select("local_storage_key", "owner_pubkey", "size"),
-      ) as { local_storage_key: string | null; owner_pubkey: string; size: number | string } | null
-      if (!row?.local_storage_key) return json(c, 404, { error: "Shard not held locally" })
-      if (row.owner_pubkey !== peer.pubkeyRaw) return json(c, 403, { error: "Only the owner can delete" })
-
-      await drop(store, row.local_storage_key).catch(() => {})
-      const selfShardKey = (await getInstanceKeys(db)).ed25519PublicRaw
-      await db.execute(
-        from("federation_shards")
-          .where(q => q("federation_id").equals(fed.id))
-          .where(q => q("blob_id").equals(blobId))
-          .where(q => q("shard_index").equals(shardIndex))
-          .where(q => q("peer_pubkey").equals(selfShardKey))
-          .del(),
-      )
-      return json(c, 200, { deleted: blobId, shard_index: shardIndex })
-    })),
+        return json(c, 200, { deleted: blobId, shard_index: shardIndex })
+      }),
+    ),
   ]
 }
 
@@ -976,29 +1076,58 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
 // ──────────────────────────────────────────────────────────────────────────
 
 export const sweepFederationDrains = async (db: Connection, store: StorageHandle): Promise<void> => {
-  const draining = await db.all(
+  const draining = (await db.all(
     from("federation_members")
       .where(q => q("status").equals("draining"))
       .select("id", "federation_id", "user_id", "peer_pubkey", "is_local"),
-  ) as Array<{ id: number; federation_id: number; user_id: number | null; peer_pubkey: string; is_local: boolean }>
+  )) as Array<{ id: number; federation_id: number; user_id: number | null; peer_pubkey: string; is_local: boolean }>
 
   for (const m of draining) {
     // Look for any blobs/shards held by THIS peer-pubkey. Re-replicate
     // each to a different peer with capacity. Once nothing is held, mark
     // status = 'left'.
-    const blobs = await db.all(
+    const blobs = (await db.all(
       from("federation_blobs")
         .where(q => q("federation_id").equals(m.federation_id))
         .where(q => q("peer_pubkey").equals(m.peer_pubkey))
         .select("id", "blob_id", "size", "owner_pubkey", "local_storage_key", "encrypted_metadata"),
-    ) as Array<{ id: number; blob_id: string; size: number | string; owner_pubkey: string; local_storage_key: string | null; encrypted_metadata: string | null }>
+    )) as Array<{
+      id: number
+      blob_id: string
+      size: number | string
+      owner_pubkey: string
+      local_storage_key: string | null
+      encrypted_metadata: string | null
+    }>
 
-    const shards = await db.all(
+    const shards = (await db.all(
       from("federation_shards")
         .where(q => q("federation_id").equals(m.federation_id))
         .where(q => q("peer_pubkey").equals(m.peer_pubkey))
-        .select("id", "blob_id", "shard_index", "shard_k", "shard_m", "size", "total_size", "owner_pubkey", "local_storage_key", "encrypted_metadata"),
-    ) as Array<{ id: number; blob_id: string; shard_index: number; shard_k: number; shard_m: number; size: number | string; total_size: number | string; owner_pubkey: string; local_storage_key: string | null; encrypted_metadata: string | null }>
+        .select(
+          "id",
+          "blob_id",
+          "shard_index",
+          "shard_k",
+          "shard_m",
+          "size",
+          "total_size",
+          "owner_pubkey",
+          "local_storage_key",
+          "encrypted_metadata",
+        ),
+    )) as Array<{
+      id: number
+      blob_id: string
+      shard_index: number
+      shard_k: number
+      shard_m: number
+      size: number | string
+      total_size: number | string
+      owner_pubkey: string
+      local_storage_key: string | null
+      encrypted_metadata: string | null
+    }>
 
     const fed = await federationById(db, m.federation_id)
     if (!fed) continue
@@ -1012,9 +1141,11 @@ export const sweepFederationDrains = async (db: Connection, store: StorageHandle
         try {
           const res = await fetchObject(store, b.local_storage_key)
           bytes = new Uint8Array(await res.arrayBuffer())
-        } catch { bytes = null }
+        } catch {
+          bytes = null
+        }
       }
-      if (!bytes) continue  // we don't hold the bytes; can't move them
+      if (!bytes) continue // we don't hold the bytes; can't move them
       const keys = await getInstanceKeys(db)
       if (target.peer_pubkey === keys.ed25519PublicRaw) {
         // Already us — keep the row, just clear the draining marker.
@@ -1028,7 +1159,9 @@ export const sweepFederationDrains = async (db: Connection, store: StorageHandle
       })
       if (ok) {
         await db.execute(
-          from("federation_blobs").where(q => q("id").equals(b.id)).update({ peer_pubkey: target.peer_pubkey, local_storage_key: null }),
+          from("federation_blobs")
+            .where(q => q("id").equals(b.id))
+            .update({ peer_pubkey: target.peer_pubkey, local_storage_key: null }),
         )
         if (b.local_storage_key) await drop(store, b.local_storage_key).catch(() => {})
       }
@@ -1043,7 +1176,9 @@ export const sweepFederationDrains = async (db: Connection, store: StorageHandle
         try {
           const res = await fetchObject(store, s.local_storage_key)
           bytes = new Uint8Array(await res.arrayBuffer())
-        } catch { bytes = null }
+        } catch {
+          bytes = null
+        }
       }
       if (!bytes) continue
       const ok = await pushBlobToPeer(db, target.peer_base_url, fed.slug, s.blob_id, s.shard_index, bytes, {
@@ -1056,29 +1191,33 @@ export const sweepFederationDrains = async (db: Connection, store: StorageHandle
       })
       if (ok) {
         await db.execute(
-          from("federation_shards").where(q => q("id").equals(s.id)).update({ peer_pubkey: target.peer_pubkey, local_storage_key: null }),
+          from("federation_shards")
+            .where(q => q("id").equals(s.id))
+            .update({ peer_pubkey: target.peer_pubkey, local_storage_key: null }),
         )
         if (s.local_storage_key) await drop(store, s.local_storage_key).catch(() => {})
       }
     }
 
     // Are we done? Anything still held?
-    const remainingBlobs = await db.one(
+    const remainingBlobs = (await db.one(
       from("federation_blobs")
         .where(q => q("federation_id").equals(m.federation_id))
         .where(q => q("peer_pubkey").equals(m.peer_pubkey))
-        .select(raw("COUNT(*) AS n")),
-    ) as { n: number | string } | null
-    const remainingShards = await db.one(
+        .select(raw("COUNT(*) AS n") as any),
+    )) as { n: number | string } | null
+    const remainingShards = (await db.one(
       from("federation_shards")
         .where(q => q("federation_id").equals(m.federation_id))
         .where(q => q("peer_pubkey").equals(m.peer_pubkey))
-        .select(raw("COUNT(*) AS n")),
-    ) as { n: number | string } | null
+        .select(raw("COUNT(*) AS n") as any),
+    )) as { n: number | string } | null
     const remaining = Number(remainingBlobs?.n ?? 0) + Number(remainingShards?.n ?? 0)
     if (remaining === 0) {
       await db.execute(
-        from("federation_members").where(q => q("id").equals(m.id)).update({ status: "left" }),
+        from("federation_members")
+          .where(q => q("id").equals(m.id))
+          .update({ status: "left" }),
       )
     }
   }

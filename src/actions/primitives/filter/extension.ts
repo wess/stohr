@@ -24,7 +24,12 @@ const filterExtension: Primitive = {
     if (env.subject.kind !== "file") return { kind: "halt", reason: "not a file" }
     const raw = Array.isArray(config.extensions) ? (config.extensions as unknown[]) : []
     const list = raw
-      .map(v => String(v ?? "").trim().toLowerCase().replace(/^\./, ""))
+      .map(v =>
+        String(v ?? "")
+          .trim()
+          .toLowerCase()
+          .replace(/^\./, ""),
+      )
       .filter(s => s.length > 0)
     if (list.length === 0) return { kind: "continue" }
 

@@ -10,9 +10,7 @@ export type EmailMessage = {
   replyTo?: string
 }
 
-export type EmailResult =
-  | { ok: true; id?: string; logged?: boolean }
-  | { ok: false; error: string }
+export type EmailResult = { ok: true; id?: string; logged?: boolean } | { ok: false; error: string }
 
 export type Emailer = {
   enabled: boolean
@@ -58,7 +56,7 @@ export const createEmailer = (config: { apiKey: string; from: string }): Emailer
           const body = await res.text().catch(() => "")
           return { ok: false, error: `Resend ${res.status}: ${body.slice(0, 240)}` }
         }
-        const data = await res.json().catch(() => ({})) as { id?: string }
+        const data = (await res.json().catch(() => ({}))) as { id?: string }
         return { ok: true, id: data.id }
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : String(e) }

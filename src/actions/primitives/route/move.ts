@@ -7,8 +7,7 @@ const routeMove: Primitive = {
   kind: "route.move",
   name: "Move into a folder",
   category: "route",
-  description:
-    "Moves the file into a (sub)folder under this one. Path supports {YYYY} {MM} {DD} {name} {ext} {full}.",
+  description: "Moves the file into a (sub)folder under this one. Path supports {YYYY} {MM} {DD} {name} {ext} {full}.",
   icon: "FolderOpen",
   subjects: ["file"],
   configSchema: {
@@ -30,7 +29,10 @@ const routeMove: Primitive = {
     const expanded = expandTemplate(template, env.subject)
     if (!expanded.ok) return { kind: "fail", error: expanded.error }
 
-    const segments = expanded.value.split("/").map(s => s.trim()).filter(Boolean)
+    const segments = expanded.value
+      .split("/")
+      .map(s => s.trim())
+      .filter(Boolean)
     if (segments.length === 0) return { kind: "halt", reason: "empty path after expansion" }
 
     const targetFolderId = await resolveTemplateChain(ctx.db, ctx.ownerId, env.folder.id, segments)
@@ -39,7 +41,9 @@ const routeMove: Primitive = {
     }
 
     await ctx.db.execute(
-      from("files").where(q => q("id").equals(env.subject.row.id)).update({ folder_id: targetFolderId }),
+      from("files")
+        .where(q => q("id").equals(env.subject.row.id))
+        .update({ folder_id: targetFolderId }),
     )
 
     return {

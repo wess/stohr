@@ -34,7 +34,7 @@ export const createOpenAiDriver = (cfg: OpenAiConfig): AiDriver => {
         const text = await res.text().catch(() => "")
         throw new Error(`OpenAI chat failed (${res.status}): ${text.slice(0, 500)}`)
       }
-      const data = await res.json() as OpenAiResponse
+      const data = (await res.json()) as OpenAiResponse
       return { content: data.choices[0]?.message?.content ?? "", model: data.model }
     },
   }

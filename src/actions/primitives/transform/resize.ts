@@ -1,8 +1,8 @@
-import sharp from "sharp"
 import { from } from "@atlas/db"
-import type { Primitive } from "../types.ts"
+import sharp from "sharp"
 import { drop, fetchObject, makeKey, put } from "../../../storage/index.ts"
 import { generateImageThumb, isThumbable, thumbKeyFor } from "../../../storage/thumb.ts"
+import type { Primitive } from "../types.ts"
 
 const SUPPORTED_MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"])
 
@@ -150,14 +150,16 @@ const transformResize: Primitive = {
     const oldThumb = file.thumb_key
     const newVersion = file.version + 1
     await ctx.db.execute(
-      from("files").where(q => q("id").equals(file.id)).update({
-        name: newName,
-        mime: outMime,
-        size: outBytes.byteLength,
-        storage_key: newKey,
-        thumb_key: newThumbKey,
-        version: newVersion,
-      }),
+      from("files")
+        .where(q => q("id").equals(file.id))
+        .update({
+          name: newName,
+          mime: outMime,
+          size: outBytes.byteLength,
+          storage_key: newKey,
+          thumb_key: newThumbKey,
+          version: newVersion,
+        }),
     )
     if (oldThumb && oldThumb !== newThumbKey) {
       await Promise.allSettled([drop(ctx.store, oldThumb)])

@@ -23,7 +23,7 @@ export const createLocalDriver = (cfg: LocalConfig): StorageDriver => {
       await mkdir(dirname(path), { recursive: true })
       await Bun.write(path, body)
     },
-    get: async (key) => {
+    get: async key => {
       const path = safeJoin(root, key)
       const file = Bun.file(path)
       if (!(await file.exists())) {
@@ -31,7 +31,7 @@ export const createLocalDriver = (cfg: LocalConfig): StorageDriver => {
       }
       return new Response(file)
     },
-    drop: async (key) => {
+    drop: async key => {
       const path = safeJoin(root, key)
       try {
         await unlink(path)

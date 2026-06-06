@@ -1,7 +1,7 @@
-import sharp from "sharp"
 import { from } from "@atlas/db"
-import type { Primitive } from "../types.ts"
+import sharp from "sharp"
 import { fetchObject, makeKey, put } from "../../../storage/index.ts"
+import type { Primitive } from "../types.ts"
 
 const SUPPORTED_MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"])
 
@@ -50,10 +50,7 @@ const transformThumbnail: Primitive = {
     const obj = await fetchObject(ctx.store, file.storage_key)
     const sourceBytes = new Uint8Array(await obj.arrayBuffer())
 
-    const outBuffer = await sharp(sourceBytes)
-      .resize({ width, height, fit: "inside" })
-      .webp({ quality: 80 })
-      .toBuffer()
+    const outBuffer = await sharp(sourceBytes).resize({ width, height, fit: "inside" }).webp({ quality: 80 }).toBuffer()
     const outBytes = new Uint8Array(outBuffer)
 
     const thumbName = buildThumbName(file.name)
@@ -61,22 +58,24 @@ const transformThumbnail: Primitive = {
     await put(ctx.store, thumbKey, outBytes, "image/webp")
 
     /* Don't overwrite an existing same-name file; insert a new files row. */
-    const existing = await ctx.db.one(
+    const existing = (await ctx.db.one(
       from("files")
         .where(q => q("user_id").equals(ctx.ownerId))
-        .where(q => file.folder_id == null ? q("folder_id").isNull() : q("folder_id").equals(file.folder_id!))
+        .where(q => (file.folder_id == null ? q("folder_id").isNull() : q("folder_id").equals(file.folder_id!)))
         .where(q => q("name").equals(thumbName))
         .where(q => q("deleted_at").isNull())
         .select("id"),
-    ) as { id: number } | null
+    )) as { id: number } | null
 
     if (existing) {
       await ctx.db.execute(
-        from("files").where(q => q("id").equals(existing.id)).update({
-          mime: "image/webp",
-          size: outBytes.byteLength,
-          storage_key: thumbKey,
-        }),
+        from("files")
+          .where(q => q("id").equals(existing.id))
+          .update({
+            mime: "image/webp",
+            size: outBytes.byteLength,
+            storage_key: thumbKey,
+          }),
       )
     } else {
       await ctx.db.execute(

@@ -10,11 +10,9 @@ export type SigInfo = {
   service: string
 }
 
-const sha256hex = (data: string | Buffer | Uint8Array) =>
-  createHash("sha256").update(data).digest("hex")
+const sha256hex = (data: string | Buffer | Uint8Array) => createHash("sha256").update(data).digest("hex")
 
-const hmac = (key: string | Buffer, data: string): Buffer =>
-  createHmac("sha256", key).update(data).digest()
+const hmac = (key: string | Buffer, data: string): Buffer => createHmac("sha256", key).update(data).digest()
 
 export const parseAuthHeader = (header: string): SigInfo | null => {
   if (!header.startsWith("AWS4-HMAC-SHA256 ")) return null
@@ -66,10 +64,7 @@ export const canonicalQuery = (search: string): string => {
     const eq = pair.indexOf("=")
     const k = eq < 0 ? pair : pair.slice(0, eq)
     const v = eq < 0 ? "" : pair.slice(eq + 1)
-    return [
-      encodeURIComponentRFC3986(decodeURIComponent(k)),
-      encodeURIComponentRFC3986(decodeURIComponent(v)),
-    ] as const
+    return [encodeURIComponentRFC3986(decodeURIComponent(k)), encodeURIComponentRFC3986(decodeURIComponent(v))] as const
   })
   pairs.sort((a, b) => (a[0] === b[0] ? a[1].localeCompare(b[1]) : a[0].localeCompare(b[0])))
   return pairs.map(([k, v]) => `${k}=${v}`).join("&")
@@ -103,12 +98,7 @@ export const computeSignature = (input: VerifyInput): string => {
     input.payloadHash,
   ].join("\n")
 
-  const stringToSign = [
-    "AWS4-HMAC-SHA256",
-    input.amzDate,
-    input.sig.scope,
-    sha256hex(canonicalRequest),
-  ].join("\n")
+  const stringToSign = ["AWS4-HMAC-SHA256", input.amzDate, input.sig.scope, sha256hex(canonicalRequest)].join("\n")
 
   const kDate = hmac(`AWS4${input.secretKey}`, input.sig.date)
   const kRegion = hmac(kDate, input.sig.region)

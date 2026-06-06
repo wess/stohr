@@ -7,7 +7,7 @@ const routeRename: Primitive = {
   name: "Rename the file",
   category: "route",
   description:
-    "Renames the file. Template supports {name} {ext} {full} {YYYY} {MM} {DD}. Example: \"{YYYY}-{MM}-{DD}-{name}.{ext}\".",
+    'Renames the file. Template supports {name} {ext} {full} {YYYY} {MM} {DD}. Example: "{YYYY}-{MM}-{DD}-{name}.{ext}".',
   icon: "Edit3",
   subjects: ["file"],
   configSchema: {
@@ -17,7 +17,7 @@ const routeRename: Primitive = {
       name_template: {
         type: "string",
         title: "New name",
-        description: 'Use {name}, {ext}, {full}, {YYYY}, {MM}, {DD} as placeholders.',
+        description: "Use {name}, {ext}, {full}, {YYYY}, {MM}, {DD} as placeholders.",
       },
     },
   },
@@ -34,7 +34,9 @@ const routeRename: Primitive = {
     if (newName === env.subject.row.name) return { kind: "continue" }
 
     await ctx.db.execute(
-      from("files").where(q => q("id").equals(env.subject.row.id)).update({ name: newName }),
+      from("files")
+        .where(q => q("id").equals(env.subject.row.id))
+        .update({ name: newName }),
     )
     return {
       kind: "continue",

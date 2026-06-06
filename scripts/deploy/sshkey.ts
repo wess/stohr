@@ -1,6 +1,6 @@
+import { createHash } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { createHash } from "node:crypto"
 import { join } from "node:path"
 import type { ApiClient } from "./api.ts"
 

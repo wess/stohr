@@ -32,14 +32,19 @@ export const ERR_INVALID_PARAMS = -32602
 export const ERR_INTERNAL = -32603
 
 export const ok = (id: JsonRpcId, result: unknown): JsonRpcSuccess => ({
-  jsonrpc: "2.0", id, result,
+  jsonrpc: "2.0",
+  id,
+  result,
 })
 
 export const fail = (id: JsonRpcId, code: number, message: string, data?: unknown): JsonRpcError => ({
-  jsonrpc: "2.0", id, error: data === undefined ? { code, message } : { code, message, data },
+  jsonrpc: "2.0",
+  id,
+  error: data === undefined ? { code, message } : { code, message, data },
 })
 
 export const isRequest = (v: unknown): v is JsonRpcRequest =>
-  typeof v === "object" && v !== null
-  && (v as JsonRpcRequest).jsonrpc === "2.0"
-  && typeof (v as JsonRpcRequest).method === "string"
+  typeof v === "object" &&
+  v !== null &&
+  (v as JsonRpcRequest).jsonrpc === "2.0" &&
+  typeof (v as JsonRpcRequest).method === "string"

@@ -2,8 +2,8 @@ import type { Connection } from "@atlas/db"
 import { get, json, parseJson, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { ownerOnly } from "../security/owner.ts"
-import type { StorageHandle } from "../storage/index.ts"
 import { mcpEnabled, mcpToolEnabled } from "../settings/index.ts"
+import type { StorageHandle } from "../storage/index.ts"
 import {
   ERR_INTERNAL,
   ERR_INVALID_PARAMS,
@@ -11,18 +11,11 @@ import {
   ERR_METHOD_NOT_FOUND,
   fail,
   isRequest,
-  ok,
   type JsonRpcId,
   type JsonRpcResponse,
+  ok,
 } from "./jsonrpc.ts"
-import {
-  asError,
-  buildToolset,
-  findTool,
-  type Tool,
-  type ToolCategory,
-  type ToolContext,
-} from "./tools/index.ts"
+import { asError, buildToolset, findTool, type Tool, type ToolCategory, type ToolContext } from "./tools/index.ts"
 
 const PROTOCOL_VERSION = "2024-11-05"
 const SERVER_NAME = "stohr-mcp"
@@ -107,7 +100,7 @@ export const mcpRoutes = (db: Connection, secret: string, store: StorageHandle, 
   return [
     // Discovery endpoint. AI clients (or owners) hit this unauthenticated to
     // see whether MCP is enabled and what categories are exposed.
-    get("/mcp", async (c) => {
+    get("/mcp", async c => {
       const enabled = await mcpEnabled(db)
       const cats = {
         read: await mcpToolEnabled(db, "read"),
@@ -125,48 +118,51 @@ export const mcpRoutes = (db: Connection, secret: string, store: StorageHandle, 
       })
     }),
 
-    post("/mcp", guard(async (c) => {
-      if (!(await mcpEnabled(db))) {
-        return json(c, 503, { error: "MCP is disabled on this instance" })
-      }
-
-      const body = c.body as unknown
-      // Single request or batch (array). Notifications (no id) yield no
-      // entry in the response array; if the whole batch is notifications
-      // we return an empty 204.
-      const requests = Array.isArray(body) ? body : [body]
-      if (requests.length === 0) {
-        return json(c, 400, fail(null, ERR_INVALID_REQUEST, "Empty batch"))
-      }
-
-      const userId = authId(c)
-      const ctx: ToolContext = { db, store, userId, appUrl }
-
-      const responses: JsonRpcResponse[] = []
-      for (const raw of requests) {
-        if (!isRequest(raw)) {
-          responses.push(fail(null, ERR_INVALID_REQUEST, "Invalid JSON-RPC request"))
-          continue
+    post(
+      "/mcp",
+      guard(async c => {
+        if (!(await mcpEnabled(db))) {
+          return json(c, 503, { error: "MCP is disabled on this instance" })
         }
-        const idOrNull: JsonRpcId = raw.id === undefined ? null : raw.id
-        try {
-          const res = await dispatch({ id: idOrNull, method: raw.method, params: raw.params }, ctx, tools)
-          // Notifications produce null — skip them in the response.
-          if (res !== null) responses.push(res)
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
-          responses.push(fail(idOrNull, ERR_INTERNAL, msg))
-        }
-      }
 
-      if (Array.isArray(body)) {
-        if (responses.length === 0) {
-          return json(c, 204, {})
+        const body = c.body as unknown
+        // Single request or batch (array). Notifications (no id) yield no
+        // entry in the response array; if the whole batch is notifications
+        // we return an empty 204.
+        const requests = Array.isArray(body) ? body : [body]
+        if (requests.length === 0) {
+          return json(c, 400, fail(null, ERR_INVALID_REQUEST, "Empty batch"))
         }
-        return json(c, 200, responses)
-      }
-      return json(c, 200, responses[0])
-    })),
+
+        const userId = authId(c)
+        const ctx: ToolContext = { db, store, userId, appUrl }
+
+        const responses: JsonRpcResponse[] = []
+        for (const raw of requests) {
+          if (!isRequest(raw)) {
+            responses.push(fail(null, ERR_INVALID_REQUEST, "Invalid JSON-RPC request"))
+            continue
+          }
+          const idOrNull: JsonRpcId = raw.id === undefined ? null : raw.id
+          try {
+            const res = await dispatch({ id: idOrNull, method: raw.method, params: raw.params }, ctx, tools)
+            // Notifications produce null — skip them in the response.
+            if (res !== null) responses.push(res)
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            responses.push(fail(idOrNull, ERR_INTERNAL, msg))
+          }
+        }
+
+        if (Array.isArray(body)) {
+          if (responses.length === 0) {
+            return json(c, 204, {})
+          }
+          return json(c, 200, responses)
+        }
+        return json(c, 200, responses[0])
+      }),
+    ),
   ]
 }
 
@@ -179,16 +175,21 @@ export const adminMcpRoutes = (db: Connection, secret: string, appUrl: string) =
   const ownerCheck = ownerOnly(db)
   const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck)
   return [
-    get("/admin/mcp/preview", guard(async (c) => {
-      const enabled = await mcpEnabled(db)
-      const advertised = await filterEnabledTools(db, tools)
-      const advertisedNames = new Set(advertised.map(t => t.name))
-      return json(c, 200, {
-        enabled,
-        endpoint: `${appUrl.replace(/\/$/, "")}/mcp`,
-        advertised_tools: advertised.map(t => ({ name: t.name, category: t.category, description: t.description })),
-        hidden_tools: tools.filter(t => !advertisedNames.has(t.name)).map(t => ({ name: t.name, category: t.category })),
-      })
-    })),
+    get(
+      "/admin/mcp/preview",
+      guard(async c => {
+        const enabled = await mcpEnabled(db)
+        const advertised = await filterEnabledTools(db, tools)
+        const advertisedNames = new Set(advertised.map(t => t.name))
+        return json(c, 200, {
+          enabled,
+          endpoint: `${appUrl.replace(/\/$/, "")}/mcp`,
+          advertised_tools: advertised.map(t => ({ name: t.name, category: t.category, description: t.description })),
+          hidden_tools: tools
+            .filter(t => !advertisedNames.has(t.name))
+            .map(t => ({ name: t.name, category: t.category })),
+        })
+      }),
+    ),
   ]
 }

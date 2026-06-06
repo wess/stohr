@@ -1,6 +1,6 @@
 import { from } from "@atlas/db"
-import { fetchObject } from "../../storage/index.ts"
 import { fileAccess, folderAccess } from "../../permissions/index.ts"
+import { fetchObject } from "../../storage/index.ts"
 import { asError, asText, type Tool, type ToolContext } from "./index.ts"
 
 // Cap raw-content responses so a single read_file call can't pull a multi-GB
@@ -16,7 +16,7 @@ const listFolders = async (ctx: ToolContext, args: Record<string, unknown>) => {
     from("folders")
       .where(q => q("user_id").equals(ctx.userId))
       .where(q => q("deleted_at").isNull())
-      .where(q => parentId === null ? q("parent_id").isNull() : q("parent_id").equals(parentId))
+      .where(q => (parentId === null ? q("parent_id").isNull() : q("parent_id").equals(parentId)))
       .select("id", "name", "parent_id", "created_at")
       .orderBy("name", "ASC"),
   )
@@ -34,7 +34,7 @@ const listFiles = async (ctx: ToolContext, args: Record<string, unknown>) => {
     from("files")
       .where(q => q("user_id").equals(ctx.userId))
       .where(q => q("deleted_at").isNull())
-      .where(q => folderId === null ? q("folder_id").isNull() : q("folder_id").equals(folderId))
+      .where(q => (folderId === null ? q("folder_id").isNull() : q("folder_id").equals(folderId)))
       .select("id", "name", "mime", "size", "folder_id", "version", "created_at")
       .orderBy("name", "ASC"),
   )
@@ -61,9 +61,10 @@ const readFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
   if (!blob) return asError("Storage miss")
   const bytes = new Uint8Array(await blob.arrayBuffer())
   // Heuristic: serve text/* as raw UTF-8 so models don't need to base64-decode.
-  const isText = access.file.mime.startsWith("text/")
-    || access.file.mime === "application/json"
-    || access.file.mime === "application/xml"
+  const isText =
+    access.file.mime.startsWith("text/") ||
+    access.file.mime === "application/json" ||
+    access.file.mime === "application/xml"
   if (isText) {
     return asText({
       id: access.file.id,
@@ -116,7 +117,10 @@ export const readTools = (): Tool[] => [
     inputSchema: {
       type: "object",
       properties: {
-        parent_id: { type: ["integer", "null"], description: "Folder id whose children to list. Omit or null for root." },
+        parent_id: {
+          type: ["integer", "null"],
+          description: "Folder id whose children to list. Omit or null for root.",
+        },
       },
     },
     handler: listFolders,
@@ -135,7 +139,8 @@ export const readTools = (): Tool[] => [
   },
   {
     name: "read_file",
-    description: "Read a file's bytes. Returns UTF-8 for text/* and JSON/XML; base64 otherwise. Caps at max_bytes (default 1 MiB).",
+    description:
+      "Read a file's bytes. Returns UTF-8 for text/* and JSON/XML; base64 otherwise. Caps at max_bytes (default 1 MiB).",
     category: "read",
     inputSchema: {
       type: "object",

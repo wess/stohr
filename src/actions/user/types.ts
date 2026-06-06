@@ -7,8 +7,8 @@ export type UserActionRow = {
   name: string
   description: string | null
   icon: string | null
-  triggers: string  // JSON array of EventName
-  steps: string     // JSON array of Step
+  triggers: string // JSON array of EventName
+  steps: string // JSON array of Step
   enabled: boolean
   forked_from: string | null
   created_at: string

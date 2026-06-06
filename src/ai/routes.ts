@@ -69,85 +69,96 @@ export const aiRoutes = (db: Connection, secret: string) => {
   const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)
 
   return [
-    get("/ai/settings", guard(async (c) => {
-      const row = await loadRow(db)
-      if (!row) return json(c, 404, { error: "AI settings row missing" })
-      return json(c, 200, redact(row))
-    })),
+    get(
+      "/ai/settings",
+      guard(async c => {
+        const row = await loadRow(db)
+        if (!row) return json(c, 404, { error: "AI settings row missing" })
+        return json(c, 200, redact(row))
+      }),
+    ),
 
-    put("/ai/settings", authed(async (c) => {
-      const userId = authId(c)
-      const body = c.body as {
-        provider?: string
-        api_key?: string | null
-        apiKey?: string | null
-        base_url?: string | null
-        baseUrl?: string | null
-        chat_model?: string | null
-        chatModel?: string | null
-        enabled?: boolean
-      }
-
-      const row = await loadRow(db)
-      if (!row) return json(c, 404, { error: "AI settings row missing" })
-
-      const update: Record<string, unknown> = { updated_by: userId, updated_at: raw("NOW()") }
-
-      if (body.provider !== undefined) {
-        if (!VALID_PROVIDERS.has(body.provider)) {
-          return json(c, 422, { error: `provider must be one of: openai, anthropic, local` })
+    put(
+      "/ai/settings",
+      authed(async c => {
+        const userId = authId(c)
+        const body = c.body as {
+          provider?: string
+          api_key?: string | null
+          apiKey?: string | null
+          base_url?: string | null
+          baseUrl?: string | null
+          chat_model?: string | null
+          chatModel?: string | null
+          enabled?: boolean
         }
-        update.provider = body.provider
-      }
 
-      const apiKey = body.api_key !== undefined ? body.api_key : body.apiKey
-      // undefined = leave alone; null = clear; string = set.
-      if (apiKey !== undefined) update.api_key = apiKey
+        const row = await loadRow(db)
+        if (!row) return json(c, 404, { error: "AI settings row missing" })
 
-      const baseUrl = body.base_url !== undefined ? body.base_url : body.baseUrl
-      if (baseUrl !== undefined) update.base_url = baseUrl
+        const update: Record<string, unknown> = { updated_by: userId, updated_at: raw("NOW()") }
 
-      const chatModel = body.chat_model !== undefined ? body.chat_model : body.chatModel
-      if (chatModel !== undefined) update.chat_model = chatModel
+        if (body.provider !== undefined) {
+          if (!VALID_PROVIDERS.has(body.provider)) {
+            return json(c, 422, { error: `provider must be one of: openai, anthropic, local` })
+          }
+          update.provider = body.provider
+        }
 
-      if (body.enabled !== undefined) update.enabled = body.enabled
+        const apiKey = body.api_key !== undefined ? body.api_key : body.apiKey
+        // undefined = leave alone; null = clear; string = set.
+        if (apiKey !== undefined) update.api_key = apiKey
 
-      await db.execute(
-        from("ai_settings").where(q => q("id").equals(row.id)).update(update),
-      )
+        const baseUrl = body.base_url !== undefined ? body.base_url : body.baseUrl
+        if (baseUrl !== undefined) update.base_url = baseUrl
 
-      const fresh = await loadRow(db)
-      return json(c, 200, fresh ? redact(fresh) : null)
-    })),
+        const chatModel = body.chat_model !== undefined ? body.chat_model : body.chatModel
+        if (chatModel !== undefined) update.chat_model = chatModel
 
-    post("/ai/chat", authed(async (c) => {
-      const body = c.body as {
-        messages?: AiMessage[]
-        model?: string
-        max_tokens?: number
-        maxTokens?: number
-        temperature?: number
-      }
-      if (!Array.isArray(body.messages) || body.messages.length === 0) {
-        return json(c, 422, { error: "messages: non-empty array required" })
-      }
+        if (body.enabled !== undefined) update.enabled = body.enabled
 
-      const handle = await loadAi(db)
-      if (!handle) {
-        return json(c, 503, { error: "AI is not enabled or not configured. Update /ai/settings first." })
-      }
+        await db.execute(
+          from("ai_settings")
+            .where(q => q("id").equals(row.id))
+            .update(update),
+        )
 
-      try {
-        const result = await handle.chat(body.messages, {
-          model: body.model,
-          maxTokens: body.max_tokens ?? body.maxTokens,
-          temperature: body.temperature,
-        })
-        return json(c, 200, result)
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        return json(c, 502, { error: message })
-      }
-    })),
+        const fresh = await loadRow(db)
+        return json(c, 200, fresh ? redact(fresh) : null)
+      }),
+    ),
+
+    post(
+      "/ai/chat",
+      authed(async c => {
+        const body = c.body as {
+          messages?: AiMessage[]
+          model?: string
+          max_tokens?: number
+          maxTokens?: number
+          temperature?: number
+        }
+        if (!Array.isArray(body.messages) || body.messages.length === 0) {
+          return json(c, 422, { error: "messages: non-empty array required" })
+        }
+
+        const handle = await loadAi(db)
+        if (!handle) {
+          return json(c, 503, { error: "AI is not enabled or not configured. Update /ai/settings first." })
+        }
+
+        try {
+          const result = await handle.chat(body.messages, {
+            model: body.model,
+            maxTokens: body.max_tokens ?? body.maxTokens,
+            temperature: body.temperature,
+          })
+          return json(c, 200, result)
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          return json(c, 502, { error: message })
+        }
+      }),
+    ),
   ]
 }

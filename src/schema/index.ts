@@ -9,7 +9,7 @@ export const users = defineSchema("users", {
   is_owner: column.boolean().default(false),
   // Per-user storage cap in bytes. 0 means unlimited; the owner sets caps
   // from Admin → Users. See src/usage/index.ts#checkQuota.
-  storage_quota_bytes: column.bigint().default(0),
+  storage_quota_bytes: column.bigint().default(0n),
   totp_secret: column.text().nullable(),
   totp_enabled: column.boolean().default(false),
   totp_backup_codes: column.text().nullable(),
@@ -17,13 +17,13 @@ export const users = defineSchema("users", {
   suspended_at: column.timestamp().nullable(),
   suspended_reason: column.text().nullable(),
   suspended_by: column.integer().nullable().ref("users", "id"),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const rateLimits = defineSchema("rate_limits", {
   bucket: column.text().primaryKey(),
   count: column.integer().default(0),
-  window_started_at: column.timestamp().default("now()"),
+  window_started_at: column.timestamp().default(new Date()),
 })
 
 export const auditEvents = defineSchema("audit_events", {
@@ -33,7 +33,7 @@ export const auditEvents = defineSchema("audit_events", {
   metadata: column.text().nullable(),
   ip: column.text().nullable(),
   user_agent: column.text().nullable(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const sessions = defineSchema("sessions", {
@@ -43,8 +43,8 @@ export const sessions = defineSchema("sessions", {
   user_agent: column.text().nullable(),
   expires_at: column.timestamp(),
   revoked_at: column.timestamp().nullable(),
-  last_used_at: column.timestamp().default("now()"),
-  created_at: column.timestamp().default("now()"),
+  last_used_at: column.timestamp().default(new Date()),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const oauthClients = defineSchema("oauth_clients", {
@@ -58,7 +58,7 @@ export const oauthClients = defineSchema("oauth_clients", {
   allowed_scopes: column.text(),
   is_official: column.boolean().default(false),
   created_by: column.integer().nullable().ref("users", "id"),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
   revoked_at: column.timestamp().nullable(),
 })
 
@@ -72,7 +72,7 @@ export const oauthAuthorizationCodes = defineSchema("oauth_authorization_codes",
   scope: column.text(),
   expires_at: column.timestamp(),
   used_at: column.timestamp().nullable(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const oauthDeviceCodes = defineSchema("oauth_device_codes", {
@@ -85,7 +85,7 @@ export const oauthDeviceCodes = defineSchema("oauth_device_codes", {
   denied_at: column.timestamp().nullable(),
   last_polled_at: column.timestamp().nullable(),
   expires_at: column.timestamp(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const oauthRefreshTokens = defineSchema("oauth_refresh_tokens", {
@@ -96,8 +96,8 @@ export const oauthRefreshTokens = defineSchema("oauth_refresh_tokens", {
   parent_token_hash: column.text().nullable(),
   expires_at: column.timestamp(),
   revoked_at: column.timestamp().nullable(),
-  last_used_at: column.timestamp().default("now()"),
-  created_at: column.timestamp().default("now()"),
+  last_used_at: column.timestamp().default(new Date()),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const apps = defineSchema("apps", {
@@ -108,7 +108,7 @@ export const apps = defineSchema("apps", {
   token_hash: column.text().unique(),
   token_prefix: column.text(),
   last_used_at: column.timestamp().nullable(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const s3AccessKeys = defineSchema("s3_access_keys", {
@@ -118,7 +118,7 @@ export const s3AccessKeys = defineSchema("s3_access_keys", {
   secret_key: column.text(),
   name: column.text().nullable(),
   last_used_at: column.timestamp().nullable(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const invites = defineSchema("invites", {
@@ -128,7 +128,7 @@ export const invites = defineSchema("invites", {
   invited_by: column.integer().nullable().ref("users", "id"),
   used_at: column.timestamp().nullable(),
   used_by: column.integer().nullable().ref("users", "id"),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const collaborations = defineSchema("collaborations", {
@@ -139,7 +139,7 @@ export const collaborations = defineSchema("collaborations", {
   email: column.text().nullable(),
   role: column.text().default("viewer"),
   invited_by: column.integer().nullable().ref("users", "id"),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
   accepted_at: column.timestamp().nullable(),
 })
 
@@ -152,10 +152,10 @@ export const folders = defineSchema("folders", {
   is_public: column.boolean().default(false),
   federation_id: column.integer().nullable().ref("federations", "id"),
   federation_role: column.text().nullable(),
-  federation_quota_bytes: column.bigint().default(0),
+  federation_quota_bytes: column.bigint().default(0n),
   space_id: column.integer().nullable().ref("spaces", "id"),
   deleted_at: column.timestamp().nullable(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const spaces = defineSchema("spaces", {
@@ -164,7 +164,7 @@ export const spaces = defineSchema("spaces", {
   name: column.text(),
   description: column.text().nullable(),
   owner_id: column.integer().ref("users", "id"),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
   deleted_at: column.timestamp().nullable(),
 })
 
@@ -174,7 +174,7 @@ export const spaceMembers = defineSchema("space_members", {
   user_id: column.integer().ref("users", "id"),
   role: column.text(),
   added_by: column.integer().nullable().ref("users", "id"),
-  added_at: column.timestamp().default("now()"),
+  added_at: column.timestamp().default(new Date()),
 })
 
 export const files = defineSchema("files", {
@@ -191,10 +191,13 @@ export const files = defineSchema("files", {
   text_indexed_version: column.integer().nullable(),
   text_indexed_at: column.timestamp().nullable(),
   text_extract_error: column.text().nullable(),
+  scan_status: column.text().default("pending"),
+  scan_signature: column.text().nullable(),
+  scanned_at: column.timestamp().nullable(),
   photo_asset_id: column.text().nullable(),
   captured_at: column.timestamp().nullable(),
   deleted_at: column.timestamp().nullable(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const fileVersions = defineSchema("file_versions", {
@@ -205,7 +208,23 @@ export const fileVersions = defineSchema("file_versions", {
   size: column.bigint(),
   storage_key: column.text(),
   uploaded_by: column.integer().nullable().ref("users", "id"),
-  uploaded_at: column.timestamp().default("now()"),
+  uploaded_at: column.timestamp().default(new Date()),
+})
+
+export const uploadSessions = defineSchema("upload_sessions", {
+  id: column.text().primaryKey(),
+  user_id: column.integer().ref("users", "id"),
+  folder_id: column.integer().nullable().ref("folders", "id"),
+  file_name: column.text(),
+  total_size: column.bigint(),
+  mime: column.text(),
+  chunks_received: column.bigint().default(0n),
+  byte_offset: column.bigint().default(0n),
+  storage_key: column.text(),
+  s3_upload_id: column.text().nullable(),
+  s3_part_etags: column.text().nullable(),
+  expires_at: column.timestamp(),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const shares = defineSchema("shares", {
@@ -216,7 +235,7 @@ export const shares = defineSchema("shares", {
   expires_at: column.timestamp().nullable(),
   password_hash: column.text().nullable(),
   burn_on_view: column.boolean().default(false),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const folderActions = defineSchema("folder_actions", {
@@ -226,8 +245,8 @@ export const folderActions = defineSchema("folder_actions", {
   slug: column.text(),
   config: column.text().default("{}"),
   enabled: column.boolean().default(true),
-  created_at: column.timestamp().default("now()"),
-  updated_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
+  updated_at: column.timestamp().default(new Date()),
 })
 
 export const folderActionRuns = defineSchema("folder_action_runs", {
@@ -237,7 +256,7 @@ export const folderActionRuns = defineSchema("folder_action_runs", {
   subject_kind: column.text(),
   subject_id: column.integer(),
   status: column.text(),
-  started_at: column.timestamp().default("now()"),
+  started_at: column.timestamp().default(new Date()),
   finished_at: column.timestamp().nullable(),
   error: column.text().nullable(),
   result: column.text().nullable(),
@@ -248,11 +267,11 @@ export const webauthnCredentials = defineSchema("webauthn_credentials", {
   user_id: column.integer().ref("users", "id"),
   credential_id: column.text().unique(),
   public_key: column.text(),
-  counter: column.bigint().default(0),
+  counter: column.bigint().default(0n),
   transports: column.text().default("[]"),
   name: column.text().nullable(),
   last_used_at: column.timestamp().nullable(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const webauthnChallenges = defineSchema("webauthn_challenges", {
@@ -260,7 +279,7 @@ export const webauthnChallenges = defineSchema("webauthn_challenges", {
   user_id: column.integer().nullable().ref("users", "id"),
   kind: column.text(),
   expires_at: column.timestamp(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const passwordResets = defineSchema("password_resets", {
@@ -270,7 +289,7 @@ export const passwordResets = defineSchema("password_resets", {
   expires_at: column.timestamp(),
   used_at: column.timestamp().nullable(),
   ip: column.text().nullable(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const userActions = defineSchema("user_actions", {
@@ -283,8 +302,8 @@ export const userActions = defineSchema("user_actions", {
   steps: column.text().default("[]"),
   enabled: column.boolean().default(true),
   forked_from: column.text().nullable(),
-  created_at: column.timestamp().default("now()"),
-  updated_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
+  updated_at: column.timestamp().default(new Date()),
 })
 
 export const instanceKeys = defineSchema("instance_keys", {
@@ -293,7 +312,7 @@ export const instanceKeys = defineSchema("instance_keys", {
   private_key: column.text(),
   x25519_public_key: column.text(),
   x25519_private_key: column.text(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const federations = defineSchema("federations", {
@@ -310,7 +329,7 @@ export const federations = defineSchema("federations", {
   quota_multiplier: column.text().default("1.0"),
   group_key_encrypted: column.text().nullable(),
   created_by: column.integer().nullable().ref("users", "id"),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const federationMembers = defineSchema("federation_members", {
@@ -323,10 +342,10 @@ export const federationMembers = defineSchema("federation_members", {
   display_name: column.text().nullable(),
   is_local: column.boolean().default(false),
   is_admin: column.boolean().default(false),
-  contributed_bytes: column.bigint().default(0),
-  used_bytes: column.bigint().default(0),
+  contributed_bytes: column.bigint().default(0n),
+  used_bytes: column.bigint().default(0n),
   status: column.text().default("active"),
-  joined_at: column.timestamp().default("now()"),
+  joined_at: column.timestamp().default(new Date()),
   last_seen_at: column.timestamp().nullable(),
 })
 
@@ -338,7 +357,7 @@ export const federationInvites = defineSchema("federation_invites", {
   used_at: column.timestamp().nullable(),
   used_by_pubkey: column.text().nullable(),
   created_by: column.integer().nullable().ref("users", "id"),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const federationBlobs = defineSchema("federation_blobs", {
@@ -352,7 +371,7 @@ export const federationBlobs = defineSchema("federation_blobs", {
   local_storage_key: column.text().nullable(),
   encrypted_metadata: column.text().nullable(),
   file_id: column.integer().nullable().ref("files", "id"),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const federationShards = defineSchema("federation_shards", {
@@ -370,7 +389,7 @@ export const federationShards = defineSchema("federation_shards", {
   local_storage_key: column.text().nullable(),
   encrypted_metadata: column.text().nullable(),
   file_id: column.integer().nullable().ref("files", "id"),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const webdavCredentials = defineSchema("webdav_credentials", {
@@ -378,16 +397,16 @@ export const webdavCredentials = defineSchema("webdav_credentials", {
   token_hash: column.text().nullable(),
   enabled: column.boolean().default(false),
   last_used_at: column.timestamp().nullable(),
-  updated_at: column.timestamp().default("now()"),
-  created_at: column.timestamp().default("now()"),
+  updated_at: column.timestamp().default(new Date()),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const instanceSettings = defineSchema("instance_settings", {
   key: column.text().primaryKey(),
   value: column.text(),
   updated_by: column.integer().nullable().ref("users", "id"),
-  updated_at: column.timestamp().default("now()"),
-  created_at: column.timestamp().default("now()"),
+  updated_at: column.timestamp().default(new Date()),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const aiSettings = defineSchema("ai_settings", {
@@ -398,8 +417,8 @@ export const aiSettings = defineSchema("ai_settings", {
   chat_model: column.text().nullable(),
   enabled: column.boolean().default(false),
   updated_by: column.integer().nullable().ref("users", "id"),
-  updated_at: column.timestamp().default("now()"),
-  created_at: column.timestamp().default("now()"),
+  updated_at: column.timestamp().default(new Date()),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const mcpServers = defineSchema("mcp_servers", {
@@ -410,8 +429,8 @@ export const mcpServers = defineSchema("mcp_servers", {
   auth_token: column.text().nullable(),
   enabled: column.boolean().default(true),
   created_by: column.integer().nullable().ref("users", "id"),
-  created_at: column.timestamp().default("now()"),
-  updated_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
+  updated_at: column.timestamp().default(new Date()),
 })
 
 export const messages = defineSchema("messages", {
@@ -426,7 +445,7 @@ export const messages = defineSchema("messages", {
   read_at: column.timestamp().nullable(),
   archived_at: column.timestamp().nullable(),
   deleted_at: column.timestamp().nullable(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const comments = defineSchema("comments", {
@@ -438,7 +457,7 @@ export const comments = defineSchema("comments", {
   body: column.text(),
   edited_at: column.timestamp().nullable(),
   deleted_at: column.timestamp().nullable(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const notifications = defineSchema("notifications", {
@@ -450,7 +469,7 @@ export const notifications = defineSchema("notifications", {
   actor_id: column.integer().nullable().ref("users", "id"),
   payload: column.text().nullable(),
   read_at: column.timestamp().nullable(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const oidcConfig = defineSchema("oidc_config", {
@@ -466,8 +485,8 @@ export const oidcConfig = defineSchema("oidc_config", {
   name_claim: column.text().default("name"),
   username_claim: column.text().default("preferred_username"),
   updated_by: column.integer().nullable().ref("users", "id"),
-  updated_at: column.timestamp().default("now()"),
-  created_at: column.timestamp().default("now()"),
+  updated_at: column.timestamp().default(new Date()),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const ldapConfig = defineSchema("ldap_config", {
@@ -484,8 +503,8 @@ export const ldapConfig = defineSchema("ldap_config", {
   username_attr: column.text().default("uid"),
   auto_provision: column.boolean().default(true),
   updated_by: column.integer().nullable().ref("users", "id"),
-  updated_at: column.timestamp().default("now()"),
-  created_at: column.timestamp().default("now()"),
+  updated_at: column.timestamp().default(new Date()),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const externalIdentities = defineSchema("external_identities", {
@@ -496,7 +515,7 @@ export const externalIdentities = defineSchema("external_identities", {
   email: column.text().nullable(),
   display_name: column.text().nullable(),
   last_login_at: column.timestamp().nullable(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const oidcStates = defineSchema("oidc_states", {
@@ -505,7 +524,7 @@ export const oidcStates = defineSchema("oidc_states", {
   code_verifier: column.text(),
   redirect_to: column.text().nullable(),
   expires_at: column.timestamp(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
 })
 
 export const contactMessages = defineSchema("contact_messages", {
@@ -519,5 +538,27 @@ export const contactMessages = defineSchema("contact_messages", {
   user_agent: column.text().nullable(),
   handled_by: column.integer().nullable().ref("users", "id"),
   handled_at: column.timestamp().nullable(),
-  created_at: column.timestamp().default("now()"),
+  created_at: column.timestamp().default(new Date()),
+})
+
+export const webhooks = defineSchema("webhooks", {
+  id: column.serial().primaryKey(),
+  user_id: column.integer().ref("users", "id"),
+  url: column.text(),
+  secret: column.text().nullable(),
+  content_type: column.text().default("application/json"),
+  events: column.text().default("[]"),
+  active: column.boolean().default(true),
+  created_at: column.timestamp().default(new Date()),
+})
+
+export const webhookDeliveries = defineSchema("webhook_deliveries", {
+  id: column.serial().primaryKey(),
+  webhook_id: column.integer().ref("webhooks", "id"),
+  event: column.text(),
+  payload: column.text(),
+  status_code: column.integer().nullable(),
+  response_body: column.text().nullable(),
+  duration_ms: column.integer(),
+  created_at: column.timestamp().default(new Date()),
 })

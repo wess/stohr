@@ -7,16 +7,16 @@ export const findOrCreateFolder = async (
   parentId: number,
   name: string,
 ): Promise<number> => {
-  const existing = await db.one(
+  const existing = (await db.one(
     from("folders")
       .where(q => q("user_id").equals(ownerId))
       .where(q => q("parent_id").equals(parentId))
       .where(q => q("name").equals(name))
       .where(q => q("deleted_at").isNull())
       .select("id"),
-  ) as { id: number } | null
+  )) as { id: number } | null
   if (existing) return existing.id
-  const inserted = await db.execute(
+  const inserted = (await db.execute(
     from("folders")
       .insert({
         user_id: ownerId,
@@ -26,7 +26,7 @@ export const findOrCreateFolder = async (
         is_public: false,
       })
       .returning("id"),
-  ) as Array<{ id: number }>
+  )) as Array<{ id: number }>
   return inserted[0]!.id
 }
 

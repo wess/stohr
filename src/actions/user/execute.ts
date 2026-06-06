@@ -10,10 +10,7 @@ export const loadUserAction = async (db: Connection, id: number): Promise<UserAc
   return (row as UserActionRow | null) ?? null
 }
 
-export const runUserAction = async (
-  ctx: ActionContext,
-  row: UserActionRow,
-): Promise<ActionResult> => {
+export const runUserAction = async (ctx: ActionContext, row: UserActionRow): Promise<ActionResult> => {
   if (!row.enabled) {
     return { ok: true, result: { skipped: true, reason: "user action disabled" } }
   }

@@ -19,7 +19,9 @@ const allocToken = async (ctx: ToolContext): Promise<string> => {
   for (let i = 0; i < 8; i++) {
     const candidate = shortToken()
     const taken = await ctx.db.one(
-      from("shares").where(q => q("token").equals(candidate)).select("id"),
+      from("shares")
+        .where(q => q("token").equals(candidate))
+        .select("id"),
     )
     if (!taken) return candidate
   }
@@ -33,22 +35,31 @@ const listShares = async (ctx: ToolContext) => {
       .where(q => q("shares.user_id").equals(ctx.userId))
       .where(q => q("files.deleted_at").isNull())
       .select(
-        "shares.id", "shares.token", "shares.expires_at", "shares.created_at",
-        "shares.burn_on_view", "shares.password_hash",
-        "files.name", "files.size", "files.mime", "shares.file_id",
+        "shares.id",
+        "shares.token",
+        "shares.expires_at",
+        "shares.created_at",
+        "shares.burn_on_view",
+        "shares.password_hash",
+        "files.name",
+        "files.size",
+        "files.mime",
+        "shares.file_id",
       )
-      .orderBy("shares.created_at", "DESC")
+      .orderBy("shares.created_at", "DESC"),
   )
-  return asText(rows.map((r: any) => ({
-    id: r.id,
-    token: r.token,
-    url: `${ctx.appUrl}/s/${r.token}`,
-    expires_at: r.expires_at,
-    created_at: r.created_at,
-    burn_on_view: r.burn_on_view,
-    password_required: !!r.password_hash,
-    file: { id: r.file_id, name: r.name, size: r.size, mime: r.mime },
-  })))
+  return asText(
+    rows.map((r: any) => ({
+      id: r.id,
+      token: r.token,
+      url: `${ctx.appUrl}/s/${r.token}`,
+      expires_at: r.expires_at,
+      created_at: r.created_at,
+      burn_on_view: r.burn_on_view,
+      password_required: !!r.password_hash,
+      file: { id: r.file_id, name: r.name, size: r.size, mime: r.mime },
+    })),
+  )
 }
 
 const createShare = async (ctx: ToolContext, args: Record<string, unknown>) => {
@@ -74,7 +85,7 @@ const createShare = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString()
   const passwordHash = password ? await hash(password) : null
 
-  const rows = await ctx.db.execute(
+  const rows = (await ctx.db.execute(
     from("shares")
       .insert({
         file_id: fileId,
@@ -85,7 +96,7 @@ const createShare = async (ctx: ToolContext, args: Record<string, unknown>) => {
         burn_on_view: burnOnView,
       })
       .returning("id", "token", "expires_at", "burn_on_view", "created_at"),
-  ) as Array<{ id: number; token: string; expires_at: string; burn_on_view: boolean; created_at: string }>
+  )) as Array<{ id: number; token: string; expires_at: string; burn_on_view: boolean; created_at: string }>
 
   const out = rows[0]!
   return asText({
@@ -99,10 +110,16 @@ const revokeShare = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const id = Number(args.id ?? args.share_id ?? args.shareId)
   if (!Number.isFinite(id)) return asError("id is required")
   const row = await ctx.db.one(
-    from("shares").where(q => q("id").equals(id)).where(q => q("user_id").equals(ctx.userId)),
+    from("shares")
+      .where(q => q("id").equals(id))
+      .where(q => q("user_id").equals(ctx.userId)),
   )
   if (!row) return asError("Share not found")
-  await ctx.db.execute(from("shares").where(q => q("id").equals(id)).del())
+  await ctx.db.execute(
+    from("shares")
+      .where(q => q("id").equals(id))
+      .del(),
+  )
   return asText({ id, revoked: true })
 }
 
@@ -112,7 +129,7 @@ export const shareTools = (): Tool[] => [
     description: "List the caller's active share links with the public URL for each.",
     category: "share",
     inputSchema: { type: "object", properties: {} },
-    handler: (ctx) => listShares(ctx),
+    handler: ctx => listShares(ctx),
   },
   {
     name: "create_share",

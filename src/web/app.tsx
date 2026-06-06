@@ -220,6 +220,7 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
   const [mfaBackup, setMfaBackup] = useState("")
   const [passkeyBusy, setPasskeyBusy] = useState(false)
   const [oidc, setOidc] = useState<{ available: boolean; label: string } | null>(null)
+  const [sso, setSso] = useState<{ available: boolean; label: string } | null>(null)
   const [ldap, setLdap] = useState<{ available: boolean } | null>(null)
   const [useLdap, setUseLdap] = useState(false)
 
@@ -247,10 +248,11 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
   useEffect(() => {
     if (needsSetup) return
     let cancelled = false
-    Promise.all([api.oidcStatus(), api.ldapStatus()]).then(([o, l]) => {
+    Promise.all([api.oidcStatus(), api.ldapStatus(), api.ssoStatus()]).then(([o, l, s]) => {
       if (cancelled) return
       setOidc(o)
       setLdap(l)
+      setSso(s)
     }).catch(() => {})
     return () => { cancelled = true }
   }, [needsSetup])
@@ -410,6 +412,18 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
         </>
       ) : (
         <>
+          {!needsSetup && sso?.available && (
+            <>
+              <button
+                type="button"
+                className="passkey-cta"
+                onClick={() => { window.location.href = "/auth/sso/login" }}
+              >
+                🏰 Sign in with {sso.label}
+              </button>
+              <div className="auth-divider"><span>or</span></div>
+            </>
+          )}
           {!needsSetup && oidc?.available && (
             <>
               <button
@@ -1694,7 +1708,7 @@ const PreviewModal: React.FC<{ file: FileItem; onClose: () => void }> = ({ file,
           )}
           </div>
           {commentsOpen && (
-            <div style={{ width: 360, borderLeft: "1px solid var(--border)", overflowY: "auto", padding: 16 }}>
+            <div className="preview-comments">
               <CommentsPanel kind="file" resourceId={file.id} />
             </div>
           )}
@@ -4318,35 +4332,37 @@ const MessageThreadView: React.FC<{ threadId: number; onChange: () => void }> = 
   const last = items[items.length - 1]
   const canReply = last && last.kind !== "system" && !!last.from
 
-  if (err) return <div className="main"><div className="msg err">{err}</div></div>
-  if (loading && items.length === 0) return <div className="main"><div style={{ color: "var(--muted)" }}>Loading…</div></div>
-  if (items.length === 0) return <div className="main"><div style={{ color: "var(--muted)" }}>Thread is empty or unavailable.</div></div>
+  if (err) return <div className="main"><div className="content"><div className="msg err">{err}</div></div></div>
+  if (loading && items.length === 0) return <div className="main"><div className="content"><div style={{ color: "var(--muted)" }}>Loading…</div></div></div>
+  if (items.length === 0) return <div className="main"><div className="content"><div style={{ color: "var(--muted)" }}>Thread is empty or unavailable.</div></div></div>
 
   return (
     <div className="main">
-      <div style={{ marginBottom: 8 }}>
-        <span style={{ color: "var(--muted)", cursor: "pointer" }} onClick={() => navigate("/app/messages")}>← Messages</span>
-      </div>
-      <h2 style={{ margin: "0 0 16px" }}>{items[0]!.subject}</h2>
-      <div>
-        {items.map(m => (
-          <div key={m.id} style={{ padding: 12, borderRadius: 6, marginBottom: 8, background: "var(--card)", border: "1px solid var(--border)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-              <strong>{formatSender(m)}</strong>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>{new Date(m.created_at).toLocaleString()}</span>
-            </div>
-            <div style={{ whiteSpace: "pre-wrap" }}>{m.body}</div>
-          </div>
-        ))}
-      </div>
-      {canReply ? (
-        <div style={{ marginTop: 16 }}>
-          <textarea placeholder="Reply…" rows={4} value={replyBody} onChange={e => setReplyBody(e.target.value)} style={{ width: "100%", boxSizing: "border-box" }} />
-          <button className="primary" onClick={reply} disabled={sending || !replyBody.trim()}>{sending ? "Sending…" : "Reply"}</button>
+      <div className="content">
+        <div style={{ marginBottom: 8 }}>
+          <span style={{ color: "var(--muted)", cursor: "pointer" }} onClick={() => navigate("/app/messages")}>← Messages</span>
         </div>
-      ) : (
-        <div style={{ marginTop: 16, color: "var(--muted)", fontSize: 13 }}>Cannot reply to a system message.</div>
-      )}
+        <h2 style={{ margin: "0 0 16px" }}>{items[0]!.subject}</h2>
+        <div>
+          {items.map(m => (
+            <div key={m.id} style={{ padding: 12, borderRadius: 6, marginBottom: 8, background: "var(--panel-elev)", border: "1px solid var(--border)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <strong>{formatSender(m)}</strong>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>{new Date(m.created_at).toLocaleString()}</span>
+              </div>
+              <div style={{ whiteSpace: "pre-wrap" }}>{m.body}</div>
+            </div>
+          ))}
+        </div>
+        {canReply ? (
+          <div style={{ marginTop: 16 }}>
+            <textarea placeholder="Reply…" rows={4} value={replyBody} onChange={e => setReplyBody(e.target.value)} style={{ width: "100%", boxSizing: "border-box" }} />
+            <button className="primary" onClick={reply} disabled={sending || !replyBody.trim()}>{sending ? "Sending…" : "Reply"}</button>
+          </div>
+        ) : (
+          <div style={{ marginTop: 16, color: "var(--muted)", fontSize: 13 }}>Cannot reply to a system message.</div>
+        )}
+      </div>
     </div>
   )
 }
@@ -4400,7 +4416,7 @@ const SpacesListView: React.FC = () => {
           {spaces.map(s => (
             <div
               key={s.id}
-              style={{ padding: 16, borderRadius: 8, border: "1px solid var(--border)", cursor: "pointer", background: "var(--card)" }}
+              style={{ padding: 16, borderRadius: 8, border: "1px solid var(--border)", cursor: "pointer", background: "var(--panel-elev)" }}
               onClick={() => navigate(`/app/spaces/${s.id}`)}
             >
               <div style={{ fontWeight: 600, marginBottom: 4 }}>
@@ -4463,8 +4479,8 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
   }
   useEffect(() => { refresh() }, [id])
 
-  if (err) return <div className="main"><div className="msg err">{err}</div></div>
-  if (!space) return <div className="main"><div style={{ color: "var(--muted)" }}>Loading…</div></div>
+  if (err) return <div className="main"><div className="content"><div className="msg err">{err}</div></div></div>
+  if (!space) return <div className="main"><div className="content"><div style={{ color: "var(--muted)" }}>Loading…</div></div></div>
 
   const isAdmin = space.my_role === "admin"
   const canEdit = isAdmin || space.my_role === "editor"
@@ -4503,113 +4519,115 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
 
   return (
     <div className="main">
-      <div style={{ marginBottom: 8 }}>
-        <span style={{ color: "var(--muted)", cursor: "pointer" }} onClick={() => navigate("/app/spaces")}>← Spaces</span>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <div>
-          <h2 style={{ margin: 0 }}>
-            <Briefcase size={18} strokeWidth={1.75} style={{ marginRight: 8, verticalAlign: -3 }} />
-            {space.name}
-          </h2>
-          {space.description && <div style={{ color: "var(--muted)", marginTop: 4 }}>{space.description}</div>}
-          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-            you are {space.my_role} · /{space.slug}
+      <div className="content">
+        <div style={{ marginBottom: 8 }}>
+          <span style={{ color: "var(--muted)", cursor: "pointer" }} onClick={() => navigate("/app/spaces")}>← Spaces</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div>
+            <h2 style={{ margin: 0 }}>
+              <Briefcase size={18} strokeWidth={1.75} style={{ marginRight: 8, verticalAlign: -3 }} />
+              {space.name}
+            </h2>
+            {space.description && <div style={{ color: "var(--muted)", marginTop: 4 }}>{space.description}</div>}
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+              you are {space.my_role} · /{space.slug}
+            </div>
           </div>
         </div>
-      </div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 16, borderBottom: "1px solid var(--border)" }}>
-        <button
-          onClick={() => setTab("folders")}
-          style={{ background: "transparent", border: "none", padding: "8px 12px", borderBottom: tab === "folders" ? "2px solid var(--brand)" : "2px solid transparent", cursor: "pointer", color: tab === "folders" ? "var(--brand)" : "var(--text)" }}
-        >Folders</button>
-        <button
-          onClick={() => setTab("members")}
-          style={{ background: "transparent", border: "none", padding: "8px 12px", borderBottom: tab === "members" ? "2px solid var(--brand)" : "2px solid transparent", cursor: "pointer", color: tab === "members" ? "var(--brand)" : "var(--text)" }}
-        >Members ({members.length})</button>
-      </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, borderBottom: "1px solid var(--border)" }}>
+          <button
+            onClick={() => setTab("folders")}
+            style={{ background: "transparent", border: "none", padding: "8px 12px", borderBottom: tab === "folders" ? "2px solid var(--brand)" : "2px solid transparent", cursor: "pointer", color: tab === "folders" ? "var(--brand)" : "var(--text)" }}
+          >Folders</button>
+          <button
+            onClick={() => setTab("members")}
+            style={{ background: "transparent", border: "none", padding: "8px 12px", borderBottom: tab === "members" ? "2px solid var(--brand)" : "2px solid transparent", cursor: "pointer", color: tab === "members" ? "var(--brand)" : "var(--text)" }}
+          >Members ({members.length})</button>
+        </div>
 
-      {tab === "folders" && (
-        <>
-          {canEdit && (
-            <div style={{ marginBottom: 12 }}>
-              {creatingFolder ? (
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input autoFocus placeholder="Folder name" value={newFolderName} onChange={e => setNewFolderName(e.target.value)} onKeyDown={e => e.key === "Enter" && createFolder()} />
-                  <button className="primary" onClick={createFolder} disabled={!newFolderName.trim()}>Create</button>
-                  <button onClick={() => { setCreatingFolder(false); setNewFolderName("") }}>Cancel</button>
-                </div>
-              ) : (
-                <button onClick={() => setCreatingFolder(true)}><FolderPlus size={14} strokeWidth={1.75} /> New folder</button>
-              )}
-            </div>
-          )}
-          {folders.length === 0 ? (
-            <div style={{ padding: "24px 0", color: "var(--muted)" }}>No folders yet.</div>
-          ) : (
-            <div>
-              {folders.map(f => (
-                <div
-                  key={f.id}
-                  style={{ padding: "8px 12px", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center" }}
-                  className="picker-row"
-                  onClick={() => navigate(`/app/f/${f.id}`)}
-                >
-                  <FolderIcon size={16} strokeWidth={1.5} />
-                  <span style={{ marginLeft: 8 }}>{f.name}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
+        {tab === "folders" && (
+          <>
+            {canEdit && (
+              <div style={{ marginBottom: 12 }}>
+                {creatingFolder ? (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input autoFocus placeholder="Folder name" value={newFolderName} onChange={e => setNewFolderName(e.target.value)} onKeyDown={e => e.key === "Enter" && createFolder()} />
+                    <button className="primary" onClick={createFolder} disabled={!newFolderName.trim()}>Create</button>
+                    <button onClick={() => { setCreatingFolder(false); setNewFolderName("") }}>Cancel</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setCreatingFolder(true)}><FolderPlus size={14} strokeWidth={1.75} /> New folder</button>
+                )}
+              </div>
+            )}
+            {folders.length === 0 ? (
+              <div style={{ padding: "24px 0", color: "var(--muted)" }}>No folders yet.</div>
+            ) : (
+              <div>
+                {folders.map(f => (
+                  <div
+                    key={f.id}
+                    style={{ padding: "8px 12px", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center" }}
+                    className="picker-row"
+                    onClick={() => navigate(`/app/f/${f.id}`)}
+                  >
+                    <FolderIcon size={16} strokeWidth={1.5} />
+                    <span style={{ marginLeft: 8 }}>{f.name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
 
-      {tab === "members" && (
-        <>
-          {isAdmin && (
-            <div style={{ marginBottom: 12 }}>
-              {addingMember ? (
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input autoFocus placeholder="username or email" value={memberIdentity} onChange={e => setMemberIdentity(e.target.value)} />
-                  <select value={memberRole} onChange={e => setMemberRole(e.target.value as api.SpaceRole)}>
-                    <option value="viewer">Viewer</option>
-                    <option value="editor">Editor</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                  <button className="primary" onClick={addMember} disabled={!memberIdentity.trim()}>Add</button>
-                  <button onClick={() => { setAddingMember(false); setMemberIdentity("") }}>Cancel</button>
-                </div>
-              ) : (
-                <button onClick={() => setAddingMember(true)}><UserPlus size={14} strokeWidth={1.75} /> Add member</button>
-              )}
-            </div>
-          )}
-          <div>
-            {members.map(m => (
-              <div key={m.id} style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderRadius: 6, marginBottom: 4 }}>
-                <div style={{ flex: 1 }}>
-                  <div>{m.user.name ?? m.user.username}</div>
-                  <div style={{ fontSize: 11, color: "var(--muted)" }}>@{m.user.username} · {m.user.email}</div>
-                </div>
-                {isAdmin && m.user.id !== space.owner_id ? (
-                  <>
-                    <select value={m.role} onChange={e => changeRole(m, e.target.value as api.SpaceRole)} style={{ marginRight: 8 }}>
+        {tab === "members" && (
+          <>
+            {isAdmin && (
+              <div style={{ marginBottom: 12 }}>
+                {addingMember ? (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input autoFocus placeholder="username or email" value={memberIdentity} onChange={e => setMemberIdentity(e.target.value)} />
+                    <select value={memberRole} onChange={e => setMemberRole(e.target.value as api.SpaceRole)}>
                       <option value="viewer">Viewer</option>
                       <option value="editor">Editor</option>
                       <option value="admin">Admin</option>
                     </select>
-                    <button onClick={() => removeMember(m)} style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}>
-                      <X size={14} strokeWidth={1.75} />
-                    </button>
-                  </>
+                    <button className="primary" onClick={addMember} disabled={!memberIdentity.trim()}>Add</button>
+                    <button onClick={() => { setAddingMember(false); setMemberIdentity("") }}>Cancel</button>
+                  </div>
                 ) : (
-                  <span style={{ fontSize: 12, color: "var(--muted)" }}>{m.user.id === space.owner_id ? "owner" : m.role}</span>
+                  <button onClick={() => setAddingMember(true)}><UserPlus size={14} strokeWidth={1.75} /> Add member</button>
                 )}
               </div>
-            ))}
-          </div>
-        </>
-      )}
+            )}
+            <div>
+              {members.map(m => (
+                <div key={m.id} style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderRadius: 6, marginBottom: 4 }}>
+                  <div style={{ flex: 1 }}>
+                    <div>{m.user.name ?? m.user.username}</div>
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>@{m.user.username} · {m.user.email}</div>
+                  </div>
+                  {isAdmin && m.user.id !== space.owner_id ? (
+                    <>
+                      <select value={m.role} onChange={e => changeRole(m, e.target.value as api.SpaceRole)} style={{ marginRight: 8 }}>
+                        <option value="viewer">Viewer</option>
+                        <option value="editor">Editor</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                      <button onClick={() => removeMember(m)} style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}>
+                        <X size={14} strokeWidth={1.75} />
+                      </button>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>{m.user.id === space.owner_id ? "owner" : m.role}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }

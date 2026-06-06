@@ -28,7 +28,9 @@ const isPlainText = (mime: string, name: string): boolean => {
   // Fall back to extension sniffing for common source/text types when the
   // upload was tagged application/octet-stream.
   const lower = name.toLowerCase()
-  return /\.(md|markdown|txt|log|csv|tsv|json|yaml|yml|xml|html?|toml|ini|conf|sh|bash|zsh|js|jsx|ts|tsx|py|rb|go|rs|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sql)$/.test(lower)
+  return /\.(md|markdown|txt|log|csv|tsv|json|yaml|yml|xml|html?|toml|ini|conf|sh|bash|zsh|js|jsx|ts|tsx|py|rb|go|rs|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sql)$/.test(
+    lower,
+  )
 }
 
 const stripHtml = (s: string): string =>
@@ -58,9 +60,12 @@ const isPdf = (mime: string, name: string): boolean => {
 type OfficeKind = "docx" | "xlsx" | "pptx" | null
 
 const officeKind = (mime: string, name: string): OfficeKind => {
-  if (mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || /\.docx$/i.test(name)) return "docx"
-  if (mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || /\.xlsx$/i.test(name)) return "xlsx"
-  if (mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" || /\.pptx$/i.test(name)) return "pptx"
+  if (mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || /\.docx$/i.test(name))
+    return "docx"
+  if (mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || /\.xlsx$/i.test(name))
+    return "xlsx"
+  if (mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" || /\.pptx$/i.test(name))
+    return "pptx"
   return null
 }
 
@@ -79,7 +84,10 @@ const decode = (bytes: Uint8Array): string => {
   }
 }
 
-const runCmd = async (cmd: string[], stdin: Uint8Array | null): Promise<{ stdout: Uint8Array; ok: boolean; error?: string }> => {
+const runCmd = async (
+  cmd: string[],
+  stdin: Uint8Array | null,
+): Promise<{ stdout: Uint8Array; ok: boolean; error?: string }> => {
   try {
     const proc = spawn(cmd, {
       stdin: stdin ? "pipe" : "ignore",
@@ -138,9 +146,11 @@ const extractOffice = async (kind: "docx" | "xlsx" | "pptx", bytes: Uint8Array):
   // the members that contain user-visible text, concatenate, then strip
   // markup. The member layout differs per format.
   const members =
-    kind === "docx" ? ["word/document.xml", "word/header*.xml", "word/footer*.xml", "word/footnotes.xml", "word/endnotes.xml"]
-    : kind === "xlsx" ? ["xl/sharedStrings.xml", "xl/worksheets/sheet*.xml"]
-    : ["ppt/slides/slide*.xml", "ppt/notesSlides/notesSlide*.xml"]
+    kind === "docx"
+      ? ["word/document.xml", "word/header*.xml", "word/footer*.xml", "word/footnotes.xml", "word/endnotes.xml"]
+      : kind === "xlsx"
+        ? ["xl/sharedStrings.xml", "xl/worksheets/sheet*.xml"]
+        : ["ppt/slides/slide*.xml", "ppt/notesSlides/notesSlide*.xml"]
 
   const parts: string[] = []
   for (const member of members) {
@@ -163,10 +173,7 @@ const extractOffice = async (kind: "docx" | "xlsx" | "pptx", bytes: Uint8Array):
   return { kind: "text", text, truncated }
 }
 
-export const extractText = async (
-  bytes: Uint8Array,
-  meta: { mime: string; name: string },
-): Promise<ExtractResult> => {
+export const extractText = async (bytes: Uint8Array, meta: { mime: string; name: string }): Promise<ExtractResult> => {
   if (bytes.length === 0) return { kind: "text", text: "", truncated: false }
 
   // HTML is checked before generic text/* so we strip the markup instead

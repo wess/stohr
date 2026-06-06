@@ -1,5 +1,6 @@
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
+import { warn } from "../observability/logger.ts"
 
 export type NotificationKind =
   | "comment.created"
@@ -37,7 +38,15 @@ export const emit = async (db: Connection, input: EmitInput): Promise<void> => {
       }),
     )
   } catch (err) {
-    console.error("[notifications] emit failed:", err)
+    const msg = err instanceof Error ? err.message : String(err)
+    // A notification to a recipient that no longer exists is a benign no-op
+    // (the user was removed between resolving participants and the insert).
+    if (msg.includes("notifications_user_id_fkey")) return
+    warn("notifications", "emit failed", {
+      kind: input.kind,
+      userId: input.userId,
+      error: msg,
+    })
   }
 }
 

@@ -44,10 +44,7 @@ await buildSpa()
 // execute the module, and falls back to a "do you want to download this"
 // prompt for the bundle file. Strip the attribute so Safari treats them
 // as ordinary same-origin loads.
-const indexHtml = (await Bun.file(join(DIST, "index.html")).text()).replace(
-  / crossorigin(?=[\s>])/g,
-  "",
-)
+const indexHtml = (await Bun.file(join(DIST, "index.html")).text()).replace(/ crossorigin(?=[\s>])/g, "")
 
 const serveAsset = async (path: string): Promise<Response | null> => {
   // Reject path traversal — DIST is the only thing we ever serve from.

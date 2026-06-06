@@ -37,16 +37,39 @@ import { ldapRoutes } from "../../src/auth/ldap/index.ts"
 import { adminLdapRoutes } from "../../src/auth/ldap/admin.ts"
 import { contentSearchRoutes } from "../../src/search/content/routes.ts"
 import { adminUserRoutes } from "../../src/admin/users.ts"
+import { webdavRoutes } from "../../src/webdav/index.ts"
+import { webdavSettingsRoutes } from "../../src/webdav/settings.ts"
 import type { StorageHandle } from "../../src/storage/index.ts"
 import type { Emailer, EmailMessage } from "../../src/email/index.ts"
 
+// In-memory storage stub implementing the full StorageDriver interface
+// (put / get / drop) so handlers that read objects back — e.g. share
+// downloads via fetchObject -> h.get — work under test. put returns the
+// stored bytes from get, mirroring the real drivers.
+const fakeStoreObjects = new Map<string, { body: Uint8Array; contentType?: string }>()
+
+const toBytes = async (body: Blob | Uint8Array | string): Promise<Uint8Array> => {
+  if (typeof body === "string") return new TextEncoder().encode(body)
+  if (body instanceof Uint8Array) return body
+  return new Uint8Array(await body.arrayBuffer())
+}
+
 export const fakeStore: StorageHandle = {
-  endpoint: "http://localhost",
-  bucket: "test",
-  region: "us-east-1",
-  accessKey: "x",
-  secretKey: "x",
-} as unknown as StorageHandle
+  put: async (key, body, contentType) => {
+    fakeStoreObjects.set(key, { body: await toBytes(body), contentType })
+  },
+  get: async (key) => {
+    const obj = fakeStoreObjects.get(key)
+    if (!obj) return new Response(null, { status: 404 })
+    return new Response(obj.body, {
+      status: 200,
+      headers: obj.contentType ? { "content-type": obj.contentType } : undefined,
+    })
+  },
+  drop: async (key) => {
+    fakeStoreObjects.delete(key)
+  },
+}
 
 // Captures sent emails for assertion in tests. Cleared per-test by setup
 // (truncateAll doesn't touch this; tests that care should pull and reset).
@@ -105,6 +128,8 @@ export const buildApp = (db: Connection, secret: string) => {
     ...adminLdapRoutes(db, secret),
     ...contentSearchRoutes(db, secret),
     ...adminUserRoutes(db, secret, fakeEmailer, TEST_APP_URL),
+    ...webdavRoutes(db, fakeStore),
+    ...webdavSettingsRoutes(db, secret),
   )
 }
 
@@ -146,4 +171,35 @@ export const callJson = async <T = any>(
     try { body = JSON.parse(text) } catch { body = text }
   }
   return { status: res.status, body: body as T }
+}
+
+// Raw caller for WebDAV — needs non-standard methods (PROPFIND, MKCOL, …),
+// Basic auth, and access to the unparsed text body + response headers.
+export type RawOptions = {
+  method?: string
+  body?: string | Uint8Array
+  basic?: { user: string; pass: string }
+  headers?: Record<string, string>
+}
+
+export const callRaw = async (
+  app: App,
+  path: string,
+  opts: RawOptions = {},
+): Promise<{ status: number; text: string; headers: Headers }> => {
+  const headers: Record<string, string> = {
+    "x-forwarded-for": "127.0.0.1",
+    ...(opts.headers ?? {}),
+  }
+  if (opts.basic) {
+    const encoded = Buffer.from(`${opts.basic.user}:${opts.basic.pass}`).toString("base64")
+    headers.authorization = `Basic ${encoded}`
+  }
+  const req = new Request(`http://test.local${path}`, {
+    method: opts.method ?? "GET",
+    headers,
+    body: opts.body,
+  })
+  const res = await app(req)
+  return { status: res.status, text: await res.text(), headers: res.headers }
 }

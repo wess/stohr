@@ -13,21 +13,23 @@ export const contentSearchRoutes = (db: Connection, secret: string) => {
   const guard = pipeline(requireAuth({ secret, db }))
 
   return [
-    get("/search/content", guard(async (c) => {
-      const userId = authId(c)
-      const url = new URL(c.request.url)
-      const q = (url.searchParams.get("q") ?? "").trim()
-      if (!q) return json(c, 200, { files: [], query: q })
+    get(
+      "/search/content",
+      guard(async c => {
+        const userId = authId(c)
+        const url = new URL(c.request.url)
+        const q = (url.searchParams.get("q") ?? "").trim()
+        if (!q) return json(c, 200, { files: [], query: q })
 
-      const limitRaw = Number(url.searchParams.get("limit") ?? "20")
-      const limit = Math.max(1, Math.min(Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 20, 50))
+        const limitRaw = Number(url.searchParams.get("limit") ?? "20")
+        const limit = Math.max(1, Math.min(Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 20, 50))
 
-      // The visibility rule is "owned by caller OR reachable via a folder
-      // collaboration grant that resolves to this folder's ancestry."
-      // permissions/index.ts has the same CTE; we inline it here so the
-      // search stays a single round-trip rather than fanning out per hit.
-      const rows = await db.execute({
-        text: `
+        // The visibility rule is "owned by caller OR reachable via a folder
+        // collaboration grant that resolves to this folder's ancestry."
+        // permissions/index.ts has the same CTE; we inline it here so the
+        // search stays a single round-trip rather than fanning out per hit.
+        const rows = (await db.execute({
+          text: `
           WITH q AS (
             SELECT websearch_to_tsquery('english', $1) AS tsq
           ),
@@ -73,50 +75,53 @@ export const contentSearchRoutes = (db: Connection, secret: string) => {
            ORDER BY rank DESC, f.created_at DESC
            LIMIT $3
         `,
-        values: [q, userId, limit],
-      }) as Array<{
-        id: number
-        name: string
-        mime: string
-        size: number | string
-        folder_id: number | null
-        user_id: number
-        version: number
-        created_at: string
-        rank: number
-        snippet: string
-      }>
+          values: [q, userId, limit],
+        })) as Array<{
+          id: number
+          name: string
+          mime: string
+          size: number | string
+          folder_id: number | null
+          user_id: number
+          version: number
+          created_at: string
+          rank: number
+          snippet: string
+        }>
 
-      return json(c, 200, {
-        query: q,
-        files: rows.map(r => ({
-          id: r.id,
-          name: r.name,
-          mime: r.mime,
-          size: r.size,
-          folder_id: r.folder_id,
-          user_id: r.user_id,
-          version: r.version,
-          created_at: r.created_at,
-          rank: r.rank,
-          snippet: r.snippet,
-        })),
-      })
-    })),
+        return json(c, 200, {
+          query: q,
+          files: rows.map(r => ({
+            id: r.id,
+            name: r.name,
+            mime: r.mime,
+            size: r.size,
+            folder_id: r.folder_id,
+            user_id: r.user_id,
+            version: r.version,
+            created_at: r.created_at,
+            rank: r.rank,
+            snippet: r.snippet,
+          })),
+        })
+      }),
+    ),
 
     // Owner-only health view: how many files still need indexing, plus
     // last-error stats. Cheap query — the partial index makes this O(N)
     // over pending rows only.
-    get("/admin/content-index/status", guard(async (c) => {
-      const userId = authId(c)
-      const me = await db.one({
-        text: `SELECT is_owner FROM users WHERE id = $1`,
-        values: [userId],
-      }) as { is_owner: boolean } | null
-      if (!me?.is_owner) return json(c, 403, { error: "Owner access required" })
+    get(
+      "/admin/content-index/status",
+      guard(async c => {
+        const userId = authId(c)
+        const me = (await db.one({
+          text: `SELECT is_owner FROM users WHERE id = $1`,
+          values: [userId],
+        })) as { is_owner: boolean } | null
+        if (!me?.is_owner) return json(c, 403, { error: "Owner access required" })
 
-      const totals = await db.one({
-        text: `
+        const totals = (await db.one({
+          text: `
           SELECT
             COUNT(*) FILTER (WHERE deleted_at IS NULL) AS total,
             COUNT(*) FILTER (WHERE deleted_at IS NULL AND text_indexed_at IS NOT NULL AND text_indexed_version >= version) AS indexed,
@@ -124,15 +129,16 @@ export const contentSearchRoutes = (db: Connection, secret: string) => {
             COUNT(*) FILTER (WHERE deleted_at IS NULL AND (text_indexed_at IS NULL OR text_indexed_version IS NULL OR text_indexed_version < version)) AS pending
           FROM files
         `,
-        values: [],
-      }) as { total: string; indexed: string; errored: string; pending: string }
+          values: [],
+        })) as { total: string; indexed: string; errored: string; pending: string }
 
-      return json(c, 200, {
-        total: Number(totals.total),
-        indexed: Number(totals.indexed),
-        pending: Number(totals.pending),
-        errored: Number(totals.errored),
-      })
-    })),
+        return json(c, 200, {
+          total: Number(totals.total),
+          indexed: Number(totals.indexed),
+          pending: Number(totals.pending),
+          errored: Number(totals.errored),
+        })
+      }),
+    ),
   ]
 }

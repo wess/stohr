@@ -1,6 +1,6 @@
 import type { Connection } from "@atlas/db"
-import type { StorageHandle } from "../storage/index.ts"
 import type { FileRow, FolderRow } from "../permissions/index.ts"
+import type { StorageHandle } from "../storage/index.ts"
 
 export type EventName =
   | "file.created"
@@ -32,16 +32,9 @@ export const isEventName = (s: unknown): s is EventName =>
 
 export type SubjectKind = "file" | "folder"
 
-export type Subject =
-  | { kind: "file"; row: FileRow }
-  | { kind: "folder"; row: FolderRow }
+export type Subject = { kind: "file"; row: FileRow } | { kind: "folder"; row: FolderRow }
 
-export type ActionPermission =
-  | "file.read"
-  | "file.write"
-  | "folder.read"
-  | "folder.write"
-  | "network"
+export type ActionPermission = "file.read" | "file.write" | "folder.read" | "folder.write" | "network"
 
 export type JsonSchema = Record<string, unknown>
 
@@ -57,9 +50,7 @@ export type ActionContext = {
   depth: number
 }
 
-export type ActionResult =
-  | { ok: true; result?: Record<string, unknown> }
-  | { ok: false; error: string }
+export type ActionResult = { ok: true; result?: Record<string, unknown> } | { ok: false; error: string }
 
 export type Action = {
   slug: string

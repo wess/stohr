@@ -1,7 +1,7 @@
 import type { FileRow, FolderRow } from "../../../permissions/index.ts"
 
 const ALLOWED_KEYS = ["YYYY", "MM", "DD", "name", "ext", "full"] as const
-type Key = typeof ALLOWED_KEYS[number]
+type Key = (typeof ALLOWED_KEYS)[number]
 
 const padTwo = (n: number): string => String(n).padStart(2, "0")
 
@@ -23,9 +23,7 @@ const buildVars = (
   }
 }
 
-export type TemplateResult =
-  | { ok: true; value: string }
-  | { ok: false; error: string }
+export type TemplateResult = { ok: true; value: string } | { ok: false; error: string }
 
 export const expandTemplate = (
   template: string,

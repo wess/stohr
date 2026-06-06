@@ -8,7 +8,7 @@ const issuerFromRequest = (req: Request): string => {
 
 export const oauthDiscoveryRoutes = () => [
   // RFC 8414 — OAuth 2.0 Authorization Server Metadata.
-  get("/.well-known/oauth-authorization-server", async (c) => {
+  get("/.well-known/oauth-authorization-server", async c => {
     const issuer = issuerFromRequest(c.request)
     return json(c, 200, {
       issuer,
@@ -18,11 +18,7 @@ export const oauthDiscoveryRoutes = () => [
       device_authorization_endpoint: `${issuer}/oauth/device/authorize`,
       scopes_supported: SUPPORTED_SCOPES,
       response_types_supported: ["code"],
-      grant_types_supported: [
-        "authorization_code",
-        "refresh_token",
-        "urn:ietf:params:oauth:grant-type:device_code",
-      ],
+      grant_types_supported: ["authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"],
       code_challenge_methods_supported: ["S256"],
       token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
       revocation_endpoint_auth_methods_supported: ["none", "client_secret_post"],

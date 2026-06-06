@@ -2,23 +2,19 @@
 // JIT-creates the local users row on first login; subsequent logins upsert
 // by sub (so admins renaming their own Castle account remap cleanly).
 
+import { hash } from "@atlas/auth"
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
-import { hash } from "@atlas/auth"
-import {
-  ensureSsoStateTable,
-  type IdTokenClaims,
-  mountSso,
-  type SsoConfig,
-} from "@atlas/sso"
 import type { Conn } from "@atlas/server"
-import { issueSession, revokeAllSessions } from "../security/sessions.ts"
-import { logEvent } from "../security/audit.ts"
+import { get, json } from "@atlas/server"
+import { ensureSsoStateTable, type IdTokenClaims, mountSso, type SsoConfig } from "@atlas/sso"
 import { resolvePendingCollabs } from "../auth/index.ts"
+import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
+import { issueSession, revokeAllSessions } from "../security/sessions.ts"
 import { isValidUsername, normalizeUsername } from "../util/username.ts"
 
-const SSO_PASSWORD_SENTINEL = "$argon2id$sso$placeholder"
+const _SSO_PASSWORD_SENTINEL = "$argon2id$sso$placeholder"
 
 const claimUsername = (claims: IdTokenClaims): string => {
   const raw = claims.preferred_username ?? (claims.email ? claims.email.split("@")[0] : null)
@@ -40,7 +36,7 @@ const placeholderHash = async (): Promise<string> => {
   // created locally, but SSO-only users get a fixed un-verifiable hash so
   // local login is rejected (verify() returns false on the sentinel) and
   // the only path in is via /auth/sso/login.
-  return hash("disabled-local-password-" + Math.random().toString(36))
+  return hash(`disabled-local-password-${Math.random().toString(36)}`)
 }
 
 type SyncedUser = { id: number; username: string; name: string; email: string; is_owner: boolean }
@@ -50,30 +46,36 @@ const upsertUser = async (db: Connection, claims: IdTokenClaims): Promise<Synced
   const username = claimUsername(claims)
   const name = (claims.name as string | undefined)?.trim() || username
 
-  const byEmail = await db.one(
-    from("users").where((q) => q("email").equals(email)).select("id", "is_owner"),
-  ) as { id: number; is_owner: boolean } | null
-  const target = byEmail ?? (await db.one(
-    from("users").where((q) => q("username").equals(username)).select("id", "is_owner"),
-  ) as { id: number; is_owner: boolean } | null)
+  const byEmail = (await db.one(
+    from("users")
+      .where(q => q("email").equals(email))
+      .select("id", "is_owner"),
+  )) as { id: number; is_owner: boolean } | null
+  const target =
+    byEmail ??
+    ((await db.one(
+      from("users")
+        .where(q => q("username").equals(username))
+        .select("id", "is_owner"),
+    )) as { id: number; is_owner: boolean } | null)
 
   if (target) {
     await db.execute(
-      from("users").where((q) => q("id").equals(target.id)).update({
-        email,
-        username,
-        name,
-      }),
+      from("users")
+        .where(q => q("id").equals(target.id))
+        .update({
+          email,
+          username,
+          name,
+        }),
     )
     return { id: target.id, username, name, email, is_owner: target.is_owner }
   }
 
   const password = await placeholderHash()
-  const inserted = await db.execute(
-    from("users")
-      .insert({ email, username, name, password, is_owner: false })
-      .returning("id", "is_owner"),
-  ) as Array<{ id: number; is_owner: boolean }>
+  const inserted = (await db.execute(
+    from("users").insert({ email, username, name, password, is_owner: false }).returning("id", "is_owner"),
+  )) as Array<{ id: number; is_owner: boolean }>
   const row = inserted[0]
   if (!row) throw new Error("user insert failed")
   await resolvePendingCollabs(db, row.id, email)
@@ -133,9 +135,11 @@ export const buildStohrSso = (env: {
     findLocalUserBySub: async (db, sub) => {
       const id = Number(sub)
       if (!Number.isFinite(id)) return null
-      const row = await db.one(
-        from("users").where((q) => q("id").equals(id)).select("id"),
-      ) as { id: number } | null
+      const row = (await db.one(
+        from("users")
+          .where(q => q("id").equals(id))
+          .select("id"),
+      )) as { id: number } | null
       return row?.id ?? null
     },
     invalidateSessions: async (db, params) => {
@@ -148,6 +152,18 @@ export const buildStohrSso = (env: {
 
   return cfg
 }
+
+// Always-mounted discovery for the login page — tells the SPA whether to
+// render the "Sign in with Castle" CTA. Lives outside maybeSsoRoutes (which
+// only mounts when SSO is configured) so the SPA can always query it.
+export const ssoStatusRoutes = (cfg: { ssoIssuer: string; ssoClientId: string; ssoClientSecret: string }) => [
+  get("/auth/sso/status", async c =>
+    json(c, 200, {
+      available: Boolean(cfg.ssoIssuer && cfg.ssoClientId && cfg.ssoClientSecret),
+      label: "Castle",
+    }),
+  ),
+]
 
 export const setupStohrSso = async (
   db: Connection,

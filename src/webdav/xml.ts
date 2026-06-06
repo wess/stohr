@@ -61,3 +61,20 @@ export const renderMultistatus = (entries: PropfindEntry[]): string =>
 <D:multistatus xmlns:D="DAV:">
 ${entries.map(renderResponse).join("\n")}
 </D:multistatus>`
+
+// LOCK response body (RFC 4918 §9.10.1). We don't actually persist locks —
+// this is the minimal shape Finder needs to proceed with a write.
+export const renderLockResponse = (href: string, token: string): string =>
+  `<?xml version="1.0" encoding="utf-8"?>
+<D:prop xmlns:D="DAV:">
+  <D:lockdiscovery>
+    <D:activelock>
+      <D:locktype><D:write/></D:locktype>
+      <D:lockscope><D:exclusive/></D:lockscope>
+      <D:depth>infinity</D:depth>
+      <D:timeout>Second-3600</D:timeout>
+      <D:locktoken><D:href>${xmlEscape(token)}</D:href></D:locktoken>
+      <D:lockroot><D:href>${xmlEscape(href)}</D:href></D:lockroot>
+    </D:activelock>
+  </D:lockdiscovery>
+</D:prop>`

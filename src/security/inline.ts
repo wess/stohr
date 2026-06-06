@@ -6,10 +6,7 @@
 // Keep this list narrow on purpose. SVG is intentionally NOT here — it is
 // active content. PDFs render in-place but are sandboxed by browsers.
 const SAFE_INLINE_PREFIXES = ["image/", "video/", "audio/"] as const
-const SAFE_INLINE_EXACT = new Set([
-  "application/pdf",
-  "text/plain",
-])
+const SAFE_INLINE_EXACT = new Set(["application/pdf", "text/plain"])
 
 const isSafeInlineMime = (mime: string): boolean => {
   const m = mime.toLowerCase().split(";")[0]?.trim() ?? ""
@@ -30,11 +27,7 @@ export type InlineDecision = {
  * stored MIME isn't in the safe-inline allowlist, we override to attachment
  * regardless of what the caller asked for.
  */
-export const decideInline = (
-  storedMime: string,
-  filename: string,
-  wantInline: boolean,
-): InlineDecision => {
+export const decideInline = (storedMime: string, filename: string, wantInline: boolean): InlineDecision => {
   const safe = wantInline && isSafeInlineMime(storedMime)
   if (safe) {
     return {

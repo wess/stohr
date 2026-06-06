@@ -1,5 +1,5 @@
-import { halt } from "@atlas/server"
 import type { PipeFn } from "@atlas/server"
+import { halt } from "@atlas/server"
 
 const constantTimeEquals = (a: string, b: string): boolean => {
   if (a.length !== b.length) return false
@@ -8,8 +8,9 @@ const constantTimeEquals = (a: string, b: string): boolean => {
   return diff === 0
 }
 
-export const requireCastleToken = (expected: string): PipeFn =>
-  async (conn) => {
+export const requireCastleToken =
+  (expected: string): PipeFn =>
+  async conn => {
     const header = conn.headers.get("authorization")
     if (!header?.startsWith("Bearer ")) {
       return halt(conn, 401, { error: "Missing bearer token" })

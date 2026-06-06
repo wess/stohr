@@ -11,15 +11,17 @@ export type AuditEvent = {
 
 export const logEvent = (db: Connection, ev: AuditEvent): void => {
   // Fire-and-forget so audit logging never blocks the response.
-  void db.execute(
-    from("audit_events").insert({
-      user_id: ev.userId ?? null,
-      event: ev.event,
-      metadata: ev.metadata ? JSON.stringify(ev.metadata) : null,
-      ip: ev.ip ?? null,
-      user_agent: ev.userAgent ?? null,
-    }),
-  ).catch((err) => {
-    console.error("[audit] failed to log:", ev.event, err)
-  })
+  void db
+    .execute(
+      from("audit_events").insert({
+        user_id: ev.userId ?? null,
+        event: ev.event,
+        metadata: ev.metadata ? JSON.stringify(ev.metadata) : null,
+        ip: ev.ip ?? null,
+        user_agent: ev.userAgent ?? null,
+      }),
+    )
+    .catch(err => {
+      console.error("[audit] failed to log:", ev.event, err)
+    })
 }

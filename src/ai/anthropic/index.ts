@@ -18,10 +18,12 @@ export const createAnthropicDriver = (cfg: AnthropicConfig): AiDriver => {
   return {
     chat: async (messages: AiMessage[], opts?: ChatOpts): Promise<ChatResult> => {
       // Anthropic separates system from the conversation turns.
-      const system = messages.filter(m => m.role === "system").map(m => m.content).join("\n\n") || undefined
-      const turns = messages
-        .filter(m => m.role !== "system")
-        .map(m => ({ role: m.role, content: m.content }))
+      const system =
+        messages
+          .filter(m => m.role === "system")
+          .map(m => m.content)
+          .join("\n\n") || undefined
+      const turns = messages.filter(m => m.role !== "system").map(m => ({ role: m.role, content: m.content }))
 
       const res = await fetch(`${base}/v1/messages`, {
         method: "POST",
@@ -42,8 +44,11 @@ export const createAnthropicDriver = (cfg: AnthropicConfig): AiDriver => {
         const text = await res.text().catch(() => "")
         throw new Error(`Anthropic chat failed (${res.status}): ${text.slice(0, 500)}`)
       }
-      const data = await res.json() as AnthropicResponse
-      const content = data.content.filter(b => b.type === "text").map(b => b.text ?? "").join("")
+      const data = (await res.json()) as AnthropicResponse
+      const content = data.content
+        .filter(b => b.type === "text")
+        .map(b => b.text ?? "")
+        .join("")
       return { content, model: data.model }
     },
   }

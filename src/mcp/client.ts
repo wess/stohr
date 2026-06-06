@@ -36,7 +36,7 @@ const rpc = async (server: RemoteServer, req: JsonRpcRequest): Promise<JsonRpcRe
       const text = await res.text().catch(() => "")
       throw new Error(`Remote MCP returned ${res.status}: ${text.slice(0, 200)}`)
     }
-    return await res.json() as JsonRpcResponse
+    return (await res.json()) as JsonRpcResponse
   } finally {
     clearTimeout(timer)
   }

@@ -12,23 +12,18 @@ const formatSegments = (date: Date, pattern: string): string[] => {
   return [Y, M]
 }
 
-const findOrCreateFolder = async (
-  db: Connection,
-  ownerId: number,
-  parentId: number,
-  name: string,
-): Promise<number> => {
-  const existing = await db.one(
+const findOrCreateFolder = async (db: Connection, ownerId: number, parentId: number, name: string): Promise<number> => {
+  const existing = (await db.one(
     from("folders")
       .where(q => q("user_id").equals(ownerId))
       .where(q => q("parent_id").equals(parentId))
       .where(q => q("name").equals(name))
       .where(q => q("deleted_at").isNull())
       .select("id"),
-  ) as { id: number } | null
+  )) as { id: number } | null
   if (existing) return existing.id
 
-  const inserted = await db.execute(
+  const inserted = (await db.execute(
     from("folders")
       .insert({
         user_id: ownerId,
@@ -38,7 +33,7 @@ const findOrCreateFolder = async (
         is_public: false,
       })
       .returning("id"),
-  ) as Array<{ id: number }>
+  )) as Array<{ id: number }>
   return inserted[0]!.id
 }
 
@@ -64,7 +59,7 @@ const action: Action = {
     },
   },
 
-  run: async (ctx) => {
+  run: async ctx => {
     if (ctx.subject.kind !== "file") return { ok: false, error: "Subject is not a file" }
     const file = ctx.subject.row
 
@@ -89,7 +84,9 @@ const action: Action = {
     }
 
     await ctx.db.execute(
-      from("files").where(q => q("id").equals(file.id)).update({ folder_id: parentId }),
+      from("files")
+        .where(q => q("id").equals(file.id))
+        .update({ folder_id: parentId }),
     )
 
     return {

@@ -1,9 +1,9 @@
-import type { Conn } from "@atlas/server"
-import { halt } from "@atlas/server"
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
-import { getInstanceKeys, pubPemToRaw, rawEd25519ToPem, signEd25519, verifyEd25519 } from "./keys.ts"
+import type { Conn } from "@atlas/server"
+import { halt } from "@atlas/server"
 import { sha256Hex } from "./crypto.ts"
+import { getInstanceKeys, rawEd25519ToPem, signEd25519, verifyEd25519 } from "./keys.ts"
 
 // Peer-to-peer transport is HTTPS with signed headers. Every outbound
 // request carries:
@@ -69,9 +69,10 @@ export const peerFetch = async (
   const trimmedBase = baseUrl.replace(/\/+$/, "")
   // BodyInit accepts ArrayBuffer / Buffer / Blob — Uint8Array's exact typing
   // confuses tsc, so coerce via the underlying ArrayBuffer slice.
-  const reqBody = bodyBuf.length > 0
-    ? bodyBuf.buffer.slice(bodyBuf.byteOffset, bodyBuf.byteOffset + bodyBuf.byteLength) as ArrayBuffer
-    : undefined
+  const reqBody =
+    bodyBuf.length > 0
+      ? (bodyBuf.buffer.slice(bodyBuf.byteOffset, bodyBuf.byteOffset + bodyBuf.byteLength) as ArrayBuffer)
+      : undefined
   return await fetch(`${trimmedBase}${pathWithQuery}`, {
     method,
     headers,
@@ -89,7 +90,10 @@ export type VerifiedPeer = {
 // Verifies the peer signature on an inbound request. Does NOT confirm the
 // peer is a member of a specific federation — that's the caller's job once
 // it knows which federation_id the request is targeting.
-export const verifyInboundSignature = async (conn: Conn, body: Uint8Array): Promise<{ ok: true; pubkeyRaw: string; pubkeyPem: string } | { ok: false; error: string }> => {
+export const verifyInboundSignature = async (
+  conn: Conn,
+  body: Uint8Array,
+): Promise<{ ok: true; pubkeyRaw: string; pubkeyPem: string } | { ok: false; error: string }> => {
   const pubkeyRaw = conn.headers.get("x-fed-pubkey")
   const tsHeader = conn.headers.get("x-fed-ts")
   const nonce = conn.headers.get("x-fed-nonce")
@@ -126,26 +130,42 @@ export const verifyInboundSignature = async (conn: Conn, body: Uint8Array): Prom
 // Pipeline helper for receiver routes — verifies signature and stashes
 // pubkey + raw body in c.assigns. Most receiver routes also want to verify
 // federation membership, which is delegated to the route handler.
-export const requirePeerSignature = () => async (conn: Conn): Promise<Conn> => {
-  const buf = new Uint8Array(await conn.request.clone().arrayBuffer())
-  const v = await verifyInboundSignature(conn, buf)
-  if (!v.ok) return halt(conn, 401, { error: v.error })
-  return {
-    ...conn,
-    assigns: { ...conn.assigns, peer: { pubkeyRaw: v.pubkeyRaw, pubkeyPem: v.pubkeyPem, body: buf } },
+export const requirePeerSignature =
+  () =>
+  async (conn: Conn): Promise<Conn> => {
+    const buf = new Uint8Array(await conn.request.clone().arrayBuffer())
+    const v = await verifyInboundSignature(conn, buf)
+    if (!v.ok) return halt(conn, 401, { error: v.error })
+    return {
+      ...conn,
+      assigns: { ...conn.assigns, peer: { pubkeyRaw: v.pubkeyRaw, pubkeyPem: v.pubkeyPem, body: buf } },
+    }
   }
-}
 
 export const memberForPeer = async (
   db: Connection,
   federationId: number,
   pubkeyRaw: string,
-): Promise<{ id: number; federation_id: number; user_id: number | null; peer_base_url: string; status: string; is_admin: boolean } | null> => {
-  return await db.one(
+): Promise<{
+  id: number
+  federation_id: number
+  user_id: number | null
+  peer_base_url: string
+  status: string
+  is_admin: boolean
+} | null> => {
+  return (await db.one(
     from("federation_members")
       .where(q => q("federation_id").equals(federationId))
       .where(q => q("peer_pubkey").equals(pubkeyRaw))
       .where(q => q("is_local").equals(false))
       .select("id", "federation_id", "user_id", "peer_base_url", "status", "is_admin"),
-  ) as { id: number; federation_id: number; user_id: number | null; peer_base_url: string; status: string; is_admin: boolean } | null
+  )) as {
+    id: number
+    federation_id: number
+    user_id: number | null
+    peer_base_url: string
+    status: string
+    is_admin: boolean
+  } | null
 }

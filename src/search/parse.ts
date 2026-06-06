@@ -18,11 +18,9 @@ const MIME_CLASSES: Record<string, string[]> = {
   ],
 }
 
-export const mimePatternsFor = (klass: string): string[] =>
-  MIME_CLASSES[klass] ?? []
+export const mimePatternsFor = (klass: string): string[] => MIME_CLASSES[klass] ?? []
 
-export const escapeLike = (s: string): string =>
-  s.replace(/([\\%_])/g, "\\$1")
+export const escapeLike = (s: string): string => s.replace(/([\\%_])/g, "\\$1")
 
 export const parseQuery = (input: string): ParsedQuery => {
   const tokens = input.trim().split(/\s+/).filter(Boolean)

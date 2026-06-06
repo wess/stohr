@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
 
 export const SUPPORTED_SCOPES = ["read", "write", "share"] as const
-export type Scope = typeof SUPPORTED_SCOPES[number]
+export type Scope = (typeof SUPPORTED_SCOPES)[number]
 
 export const isScope = (s: string): s is Scope => (SUPPORTED_SCOPES as readonly string[]).includes(s)
 
@@ -29,8 +29,7 @@ export const verifyPkceS256 = (verifier: string, challenge: string): boolean => 
 }
 
 /** Hash an opaque token for storage (refresh tokens, client secrets). */
-export const sha256 = (input: string): string =>
-  createHash("sha256").update(input).digest("hex")
+export const sha256 = (input: string): string => createHash("sha256").update(input).digest("hex")
 
 export const parseScope = (raw: string | undefined | null): string[] => {
   if (!raw) return []
@@ -54,10 +53,10 @@ export const includesScopes = (allowed: readonly string[], requested: readonly s
 export const isAllowedRedirect = (requested: string, allowed: readonly string[]): boolean =>
   allowed.some(uri => uri === requested)
 
-export const ACCESS_TOKEN_TTL_SECONDS = 60 * 60          // 1 hour
-export const REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30  // 30 days
-export const AUTH_CODE_TTL_SECONDS = 60                  // 1 minute
-export const DEVICE_CODE_TTL_SECONDS = 60 * 10           // 10 minutes
+export const ACCESS_TOKEN_TTL_SECONDS = 60 * 60 // 1 hour
+export const REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30 // 30 days
+export const AUTH_CODE_TTL_SECONDS = 60 // 1 minute
+export const DEVICE_CODE_TTL_SECONDS = 60 * 10 // 10 minutes
 export const DEVICE_POLL_INTERVAL_SECONDS = 5
 
 // User-friendly alphabet for device-flow user_codes — no I/L/O/0/1 to avoid

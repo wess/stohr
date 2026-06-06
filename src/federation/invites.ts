@@ -28,13 +28,11 @@ export type InviteBody = {
   nonce: string
 }
 
-const b64urlEncode = (obj: unknown): string =>
-  Buffer.from(JSON.stringify(obj)).toString("base64url")
+const b64urlEncode = (obj: unknown): string => Buffer.from(JSON.stringify(obj)).toString("base64url")
 
 const b64urlDecode = <T>(s: string): T => JSON.parse(Buffer.from(s, "base64url").toString("utf-8")) as T
 
-const hashNonce = (nonce: string): string =>
-  createHash("sha256").update(nonce).digest("hex")
+const hashNonce = (nonce: string): string => createHash("sha256").update(nonce).digest("hex")
 
 type FederationRow = {
   id: number
@@ -125,7 +123,7 @@ export const markInviteUsed = async (
   usedByPubkeyRaw: string,
 ): Promise<boolean> => {
   const tokenHash = hashNonce(nonce)
-  const updated = await db.execute({
+  const updated = (await db.execute({
     text: `UPDATE federation_invites
               SET used_at = NOW(), used_by_pubkey = $1
             WHERE federation_id = $2
@@ -134,7 +132,7 @@ export const markInviteUsed = async (
               AND expires_at > NOW()
             RETURNING id`,
     values: [usedByPubkeyRaw, federationId, tokenHash],
-  }) as Array<{ id: number }>
+  })) as Array<{ id: number }>
   return updated.length > 0
 }
 

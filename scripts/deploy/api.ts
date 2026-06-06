@@ -19,6 +19,6 @@ export const createApi = (token: string): ApiClient => ({
     if (!res.ok) {
       throw new Error(`DO API ${method} ${path} → ${res.status}: ${text}`)
     }
-    return text ? JSON.parse(text) as T : ({} as T)
+    return text ? (JSON.parse(text) as T) : ({} as T)
   },
 })

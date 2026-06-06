@@ -6,9 +6,9 @@
 import type { Connection } from "@atlas/db"
 import type { StorageHandle } from "../../storage/index.ts"
 import { readTools } from "./read.ts"
-import { writeTools } from "./write.ts"
-import { trashTools } from "./trash.ts"
 import { shareTools } from "./share.ts"
+import { trashTools } from "./trash.ts"
+import { writeTools } from "./write.ts"
 
 export type ToolCategory = "read" | "write" | "delete" | "share"
 
@@ -20,9 +20,7 @@ export type ToolContext = {
   appUrl: string
 }
 
-export type ToolContent =
-  | { type: "text"; text: string }
-  | { type: "json"; json: unknown }
+export type ToolContent = { type: "text"; text: string } | { type: "json"; json: unknown }
 
 export type ToolResult = {
   content: ToolContent[]
@@ -41,15 +39,9 @@ export type Tool = {
   handler: (ctx: ToolContext, args: Record<string, unknown>) => Promise<ToolResult>
 }
 
-export const buildToolset = (): Tool[] => [
-  ...readTools(),
-  ...writeTools(),
-  ...trashTools(),
-  ...shareTools(),
-]
+export const buildToolset = (): Tool[] => [...readTools(), ...writeTools(), ...trashTools(), ...shareTools()]
 
-export const findTool = (tools: Tool[], name: string): Tool | undefined =>
-  tools.find(t => t.name === name)
+export const findTool = (tools: Tool[], name: string): Tool | undefined => tools.find(t => t.name === name)
 
 // JSON-friendly text helper — many AI clients render text/* content
 // straight; structured JSON gets stringified with indentation for readability.

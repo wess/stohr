@@ -37,11 +37,7 @@ export const createDroplet = async (
   return res.droplet
 }
 
-export const waitForActive = async (
-  api: ApiClient,
-  dropletId: number,
-  timeoutMs = 300_000,
-): Promise<Droplet> => {
+export const waitForActive = async (api: ApiClient, dropletId: number, timeoutMs = 300_000): Promise<Droplet> => {
   const start = Date.now()
   let lastStatus = ""
   while (Date.now() - start < timeoutMs) {

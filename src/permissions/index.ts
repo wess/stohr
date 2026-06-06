@@ -28,6 +28,9 @@ export type FileRow = {
   storage_key: string
   thumb_key: string | null
   version: number
+  scan_status: string
+  scan_signature: string | null
+  scanned_at: string | null
   deleted_at: string | null
   created_at: string
 }
@@ -36,22 +39,18 @@ export const canWrite = (role: Role) => role === "owner" || role === "editor"
 export const isOwner = (role: Role) => role === "owner"
 
 const fileCollab = async (db: Connection, userId: number, fileId: number) =>
-  await db.one(
+  (await db.one(
     from("collaborations")
       .where(q => q("resource_type").equals("file"))
       .where(q => q("resource_id").equals(fileId))
       .where(q => q("user_id").equals(userId))
       .select("role"),
-  ) as { role: Role } | null
+  )) as { role: Role } | null
 
 // Walks the folder ancestry in a single recursive CTE and returns the role
 // of the nearest collaboration grant. One round-trip regardless of depth.
-const inheritedFolderRole = async (
-  db: Connection,
-  userId: number,
-  startFolderId: number,
-): Promise<Role | null> => {
-  const rows = await db.execute({
+const inheritedFolderRole = async (db: Connection, userId: number, startFolderId: number): Promise<Role | null> => {
+  const rows = (await db.execute({
     text: `
       WITH RECURSIVE chain AS (
         SELECT id, parent_id, 0 AS depth
@@ -73,7 +72,7 @@ const inheritedFolderRole = async (
         LIMIT 1
     `,
     values: [startFolderId, userId],
-  }) as Array<{ role: Role }>
+  })) as Array<{ role: Role }>
   return rows[0]?.role ?? null
 }
 
@@ -82,12 +81,8 @@ const inheritedFolderRole = async (
 // Single round-trip — we always need the space root anyway because folder
 // ancestry is contiguous (a folder in space X cannot have a parent in
 // space Y or in personal).
-const spaceRoleForFolder = async (
-  db: Connection,
-  userId: number,
-  spaceId: number,
-): Promise<Role | null> => {
-  const row = await db.one({
+const spaceRoleForFolder = async (db: Connection, userId: number, spaceId: number): Promise<Role | null> => {
+  const row = (await db.one({
     text: `
       SELECT
         CASE WHEN m.role = 'admin' THEN 'owner'
@@ -99,7 +94,7 @@ const spaceRoleForFolder = async (
       LIMIT 1
     `,
     values: [spaceId, userId],
-  }) as { role: Role } | null
+  })) as { role: Role } | null
   return row?.role ?? null
 }
 
@@ -108,11 +103,11 @@ export const folderAccess = async (
   userId: number,
   folderId: number,
 ): Promise<{ role: Role; folder: FolderRow } | null> => {
-  const folder = await db.one(
+  const folder = (await db.one(
     from("folders")
       .where(q => q("id").equals(folderId))
       .where(q => q("deleted_at").isNull()),
-  ) as FolderRow | null
+  )) as FolderRow | null
   if (!folder) return null
 
   // Space folders use the space membership table. The folder.user_id
@@ -136,11 +131,11 @@ export const fileAccess = async (
   userId: number,
   fileId: number,
 ): Promise<{ role: Role; file: FileRow } | null> => {
-  const file = await db.one(
+  const file = (await db.one(
     from("files")
       .where(q => q("id").equals(fileId))
       .where(q => q("deleted_at").isNull()),
-  ) as FileRow | null
+  )) as FileRow | null
   if (!file) return null
 
   // If the file lives inside a Space, the space membership is the
@@ -148,9 +143,11 @@ export const fileAccess = async (
   // because in a Space "the user who uploaded it" is not the same as
   // "the file's owner" — the space is.
   if (file.folder_id != null) {
-    const folder = await db.one(
-      from("folders").where(q => q("id").equals(file.folder_id)).select("space_id"),
-    ) as { space_id: number | null } | null
+    const folder = (await db.one(
+      from("folders")
+        .where(q => q("id").equals(file.folder_id))
+        .select("space_id"),
+    )) as { space_id: number | null } | null
     if (folder?.space_id != null) {
       const role = await spaceRoleForFolder(db, userId, folder.space_id)
       if (role) return { role, file }

@@ -2,8 +2,8 @@ import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
-import { canWrite, fileAccess, folderAccess, type Role } from "../permissions/index.ts"
 import { emitMany } from "../notifications/emit.ts"
+import { canWrite, fileAccess, folderAccess, type Role } from "../permissions/index.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -57,7 +57,7 @@ const hydrate = (row: CommentRow & { author_name?: string; author_username?: str
 })
 
 const listForResource = async (db: Connection, kind: ResourceKind, id: number) => {
-  const rows = await db.execute({
+  const rows = (await db.execute({
     text: `
       SELECT c.id, c.resource_type, c.resource_id, c.user_id, c.parent_id,
              c.body, c.edited_at, c.deleted_at, c.created_at,
@@ -68,22 +68,18 @@ const listForResource = async (db: Connection, kind: ResourceKind, id: number) =
        ORDER BY c.created_at ASC
     `,
     values: [kind, id],
-  }) as Array<CommentRow & { author_name: string; author_username: string }>
+  })) as Array<CommentRow & { author_name: string; author_username: string }>
   return rows.map(hydrate)
 }
 
-const participantsFor = async (
-  db: Connection,
-  kind: ResourceKind,
-  id: number,
-): Promise<number[]> => {
-  const rows = await db.execute({
+const participantsFor = async (db: Connection, kind: ResourceKind, id: number): Promise<number[]> => {
+  const rows = (await db.execute({
     text: `
       SELECT DISTINCT user_id FROM comments
        WHERE resource_type = $1 AND resource_id = $2 AND deleted_at IS NULL
     `,
     values: [kind, id],
-  }) as Array<{ user_id: number }>
+  })) as Array<{ user_id: number }>
   return rows.map(r => r.user_id)
 }
 
@@ -94,76 +90,105 @@ export const commentRoutes = (db: Connection, secret: string) => {
   return [
     // Two GET shapes — one per resource kind — so the URL space mirrors
     // the existing /files/:id/... and /folders/:id/... layout.
-    get("/files/:id/comments", guard(async (c) => {
-      const userId = authId(c)
-      const id = Number(c.params.id)
-      const access = await resolveResource(db, userId, "file", id)
-      if (!access) return json(c, 404, { error: "Not found" })
-      const rows = await listForResource(db, "file", id)
-      return json(c, 200, { comments: rows })
-    })),
+    get(
+      "/files/:id/comments",
+      guard(async c => {
+        const userId = authId(c)
+        const id = Number(c.params.id)
+        const access = await resolveResource(db, userId, "file", id)
+        if (!access) return json(c, 404, { error: "Not found" })
+        const rows = await listForResource(db, "file", id)
+        return json(c, 200, { comments: rows })
+      }),
+    ),
 
-    get("/folders/:id/comments", guard(async (c) => {
-      const userId = authId(c)
-      const id = Number(c.params.id)
-      const access = await resolveResource(db, userId, "folder", id)
-      if (!access) return json(c, 404, { error: "Not found" })
-      const rows = await listForResource(db, "folder", id)
-      return json(c, 200, { comments: rows })
-    })),
+    get(
+      "/folders/:id/comments",
+      guard(async c => {
+        const userId = authId(c)
+        const id = Number(c.params.id)
+        const access = await resolveResource(db, userId, "folder", id)
+        if (!access) return json(c, 404, { error: "Not found" })
+        const rows = await listForResource(db, "folder", id)
+        return json(c, 200, { comments: rows })
+      }),
+    ),
 
-    post("/files/:id/comments", authed(async (c) => createComment(c, db, "file"))),
-    post("/folders/:id/comments", authed(async (c) => createComment(c, db, "folder"))),
+    post(
+      "/files/:id/comments",
+      authed(async c => createComment(c, db, "file")),
+    ),
+    post(
+      "/folders/:id/comments",
+      authed(async c => createComment(c, db, "folder")),
+    ),
 
-    patch("/comments/:id", authed(async (c) => {
-      const userId = authId(c)
-      const id = Number(c.params.id)
-      const body = (c.body as { body?: string }).body?.trim() ?? ""
-      if (body.length < MIN_BODY || body.length > MAX_BODY) {
-        return json(c, 422, { error: `body must be ${MIN_BODY}-${MAX_BODY} chars` })
-      }
-      const row = await db.one(
-        from("comments").where(q => q("id").equals(id)).select("id", "user_id", "deleted_at"),
-      ) as { id: number; user_id: number; deleted_at: string | null } | null
-      if (!row || row.deleted_at) return json(c, 404, { error: "Comment not found" })
-      if (row.user_id !== userId) return json(c, 403, { error: "Not your comment" })
-      await db.execute(
-        from("comments").where(q => q("id").equals(id)).update({
-          body, edited_at: raw("NOW()"),
-        }),
-      )
-      return json(c, 200, { ok: true })
-    })),
-
-    del("/comments/:id", guard(async (c) => {
-      const userId = authId(c)
-      const id = Number(c.params.id)
-      const row = await db.one(
-        from("comments").where(q => q("id").equals(id)).select("id", "user_id", "resource_type", "resource_id", "deleted_at"),
-      ) as { id: number; user_id: number; resource_type: string; resource_id: number; deleted_at: string | null } | null
-      if (!row || row.deleted_at) return json(c, 404, { error: "Comment not found" })
-
-      // Author can always delete their own. The resource owner can delete
-      // anyone's comment on their resource. Editors cannot delete others.
-      if (row.user_id !== userId) {
-        const access = await resolveResource(db, userId, row.resource_type as ResourceKind, row.resource_id)
-        if (!access || access.role !== "owner") {
-          return json(c, 403, { error: "Cannot delete this comment" })
+    patch(
+      "/comments/:id",
+      authed(async c => {
+        const userId = authId(c)
+        const id = Number(c.params.id)
+        const body = (c.body as { body?: string }).body?.trim() ?? ""
+        if (body.length < MIN_BODY || body.length > MAX_BODY) {
+          return json(c, 422, { error: `body must be ${MIN_BODY}-${MAX_BODY} chars` })
         }
-      }
-      await db.execute(
-        from("comments").where(q => q("id").equals(id)).update({ deleted_at: raw("NOW()") }),
-      )
-      return json(c, 200, { ok: true })
-    })),
+        const row = (await db.one(
+          from("comments")
+            .where(q => q("id").equals(id))
+            .select("id", "user_id", "deleted_at"),
+        )) as { id: number; user_id: number; deleted_at: string | null } | null
+        if (!row || row.deleted_at) return json(c, 404, { error: "Comment not found" })
+        if (row.user_id !== userId) return json(c, 403, { error: "Not your comment" })
+        await db.execute(
+          from("comments")
+            .where(q => q("id").equals(id))
+            .update({
+              body,
+              edited_at: raw("NOW()"),
+            }),
+        )
+        return json(c, 200, { ok: true })
+      }),
+    ),
+
+    del(
+      "/comments/:id",
+      guard(async c => {
+        const userId = authId(c)
+        const id = Number(c.params.id)
+        const row = (await db.one(
+          from("comments")
+            .where(q => q("id").equals(id))
+            .select("id", "user_id", "resource_type", "resource_id", "deleted_at"),
+        )) as {
+          id: number
+          user_id: number
+          resource_type: string
+          resource_id: number
+          deleted_at: string | null
+        } | null
+        if (!row || row.deleted_at) return json(c, 404, { error: "Comment not found" })
+
+        // Author can always delete their own. The resource owner can delete
+        // anyone's comment on their resource. Editors cannot delete others.
+        if (row.user_id !== userId) {
+          const access = await resolveResource(db, userId, row.resource_type as ResourceKind, row.resource_id)
+          if (!access || access.role !== "owner") {
+            return json(c, 403, { error: "Cannot delete this comment" })
+          }
+        }
+        await db.execute(
+          from("comments")
+            .where(q => q("id").equals(id))
+            .update({ deleted_at: raw("NOW()") }),
+        )
+        return json(c, 200, { ok: true })
+      }),
+    ),
   ]
 }
 
-const createComment = async (
-  c: any,
-  db: Connection,
-  kind: ResourceKind,
-) => {
+const createComment = async (c: any, db: Connection, kind: ResourceKind) => {
   const userId = authId(c)
   const id = Number(c.params.id)
   const body = (c.body as { body?: string; parent_id?: number; parentId?: number }).body?.trim() ?? ""
@@ -191,7 +216,7 @@ const createComment = async (
     if (!parent) return json(c, 422, { error: "Parent comment not found on this resource" })
   }
 
-  const inserted = await db.execute(
+  const inserted = (await db.execute(
     from("comments")
       .insert({
         resource_type: kind,
@@ -200,8 +225,18 @@ const createComment = async (
         parent_id: parentId ? Number(parentId) : null,
         body,
       })
-      .returning("id", "resource_type", "resource_id", "user_id", "parent_id", "body", "edited_at", "deleted_at", "created_at"),
-  ) as CommentRow[]
+      .returning(
+        "id",
+        "resource_type",
+        "resource_id",
+        "user_id",
+        "parent_id",
+        "body",
+        "edited_at",
+        "deleted_at",
+        "created_at",
+      ),
+  )) as CommentRow[]
   const row = inserted[0]!
 
   // Notify the resource owner + every other previous commenter on the
@@ -214,7 +249,7 @@ const createComment = async (
     db,
     Array.from(recipients).map(uid => ({
       userId: uid,
-      kind: parentId ? "comment.reply" as const : "comment.created" as const,
+      kind: parentId ? ("comment.reply" as const) : ("comment.created" as const),
       resourceType: kind,
       resourceId: id,
       actorId: userId,

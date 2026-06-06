@@ -1,6 +1,6 @@
-import type { Action } from "./types.ts"
-import resizeImage from "./stohr/resize.ts"
 import organizeByDate from "./stohr/organize.ts"
+import resizeImage from "./stohr/resize.ts"
+import type { Action } from "./types.ts"
 
 const REGISTRY = new Map<string, Action>()
 
@@ -19,8 +19,7 @@ register(organizeByDate)
 
 export const getAction = (slug: string): Action | null => REGISTRY.get(slug) ?? null
 
-export const listActions = (): Action[] =>
-  [...REGISTRY.values()].sort((a, b) => a.slug.localeCompare(b.slug))
+export const listActions = (): Action[] => [...REGISTRY.values()].sort((a, b) => a.slug.localeCompare(b.slug))
 
 export const describeAction = (action: Action) => ({
   slug: action.slug,

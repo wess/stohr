@@ -54,7 +54,7 @@ const claim = async (db: Connection, batchSize: number): Promise<Pending[]> => {
   // marker that prevents two workers from re-indexing the same row.
   // Sufficient at our scale (single API process per host); we can layer in
   // SKIP LOCKED if we ever shard the worker.
-  const rows = await db.execute({
+  const rows = (await db.execute({
     text: `
       SELECT id, user_id, storage_key, name, mime, size, version
         FROM files
@@ -64,7 +64,7 @@ const claim = async (db: Connection, batchSize: number): Promise<Pending[]> => {
        LIMIT $1
     `,
     values: [batchSize],
-  }) as Pending[]
+  })) as Pending[]
   return rows
 }
 

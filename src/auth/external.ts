@@ -1,12 +1,12 @@
+import { hash } from "@atlas/auth"
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { hash } from "@atlas/auth"
 import { randomToken } from "../util/token.ts"
 import { isValidUsername, normalizeUsername } from "../util/username.ts"
 import { resolvePendingCollabs } from "./index.ts"
 
 export type ExternalProfile = {
-  provider: "oidc" | "ldap"
+  provider: "oidc" | "ldap" | "google" | "github"
   subject: string
   email: string | null
   display_name: string | null
@@ -24,7 +24,10 @@ type LocalUser = {
 
 const suggestUsernameFrom = (profile: ExternalProfile): string => {
   const raw = (profile.preferred_username ?? profile.email?.split("@")[0] ?? `user-${randomToken(3)}`).toLowerCase()
-  const cleaned = raw.replace(/[^a-z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "")
+  const cleaned = raw
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
   const base = cleaned.length < 3 ? `user_${cleaned}`.padEnd(3, "_") : cleaned.slice(0, 32)
   return base
 }
@@ -34,7 +37,9 @@ const uniqueUsername = async (db: Connection, base: string): Promise<string> => 
   if (!isValidUsername(candidate)) candidate = `user_${randomToken(4)}`
   for (let i = 0; i < 50; i++) {
     const taken = await db.one(
-      from("users").where(q => q("username").equals(candidate)).select("id"),
+      from("users")
+        .where(q => q("username").equals(candidate))
+        .select("id"),
     )
     if (!taken) return candidate
     const suffix = randomToken(2)
@@ -61,32 +66,32 @@ export const upsertFromExternal = async (
   profile: ExternalProfile,
   opts: { autoProvision: boolean },
 ): Promise<{ user: LocalUser; created: boolean }> => {
-  const existing = await db.one(
+  const existing = (await db.one(
     from("external_identities")
       .where(q => q("provider").equals(profile.provider))
       .where(q => q("subject").equals(profile.subject))
       .select("id", "user_id"),
-  ) as { id: number; user_id: number } | null
+  )) as { id: number; user_id: number } | null
 
   if (existing) {
-    const user = await db.one(
+    const user = (await db.one(
       from("users")
         .where(q => q("id").equals(existing.user_id))
         .select("id", "email", "username", "name", "is_owner", "deleted_at"),
-    ) as LocalUser | null
+    )) as LocalUser | null
     if (!user) throw new Error("Linked external identity points to a missing user")
     await touchIdentity(db, existing.id)
     return { user, created: false }
   }
 
   if (profile.email) {
-    const byEmail = await db.one(
+    const byEmail = (await db.one(
       from("users")
         .where(q => q("email").equals(profile.email!.toLowerCase()))
         .select("id", "email", "username", "name", "is_owner", "deleted_at"),
-    ) as LocalUser | null
+    )) as LocalUser | null
     if (byEmail) {
-      const linked = await db.execute(
+      const linked = (await db.execute(
         from("external_identities")
           .insert({
             user_id: byEmail.id,
@@ -97,7 +102,7 @@ export const upsertFromExternal = async (
             last_login_at: raw("NOW()"),
           })
           .returning("id"),
-      ) as Array<{ id: number }>
+      )) as Array<{ id: number }>
       void linked
       return { user: byEmail, created: false }
     }
@@ -118,7 +123,7 @@ export const upsertFromExternal = async (
   // reset if they want to (the email is already verified by the IdP).
   const passwordHash = await hash(randomToken(32))
 
-  const inserted = await db.execute(
+  const inserted = (await db.execute(
     from("users")
       .insert({
         email: profile.email.toLowerCase(),
@@ -128,19 +133,18 @@ export const upsertFromExternal = async (
         is_owner: isFirstUser,
       })
       .returning("id", "email", "username", "name", "is_owner", "deleted_at"),
-  ) as Array<LocalUser>
+  )) as Array<LocalUser>
   const user = inserted[0]!
 
   await db.execute(
-    from("external_identities")
-      .insert({
-        user_id: user.id,
-        provider: profile.provider,
-        subject: profile.subject,
-        email: profile.email,
-        display_name: profile.display_name,
-        last_login_at: raw("NOW()"),
-      }),
+    from("external_identities").insert({
+      user_id: user.id,
+      provider: profile.provider,
+      subject: profile.subject,
+      email: profile.email,
+      display_name: profile.display_name,
+      last_login_at: raw("NOW()"),
+    }),
   )
 
   await resolvePendingCollabs(db, user.id, profile.email.toLowerCase())

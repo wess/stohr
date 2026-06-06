@@ -32,11 +32,7 @@ const attrValue = (raw: unknown): string | null => {
 
 // Bind as the service account, search for the user, then re-bind as the
 // user with the candidate password. Two binds; one TCP connection.
-export const authenticateLdap = async (
-  cfg: LdapConfig,
-  identity: string,
-  password: string,
-): Promise<LdapUser> => {
+export const authenticateLdap = async (cfg: LdapConfig, identity: string, password: string): Promise<LdapUser> => {
   if (!cfg.url || !cfg.user_search_base) {
     throw new Error("LDAP is not configured")
   }
@@ -71,7 +67,11 @@ export const authenticateLdap = async (
       await userClient.bind(entry.dn, password)
     } finally {
       if (cfg.bind_dn) {
-        try { await userClient.unbind() } catch { /* ignore */ }
+        try {
+          await userClient.unbind()
+        } catch {
+          /* ignore */
+        }
       }
     }
 
@@ -88,6 +88,10 @@ export const authenticateLdap = async (
     if (/InvalidCredentials|49/i.test(msg)) throw new Error("Invalid credentials")
     throw err
   } finally {
-    try { await client.unbind() } catch { /* ignore */ }
+    try {
+      await client.unbind()
+    } catch {
+      /* ignore */
+    }
   }
 }
