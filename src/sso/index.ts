@@ -72,9 +72,13 @@ const upsertUser = async (db: Connection, claims: IdTokenClaims): Promise<Synced
     return { id: target.id, username, name, email, is_owner: target.is_owner }
   }
 
+  // First user to land — via SSO or local signup — owns the instance.
+  const anyUser = await db.one(from("users").select("id").limit(1))
+  const isFirstUser = !anyUser
+
   const password = await placeholderHash()
   const inserted = (await db.execute(
-    from("users").insert({ email, username, name, password, is_owner: false }).returning("id", "is_owner"),
+    from("users").insert({ email, username, name, password, is_owner: isFirstUser }).returning("id", "is_owner"),
   )) as Array<{ id: number; is_owner: boolean }>
   const row = inserted[0]
   if (!row) throw new Error("user insert failed")
