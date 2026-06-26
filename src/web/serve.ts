@@ -13,7 +13,7 @@ const isDev = (process.env.NODE_ENV ?? "development") === "development"
 const HERE = dirname(new URL(import.meta.url).pathname)
 const DIST = resolve(HERE, "dist")
 
-// SPA fallback policy: any path that isn't /api, /webdav, or an
+// SPA fallback policy: any path that isn't /api, /webdav, /s3, /auth, or an
 // existing built asset returns index.html so React Router takes over
 // client-side. We don't keep an allowlist of routes — Stohr has many
 // (/me, /folders, /admin, /trash, /shares, …) and an out-of-date list
@@ -66,10 +66,15 @@ const looksLikeAsset = (path: string): boolean => {
 }
 
 const proxy = async (req: Request, target: string): Promise<Response> => {
+  // redirect: "manual" so 3xx from the API is forwarded to the browser rather
+  // than followed server-side. The SSO login route returns a 302 to Castle's
+  // /oauth/authorize — following it here would hand the browser Castle's page
+  // under stohr's origin, breaking the OIDC state/PKCE cookies and the callback.
   const res = await fetch(target, {
     method: req.method,
     headers: req.headers,
     body: req.body,
+    redirect: "manual",
   })
   return new Response(res.body, { status: res.status, headers: res.headers })
 }
@@ -92,6 +97,24 @@ Bun.serve({
     // Authorization off the request, so we forward headers verbatim. Methods
     // include PROPFIND, MKCOL, MOVE, COPY in addition to GET/PUT/DELETE.
     if (url.pathname === "/webdav" || url.pathname.startsWith("/webdav/")) {
+      return proxy(req, `${API}${url.pathname}${url.search}`)
+    }
+
+    // S3-compatible API pass-through. S3 SDKs / rclone / s3cmd connect to the
+    // public hostname and address path-style as /s3/<bucket>/<key>; the API's
+    // SigV4 handler reads the Authorization + x-amz-* headers verbatim, so we
+    // forward as-is (no /api strip). Same shape as the WebDAV pass-through.
+    if (url.pathname === "/s3" || url.pathname.startsWith("/s3/")) {
+      return proxy(req, `${API}${url.pathname}${url.search}`)
+    }
+
+    // Castle SSO browser pass-through. The OIDC browser routes (login /
+    // callback / backchannel-logout) are mounted on the API at /auth/sso/*
+    // with no /api prefix — they drive top-level redirects, not XHR — so the
+    // front-door must forward them verbatim like the WebDAV/S3 pass-throughs.
+    // Without this /auth/sso/login falls through to index.html and the OIDC
+    // redirect never starts.
+    if (url.pathname === "/auth" || url.pathname.startsWith("/auth/")) {
       return proxy(req, `${API}${url.pathname}${url.search}`)
     }
 
