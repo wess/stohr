@@ -48,3 +48,5 @@ Full docs live in [`docs/`](docs/README.md) — architecture, every endpoint, de
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+♥ [Sponsor this project](https://github.com/sponsors/wess)
