@@ -48,14 +48,45 @@ export const isSessionActive = async (db: Connection, jti: string): Promise<{ ac
   return { active: true, userId: row.user_id }
 }
 
+// `last_used_at` drives the "last active" column on the sessions screen, so
+// minute-level precision is plenty — but this used to fire an UPDATE on every
+// authenticated request. A single page load in the SPA issues dozens, which
+// turned into dozens of writes, matching WAL traffic, and a steady stream of
+// dead tuples on a table every request also reads. Throttle per session.
+const TOUCH_INTERVAL_MS = 5 * 60 * 1000
+// Bound on distinct sessions tracked before we prune. Comfortably above any
+// realistic concurrent-session count, and pruning is O(n) over a small map.
+const TOUCH_CACHE_MAX = 10_000
+const lastTouched = new Map<string, number>()
+
+const pruneTouchCache = (now: number): void => {
+  for (const [jti, at] of lastTouched) {
+    if (now - at >= TOUCH_INTERVAL_MS) lastTouched.delete(jti)
+  }
+  // Still oversized after dropping everything stale (i.e. genuinely that many
+  // live sessions) — drop the oldest half rather than grow without bound.
+  if (lastTouched.size > TOUCH_CACHE_MAX) {
+    const sorted = [...lastTouched.entries()].sort((a, b) => a[1] - b[1])
+    for (const [jti] of sorted.slice(0, Math.floor(sorted.length / 2))) lastTouched.delete(jti)
+  }
+}
+
 export const touchSession = (db: Connection, jti: string): void => {
+  const now = Date.now()
+  const prev = lastTouched.get(jti)
+  if (prev !== undefined && now - prev < TOUCH_INTERVAL_MS) return
+  lastTouched.set(jti, now)
+  if (lastTouched.size > TOUCH_CACHE_MAX) pruneTouchCache(now)
   void db
     .execute(
       from("sessions")
         .where(q => q("id").equals(jti))
         .update({ last_used_at: raw("NOW()") }),
     )
-    .catch(() => {})
+    .catch(() => {
+      // Let the next request retry rather than waiting out the throttle.
+      lastTouched.delete(jti)
+    })
 }
 
 export const revokeSession = async (db: Connection, jti: string, userId: number): Promise<boolean> => {

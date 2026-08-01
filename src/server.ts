@@ -52,8 +52,10 @@ import { clamdConfig, sweepPendingScans } from "./scanning/index.ts"
 import { indexBatch as indexContentBatch } from "./search/content/indexer.ts"
 import { contentSearchRoutes } from "./search/content/routes.ts"
 import { searchRoutes } from "./search/index.ts"
+import { sweepRateLimits as sweepRateLimitRows } from "./security/ratelimit.ts"
+import { sweepExpiredSessions } from "./security/sessions.ts"
 import { adminSettingsRoutes, SETTING_WEBDAV_ENABLED, seedIfMissing } from "./settings/index.ts"
-import { shareRoutes } from "./shares/index.ts"
+import { shareRoutes, sweepExpiredShares } from "./shares/index.ts"
 import { spaceRoutes } from "./spaces/index.ts"
 import { setupStohrSso, ssoStatusRoutes } from "./sso/index.ts"
 import { trashRoutes } from "./trash/index.ts"
@@ -86,6 +88,16 @@ const config = defineConfig({
   port: env("PORT", { parse: Number, default: "3000" }),
   secret: env("SECRET", { default: "dev-secret-change-me" }),
   databaseUrl: env("DATABASE_URL", { default: "postgres://postgres:postgres@localhost:5432/stohr" }),
+  // Postgres pool size. @atlas/db defaults to 5, which is a hard throughput
+  // ceiling here: every authenticated request costs 2-3 queries and the
+  // background sweeps draw from the same pool. Keep this comfortably under
+  // your server's max_connections divided by the number of API replicas.
+  dbPool: env("DB_POOL", { parse: Number, default: "20" }),
+  // Socket idle timeout in seconds (Bun caps at 255; 0 disables). This is
+  // time with *no bytes moving*, not total request duration, so a large
+  // upload streaming steadily is never affected. Leaving it at 0 lets a
+  // stalled or malicious peer hold a connection open forever.
+  idleTimeout: env("IDLE_TIMEOUT", { parse: Number, default: "120" }),
   storageDriver: env("STORAGE_DRIVER", { default: "s3" }),
   storageLocalDir: env("STORAGE_LOCAL_DIR", { default: "./.stohr/blobs" }),
   s3Endpoint: env("S3_ENDPOINT", { default: "http://localhost:4000" }),
@@ -123,7 +135,29 @@ const config = defineConfig({
   ssoClientSecret: env("SSO_CLIENT_SECRET", { default: "" }),
 })
 
-const db = connect({ driver: "postgres", url: config.databaseUrl })
+// Secret validation runs before anything else touches the network or the
+// database. Failing here used to happen after migrations had already run and
+// every sweep had been scheduled, which meant a misconfigured production boot
+// still mutated the schema before exiting.
+const isDev = (process.env.NODE_ENV ?? "development") === "development"
+if (config.secret === "dev-secret-change-me") {
+  if (isDev) {
+    console.warn("[stohr] WARNING: running with the default SECRET. Set a strong SECRET in .env before production.")
+  } else {
+    console.error(
+      "[stohr] FATAL: SECRET is set to its default value. Refusing to start. Set SECRET in your environment to a strong random string (e.g. `openssl rand -hex 32`).",
+    )
+    process.exit(1)
+  }
+}
+if (config.secret.length < 32 && !isDev) {
+  console.error(
+    `[stohr] FATAL: SECRET is too short (${config.secret.length} chars). Use at least 32 chars in production.`,
+  )
+  process.exit(1)
+}
+
+const db = connect({ driver: "postgres", url: config.databaseUrl, pool: config.dbPool })
 const store =
   config.storageDriver === "local"
     ? createStorage({ driver: "local", dir: config.storageLocalDir })
@@ -245,6 +279,14 @@ const sweepDeletions = guardedSweep("deleted_accounts", () => sweepDeletedAccoun
 const sweepFedInvites = guardedSweep("federation_invites", () => sweepExpiredFederationInvites(db))
 const sweepFedDrains = guardedSweep("federation_drains", () => sweepFederationDrains(db, store))
 const sweepOidcStates = guardedSweep("oidc_states", () => sweepExpiredOidcStates(db))
+// Sessions and share tokens used to schedule themselves from inside their
+// route factories. They live here now so every background job is visible in
+// one place and gets the same overlap guard and error logging.
+const sweepSessions = guardedSweep("sessions", () => sweepExpiredSessions(db))
+const sweepShareTokens = guardedSweep("shares", () => sweepExpiredShares(db))
+// Rate-limit buckets are keyed on caller-supplied identities, so the table
+// grows without bound until something prunes it.
+const sweepRateLimits = guardedSweep("rate_limits", () => sweepRateLimitRows(db))
 // Content-search indexer: picks up files where text_indexed_version is
 // behind the live version, extracts text, writes back to files. Guarded so
 // a slow batch can't stack onto itself.
@@ -307,6 +349,24 @@ setInterval(
   },
   5 * 60 * 1000,
 )
+setInterval(
+  () => {
+    void sweepSessions()
+  },
+  60 * 60 * 1000,
+)
+setInterval(
+  () => {
+    void sweepShareTokens()
+  },
+  60 * 60 * 1000,
+)
+setInterval(
+  () => {
+    void sweepRateLimits()
+  },
+  60 * 60 * 1000,
+)
 // Run the indexer every 30s. Each tick processes up to 5 files; backlog
 // drains at ~600 files/5min. Bump the batch size in indexContentBatch if
 // you need higher throughput.
@@ -331,45 +391,74 @@ if (clamdConfig()) {
   }, 20 * 1000)
   void tickScanSweep()
 }
-void sweepAuthCodes()
-void sweepDeviceCodes()
-void sweepRefreshTokens()
-void sweepPasswordResets()
-void sweepWebauthn()
-void sweepDeletions()
-void sweepFedInvites()
-void sweepFedDrains()
-void sweepOidcStates()
-void tickContentIndexer()
-void sweepUploads()
+// Kick every sweep once at boot, but stagger them. Firing all thirteen at
+// once made the first seconds of uptime contend for the whole connection
+// pool against the requests arriving at the same time.
+const bootSweeps = [
+  sweepAuthCodes,
+  sweepDeviceCodes,
+  sweepRefreshTokens,
+  sweepPasswordResets,
+  sweepWebauthn,
+  sweepDeletions,
+  sweepFedInvites,
+  sweepFedDrains,
+  sweepOidcStates,
+  sweepSessions,
+  sweepShareTokens,
+  sweepRateLimits,
+  tickContentIndexer,
+  sweepUploads,
+]
+bootSweeps.forEach((sweep, i) => {
+  setTimeout(() => {
+    void sweep()
+  }, i * 750)
+})
 
-// Production refuses to start with the default SECRET — JWTs signed with a
-// known value would be forgeable by anyone. In development we just warn so
-// `bun run dev` works out of the box on a fresh clone.
-const isDev = (process.env.NODE_ENV ?? "development") === "development"
-if (config.secret === "dev-secret-change-me") {
-  if (isDev) {
-    console.warn("[stohr] WARNING: running with the default SECRET. Set a strong SECRET in .env before production.")
-  } else {
-    console.error(
-      "[stohr] FATAL: SECRET is set to its default value. Refusing to start. Set SECRET in your environment to a strong random string (e.g. `openssl rand -hex 32`).",
-    )
-    process.exit(1)
-  }
-}
-if (config.secret.length < 32 && !isDev) {
-  console.error(
-    `[stohr] FATAL: SECRET is too short (${config.secret.length} chars). Use at least 32 chars in production.`,
-  )
-  process.exit(1)
-}
-
-Bun.serve({
+const server = Bun.serve({
   port: config.port,
   hostname: "0.0.0.0",
   fetch,
   maxRequestBodySize: config.maxUploadBytes,
-  idleTimeout: 0,
+  idleTimeout: config.idleTimeout,
+})
+
+// Graceful shutdown. `docker stop` and compose restarts send SIGTERM; without
+// a handler Bun tears the process down immediately and every in-flight upload
+// or download dies mid-stream. server.stop(false) closes the listener but lets
+// active requests finish, then we close the pool. The timeout is a backstop so
+// a wedged request can't block the shutdown forever.
+const SHUTDOWN_GRACE_MS = 15_000
+let shuttingDown = false
+const shutdown = async (signal: string) => {
+  if (shuttingDown) return
+  shuttingDown = true
+  info("server", "shutting down", { signal })
+  const forced = setTimeout(() => {
+    console.error("[stohr] shutdown grace period elapsed — forcing exit")
+    process.exit(1)
+  }, SHUTDOWN_GRACE_MS)
+  forced.unref?.()
+  try {
+    await server.stop(false)
+    await db.close()
+  } catch (err) {
+    console.error("[stohr] shutdown error:", err)
+  }
+  clearTimeout(forced)
+  info("server", "shutdown complete", { signal })
+  process.exit(0)
+}
+process.on("SIGTERM", () => void shutdown("SIGTERM"))
+process.on("SIGINT", () => void shutdown("SIGINT"))
+
+// A rejected promise that nothing awaits would otherwise print a bare trace
+// (or, depending on the Bun version, take the process with it). Log it through
+// the structured logger and keep serving — a single failed background task is
+// not a reason to drop every in-flight request.
+process.on("unhandledRejection", reason => {
+  console.error("[stohr] unhandled rejection:", reason)
 })
 
 info("server", "api listening", { port: config.port })

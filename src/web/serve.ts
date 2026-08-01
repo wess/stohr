@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto"
 import { existsSync, mkdirSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
+import { securityHeaders } from "../security/headers.ts"
 
 const API = process.env.API_URL ?? "http://localhost:3000"
 const PORT = Number(process.env.WEB_PORT ?? 3001)
@@ -46,13 +48,43 @@ await buildSpa()
 // as ordinary same-origin loads.
 const indexHtml = (await Bun.file(join(DIST, "index.html")).text()).replace(/ crossorigin(?=[\s>])/g, "")
 
+// The theme-init snippet in index.html must run before first paint, so it
+// stays inline. Hash whatever is actually in the shipped HTML and allowlist
+// that exact text — if the snippet is ever edited the hash follows it, and a
+// script injected into the document later still won't match.
+const inlineScriptHashes = [...indexHtml.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map(
+  m =>
+    `sha256-${createHash("sha256")
+      .update(m[1] ?? "")
+      .digest("base64")}`,
+)
+const SECURITY_HEADERS = securityHeaders(inlineScriptHashes)
+
+const withSecurity = (res: Response): Response => {
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+    if (!res.headers.has(k)) res.headers.set(k, v)
+  }
+  return res
+}
+
+// Bun.build content-hashes every emitted asset (chunk-az2vnb4n.js,
+// logo-fzn7nwb9.png), so those names are safe to cache forever — a rebuild
+// changes the name. index.html is the one file that must never be cached:
+// it's what points at the current hashed names.
+const HASHED_ASSET_RE = /-[a-z0-9]{8,}\.[a-z0-9]+$/i
+
 const serveAsset = async (path: string): Promise<Response | null> => {
   // Reject path traversal — DIST is the only thing we ever serve from.
   const safe = path.replace(/^\/+/, "")
   if (safe.includes("..")) return null
   const file = Bun.file(join(DIST, safe))
   if (!(await file.exists())) return null
-  return new Response(file)
+  const res = new Response(file)
+  res.headers.set(
+    "cache-control",
+    HASHED_ASSET_RE.test(safe) ? "public, max-age=31536000, immutable" : "public, max-age=300",
+  )
+  return withSecurity(res)
 }
 
 // Heuristic: a request is for an asset file (not a SPA navigation) when
@@ -70,20 +102,34 @@ const proxy = async (req: Request, target: string): Promise<Response> => {
   // than followed server-side. The SSO login route returns a 302 to Castle's
   // /oauth/authorize — following it here would hand the browser Castle's page
   // under stohr's origin, breaking the OIDC state/PKCE cookies and the callback.
-  const res = await fetch(target, {
-    method: req.method,
-    headers: req.headers,
-    body: req.body,
-    redirect: "manual",
-  })
-  return new Response(res.body, { status: res.status, headers: res.headers })
+  try {
+    const res = await fetch(target, {
+      method: req.method,
+      headers: req.headers,
+      body: req.body,
+      redirect: "manual",
+    })
+    return new Response(res.body, { status: res.status, headers: res.headers })
+  } catch (err) {
+    // The API being down, restarting, or refusing the connection is an
+    // upstream failure, not ours. Without this it surfaced as an opaque 500
+    // from the runtime with no indication of which hop failed.
+    console.error(`[stohr] proxy to ${target} failed:`, err)
+    return new Response(JSON.stringify({ error: "Upstream API unavailable" }), {
+      status: 502,
+      headers: { "content-type": "application/json" },
+    })
+  }
 }
 
-Bun.serve({
+const server = Bun.serve({
   port: PORT,
   hostname: "0.0.0.0",
   maxRequestBodySize: Number.MAX_SAFE_INTEGER,
-  idleTimeout: 0,
+  // Seconds of socket inactivity, not total request duration — a steady
+  // upload or download is never cut off. 0 meant a stalled peer could hold a
+  // connection open indefinitely.
+  idleTimeout: Number(process.env.IDLE_TIMEOUT ?? 120),
   async fetch(req) {
     const url = new URL(req.url)
 
@@ -124,13 +170,37 @@ Bun.serve({
     // Asset-shaped path that wasn't found → 404. SPA-shaped path → fall
     // through to the index.html so client-side routing handles it.
     if (looksLikeAsset(url.pathname)) {
-      return new Response("Not Found", { status: 404 })
+      return withSecurity(new Response("Not Found", { status: 404 }))
     }
 
-    return new Response(indexHtml, {
-      headers: { "content-type": "text/html;charset=utf-8" },
-    })
+    return withSecurity(
+      new Response(indexHtml, {
+        headers: {
+          "content-type": "text/html;charset=utf-8",
+          // Must revalidate every load: this document is what maps to the
+          // current content-hashed bundle names. Caching it pins the browser
+          // to a stale deploy.
+          "cache-control": "no-cache",
+        },
+      }),
+    )
   },
 })
+
+// Match the API's shutdown behaviour so a compose restart drains both halves
+// instead of severing whatever the browser had in flight.
+let shuttingDown = false
+const shutdown = async (signal: string) => {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.log(`[stohr] web shutting down (${signal})`)
+  const forced = setTimeout(() => process.exit(1), 15_000)
+  forced.unref?.()
+  await server.stop(false).catch(() => {})
+  clearTimeout(forced)
+  process.exit(0)
+}
+process.on("SIGTERM", () => void shutdown("SIGTERM"))
+process.on("SIGINT", () => void shutdown("SIGINT"))
 
 console.log(`[stohr] web on http://localhost:${PORT}`)

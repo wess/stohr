@@ -9,9 +9,14 @@ const isDev = (process.env.NODE_ENV ?? "development") === "development"
 //     (acceptable: style injection alone can't read the bearer token)
 //   - img-src allows blob: for AuthedImage and data: for icons
 //   - frame-ancestors 'none' duplicates X-Frame-Options for modern browsers
-const CSP_PROD =
+// Built as a function so the web server can pass the sha256 of the inline
+// theme-init script in index.html. That script has to run before first paint
+// to avoid a light/dark flash, so it can't move into the bundle — a hash
+// allowlists exactly that one snippet without opening the door to
+// 'unsafe-inline'.
+const cspProd = (scriptHashes: string[]): string =>
   "default-src 'self'; " +
-  "script-src 'self'; " +
+  `script-src 'self'${scriptHashes.map(h => ` '${h}'`).join("")}; ` +
   "style-src 'self' 'unsafe-inline'; " +
   "img-src 'self' data: blob: https:; " +
   "font-src 'self' data:; " +
@@ -37,7 +42,10 @@ const CSP_DEV =
   "form-action 'self'; " +
   "frame-ancestors 'none'"
 
-const HEADERS: Record<string, string> = {
+// The document itself needs these as much as the API does — arguably more,
+// since the HTML is what the browser actually executes. The web server pulls
+// this in so the SPA isn't served bare.
+export const securityHeaders = (scriptHashes: string[] = []): Record<string, string> => ({
   "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
@@ -45,8 +53,10 @@ const HEADERS: Record<string, string> = {
   "permissions-policy": "camera=(), microphone=(), geolocation=(), interest-cohort=()",
   "cross-origin-opener-policy": "same-origin",
   "cross-origin-resource-policy": "same-site",
-  "content-security-policy": isDev ? CSP_DEV : CSP_PROD,
-}
+  "content-security-policy": isDev ? CSP_DEV : cspProd(scriptHashes),
+})
+
+const HEADERS = securityHeaders()
 
 // Bun.serve passes a `server` argument to the fetch handler that exposes the
 // raw socket peer via `server.requestIP(req)`. We stash that onto the request

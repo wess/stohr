@@ -58,11 +58,15 @@ export const fakeStore: StorageHandle = {
   put: async (key, body, contentType) => {
     fakeStoreObjects.set(key, { body: await toBytes(body), contentType })
   },
-  get: async (key) => {
+  get: async (key, range) => {
     const obj = fakeStoreObjects.get(key)
     if (!obj) return new Response(null, { status: 404 })
-    return new Response(obj.body, {
-      status: 200,
+    // Honor ranged reads the way both real drivers do — otherwise a handler
+    // that asks for a slice silently gets the whole object here and the
+    // Content-Length mismatch never surfaces in tests.
+    const body = range ? obj.body.slice(range.start, range.end + 1) : obj.body
+    return new Response(body, {
+      status: range ? 206 : 200,
       headers: obj.contentType ? { "content-type": obj.contentType } : undefined,
     })
   },
@@ -149,7 +153,7 @@ export const callJson = async <T = any>(
   app: App,
   path: string,
   opts: ReqOptions = {},
-): Promise<{ status: number; body: T }> => {
+): Promise<{ status: number; body: T; headers: Headers }> => {
   const headers: Record<string, string> = {
     "x-forwarded-for": opts.ip ?? "127.0.0.1",
     ...(opts.headers ?? {}),
@@ -170,7 +174,7 @@ export const callJson = async <T = any>(
   if (text) {
     try { body = JSON.parse(text) } catch { body = text }
   }
-  return { status: res.status, body: body as T }
+  return { status: res.status, body: body as T, headers: res.headers }
 }
 
 // Raw caller for WebDAV — needs non-standard methods (PROPFIND, MKCOL, …),

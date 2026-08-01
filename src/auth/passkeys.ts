@@ -173,7 +173,7 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
           return json(c, 400, { error: "Challenge not found or expired" })
         }
 
-        let verification
+        let verification: Awaited<ReturnType<typeof verifyRegistrationResponse>>
         try {
           verification = await verifyRegistrationResponse({
             response,
@@ -338,7 +338,7 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
           return json(c, 404, { error: "Unknown passkey" })
         }
 
-        let verification
+        let verification: Awaited<ReturnType<typeof verifyAuthenticationResponse>>
         try {
           verification = await verifyAuthenticationResponse({
             response,

@@ -44,7 +44,7 @@ const allocShareToken = async (db: Connection): Promise<string> => {
   throw new Error("Could not allocate a unique share token after 8 tries")
 }
 
-const sweepExpired = async (db: Connection) => {
+export const sweepExpiredShares = async (db: Connection) => {
   try {
     await db.execute(
       from("shares")
@@ -82,26 +82,10 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
   const guard = pipeline(requireAuth({ secret, db }))
   const authed = pipeline(requireAuth({ secret, db }), parseJson)
 
-  // Periodic sweep — runs every hour for the lifetime of the API process.
-  // Guarded so a slow run can't stack onto itself.
-  let sweeping = false
-  const guardedSweep = async () => {
-    if (sweeping) return
-    sweeping = true
-    try {
-      await sweepExpired(db)
-    } finally {
-      sweeping = false
-    }
-  }
-  setInterval(
-    () => {
-      void guardedSweep()
-    },
-    60 * 60 * 1000,
-  )
-  // Initial sweep so the first request after boot doesn't see stale rows.
-  void guardedSweep()
+  // The expiry sweep is scheduled from src/server.ts alongside every other
+  // background sweep. Registering it here made the process lifecycle a side
+  // effect of building routes — invisible from the composition root, and
+  // unstoppable from tests that only wanted the route table.
 
   return [
     get(

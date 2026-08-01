@@ -39,7 +39,7 @@ export const ldapRoutes = (db: Connection, secret: string) => {
           return json(c, 503, { error: "LDAP is not configured on this instance" })
         }
 
-        let profile
+        let profile: Awaited<ReturnType<typeof authenticateLdap>>
         try {
           profile = await authenticateLdap(cfg, identity, password)
         } catch (err) {
@@ -51,7 +51,7 @@ export const ldapRoutes = (db: Connection, secret: string) => {
           return json(c, 401, { error: "Invalid credentials" })
         }
 
-        let user
+        let user: Awaited<ReturnType<typeof upsertFromExternal>>["user"]
         try {
           const result = await upsertFromExternal(
             db,

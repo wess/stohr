@@ -3,7 +3,7 @@ import { from } from "@atlas/db"
 import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
 import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
-import { revokeAllSessions, revokeSession, sweepExpiredSessions } from "../security/sessions.ts"
+import { revokeAllSessions, revokeSession } from "../security/sessions.ts"
 import { requireAuth } from "./guard.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -13,14 +13,8 @@ export const sessionRoutes = (db: Connection, secret: string) => {
   const guard = pipeline(requireAuth({ secret, db, noOAuth: true }))
   const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), parseJson)
 
-  // Sweep expired sessions hourly + once at boot.
-  setInterval(
-    () => {
-      void sweepExpiredSessions(db)
-    },
-    60 * 60 * 1000,
-  )
-  void sweepExpiredSessions(db)
+  // The expired-session sweep is scheduled from src/server.ts alongside every
+  // other background sweep, rather than as a side effect of building routes.
 
   return [
     get(

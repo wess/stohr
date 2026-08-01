@@ -2,9 +2,16 @@ import { randomBytes } from "node:crypto"
 import { createLocalDriver, type LocalConfig } from "./local/index.ts"
 import { createS3Driver, type S3Config } from "./s3/index.ts"
 
+// Inclusive byte range, matching HTTP's `Range: bytes=start-end` semantics.
+export type ByteRange = { start: number; end: number }
+
 export type StorageDriver = {
   put(key: string, body: Blob | Uint8Array | string, contentType?: string): Promise<void>
-  get(key: string): Promise<Response>
+  // `range` is served by the backend rather than by fetching the whole object
+  // and slicing — seeking around a large video must not pull the entire file.
+  // Still no `signedUrl` here: ranged reads happen inside the process and the
+  // bytes go out through the API, so clients never touch the bucket directly.
+  get(key: string, range?: ByteRange): Promise<Response>
   drop(key: string): Promise<void>
 }
 
@@ -21,7 +28,7 @@ export const createStorage = (cfg: StorageConfig): StorageHandle => {
 export const put = (h: StorageHandle, key: string, body: Blob | Uint8Array | string, contentType?: string) =>
   h.put(key, body, contentType)
 
-export const fetchObject = (h: StorageHandle, key: string) => h.get(key)
+export const fetchObject = (h: StorageHandle, key: string, range?: ByteRange) => h.get(key, range)
 
 export const drop = (h: StorageHandle, key: string) => h.drop(key)
 

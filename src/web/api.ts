@@ -390,7 +390,21 @@ export const getSetupStatus = async () => {
   return res.json() as Promise<{ needsSetup: boolean }>
 }
 
-export const listFolders = (parentId: number | null) => jsonReq("GET", `/folders?parent_id=${parentId ?? "null"}`)
+// Listing endpoints page with limit/offset. The response stays a bare array,
+// so "is there another page" is inferred from a full page coming back rather
+// than from an envelope field.
+export type PageOpts = { limit?: number; offset?: number }
+
+const pageQs = (opts?: PageOpts): string => {
+  if (!opts) return ""
+  const parts: string[] = []
+  if (opts.limit != null) parts.push(`limit=${opts.limit}`)
+  if (opts.offset) parts.push(`offset=${opts.offset}`)
+  return parts.length ? `&${parts.join("&")}` : ""
+}
+
+export const listFolders = (parentId: number | null, opts?: PageOpts) =>
+  jsonReq("GET", `/folders?parent_id=${parentId ?? "null"}${pageQs(opts)}`)
 
 export const getFolder = (id: number) => jsonReq("GET", `/folders/${id}`)
 
@@ -415,9 +429,9 @@ export const createFolderTyped = (
 
 export const deleteFolder = (id: number) => jsonReq("DELETE", `/folders/${id}`)
 
-export const listFiles = (folderId: number | null, q?: string) => {
+export const listFiles = (folderId: number | null, q?: string, opts?: PageOpts) => {
   const qs = q ? `q=${encodeURIComponent(q)}` : `folder_id=${folderId ?? "null"}`
-  return jsonReq("GET", `/files?${qs}`)
+  return jsonReq("GET", `/files?${qs}${pageQs(opts)}`)
 }
 
 export type UploadHandle = {

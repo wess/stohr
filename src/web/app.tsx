@@ -1,23 +1,24 @@
-import React, { useEffect, useMemo, useRef, useState } from "react"
-import { createRoot } from "react-dom/client"
 import {
   AlertTriangle,
   ArrowRight,
   Bell,
+  BookOpen,
   Briefcase,
   Calendar,
+  Camera,
   Check,
   ChevronRight,
   Copy,
   Download,
   Edit3,
-  File as FileIconBase,
+  ExternalLink,
   FileArchive,
+  FileAudio,
   FileCode,
+  File as FileIconBase,
+  FileImage,
   FileText,
   FileVideo,
-  FileAudio,
-  FileImage,
   Folder as FolderIcon,
   FolderOpen,
   FolderPlus,
@@ -28,20 +29,16 @@ import {
   Mail,
   Menu,
   MessageSquare,
-  ExternalLink,
-  BookOpen,
   Monitor,
   Moon,
   MoreVertical,
   Music,
-  Camera,
   PanelLeft,
   Plus,
   Search,
   Settings as SettingsIcon,
   Smartphone,
   Sun,
-  Terminal,
   Trash2,
   Upload as UploadIcon,
   UserPlus,
@@ -49,9 +46,15 @@ import {
   X,
   Zap,
 } from "lucide-react"
+import React, { useEffect, useMemo, useRef, useState } from "react"
+import { createRoot } from "react-dom/client"
 import * as api from "./api.ts"
-import { applyTheme, getTheme, setTheme as setThemePref, type Theme } from "./theme.ts"
 import { Logo } from "./logo.tsx"
+import { getTheme, setTheme as setThemePref, type Theme } from "./theme.ts"
+
+// Rows fetched per listing request. Matches the API's default page size, so a
+// short page reliably means "that's everything".
+const PAGE_SIZE = 200
 
 type Route =
   | { kind: "root" }
@@ -124,16 +127,48 @@ const navigate = (path: string) => {
 const folderHref = (id: number, ownerUsername?: string) =>
   ownerUsername ? `/app/u/${ownerUsername}/f/${id}` : `/app/f/${id}`
 
-const fileHref = (id: number, ownerUsername: string) =>
-  `/app/u/${ownerUsername}/file/${id}`
+const _fileHref = (id: number, ownerUsername: string) => `/app/u/${ownerUsername}/file/${id}`
 
-type Folder = { id: number; name: string; parent_id: number | null; kind?: string; is_public?: boolean; created_at: string }
-type FileItem = { id: number; name: string; mime: string; size: number; folder_id: number | null; version: number; created_at: string }
+type Folder = {
+  id: number
+  name: string
+  parent_id: number | null
+  kind?: string
+  is_public?: boolean
+  created_at: string
+}
+type FileItem = {
+  id: number
+  name: string
+  mime: string
+  size: number
+  folder_id: number | null
+  version: number
+  created_at: string
+}
 type Crumb = { id: number; name: string }
-type Share = { id: number; token: string; expires_at: string | null; created_at: string; name: string; size: number; mime: string; file_id: number; password_required?: boolean; burn_on_view?: boolean }
+type Share = {
+  id: number
+  token: string
+  expires_at: string | null
+  created_at: string
+  name: string
+  size: number
+  mime: string
+  file_id: number
+  password_required?: boolean
+  burn_on_view?: boolean
+}
 type TrashedFolder = Folder & { deleted_at: string }
 type TrashedFile = FileItem & { deleted_at: string }
-type FileVersion = { version: number; mime: string; size: number; uploaded_by: number | null; uploaded_at: string; is_current: boolean }
+type FileVersion = {
+  version: number
+  mime: string
+  size: number
+  uploaded_by: number | null
+  uploaded_at: string
+  is_current: boolean
+}
 
 const formatBytes = (b: number) => {
   if (b < 1024) return `${b} B`
@@ -163,15 +198,18 @@ const captureFrame = async (stream: MediaStream): Promise<Blob> => {
   if (!ctx) throw new Error("Could not create canvas context")
   ctx.drawImage(video, 0, 0, w, h)
   return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(b => b ? resolve(b) : reject(new Error("Could not encode PNG")), "image/png")
+    canvas.toBlob(b => (b ? resolve(b) : reject(new Error("Could not encode PNG"))), "image/png")
   })
 }
 
 const ensureScreenshotsFolder = async (): Promise<number> => {
-  const folders = await api.listFolders(null) as Array<{ id: number; name: string; kind?: string }>
+  const folders = (await api.listFolders(null)) as Array<{ id: number; name: string; kind?: string }>
   const existing = folders.find(f => f.kind === "screenshots")
   if (existing) return existing.id
-  const created = await api.createFolderTyped("Screenshots", null, { kind: "screenshots" }) as { id?: number; error?: string }
+  const created = (await api.createFolderTyped("Screenshots", null, { kind: "screenshots" })) as {
+    id?: number
+    error?: string
+  }
   if (!created.id) throw new Error(created.error ?? "Could not create Screenshots folder")
   return created.id
 }
@@ -181,8 +219,16 @@ const MimeIcon: React.FC<{ mime: string; size?: number }> = ({ mime, size = 28 }
   if (mime.startsWith("video/")) return <FileVideo size={size} strokeWidth={1.5} />
   if (mime.startsWith("audio/")) return <FileAudio size={size} strokeWidth={1.5} />
   if (mime.includes("pdf")) return <FileText size={size} strokeWidth={1.5} />
-  if (mime.includes("zip") || mime.includes("compressed") || mime.includes("x-tar") || mime.includes("gzip")) return <FileArchive size={size} strokeWidth={1.5} />
-  if (mime.includes("javascript") || mime.includes("typescript") || mime.includes("x-sh") || mime.includes("json") || mime.includes("xml")) return <FileCode size={size} strokeWidth={1.5} />
+  if (mime.includes("zip") || mime.includes("compressed") || mime.includes("x-tar") || mime.includes("gzip"))
+    return <FileArchive size={size} strokeWidth={1.5} />
+  if (
+    mime.includes("javascript") ||
+    mime.includes("typescript") ||
+    mime.includes("x-sh") ||
+    mime.includes("json") ||
+    mime.includes("xml")
+  )
+    return <FileCode size={size} strokeWidth={1.5} />
   if (mime.startsWith("text/")) return <FileText size={size} strokeWidth={1.5} />
   return <FileIconBase size={size} strokeWidth={1.5} />
 }
@@ -190,7 +236,11 @@ const MimeIcon: React.FC<{ mime: string; size?: number }> = ({ mime, size = 28 }
 const FileThumb: React.FC<{ file: FileItem }> = ({ file }) => {
   const [failed, setFailed] = useState(false)
   if (failed) {
-    return <div className="icon"><MimeIcon mime={file.mime} size={32} /></div>
+    return (
+      <div className="icon">
+        <MimeIcon mime={file.mime} size={32} />
+      </div>
+    )
   }
   return (
     <div className="thumb">
@@ -204,8 +254,16 @@ const FileThumb: React.FC<{ file: FileItem }> = ({ file }) => {
   )
 }
 
-const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needsSetup: boolean; initialMode?: "login" | "signup"; oauthNext?: string }> = ({ onLogin, initialInvite, needsSetup, initialMode, oauthNext }) => {
-  const [mode, setMode] = useState<"login" | "signup">(initialMode ?? (needsSetup || initialInvite ? "signup" : "login"))
+const Auth: React.FC<{
+  onLogin: () => void
+  initialInvite?: string | null
+  needsSetup: boolean
+  initialMode?: "login" | "signup"
+  oauthNext?: string
+}> = ({ onLogin, initialInvite, needsSetup, initialMode, oauthNext }) => {
+  const [mode, setMode] = useState<"login" | "signup">(
+    initialMode ?? (needsSetup || initialInvite ? "signup" : "login"),
+  )
   const [name, setName] = useState("")
   const [username, setUsername] = useState("")
   const [identity, setIdentity] = useState("")
@@ -242,25 +300,37 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
         setError("")
       }
     })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [mode, inviteToken, needsSetup])
 
   useEffect(() => {
     if (needsSetup) return
     let cancelled = false
-    Promise.all([api.oidcStatus(), api.ldapStatus(), api.ssoStatus()]).then(([o, l, s]) => {
-      if (cancelled) return
-      setOidc(o)
-      setLdap(l)
-      setSso(s)
-    }).catch(() => {})
-    return () => { cancelled = true }
+    Promise.all([api.oidcStatus(), api.ldapStatus(), api.ssoStatus()])
+      .then(([o, l, s]) => {
+        if (cancelled) return
+        setOidc(o)
+        setLdap(l)
+        setSso(s)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
   }, [needsSetup])
 
   const submit = async () => {
     setError("")
     if (mode === "signup") {
-      const res = await api.signup({ name, username, email, password, inviteToken: needsSetup ? undefined : inviteToken })
+      const res = await api.signup({
+        name,
+        username,
+        email,
+        password,
+        inviteToken: needsSetup ? undefined : inviteToken,
+      })
       if (res.error) return setError(res.error)
       if (!res.token) return setError("Authentication failed")
       if (window.location.pathname === "/signup") history.replaceState(null, "", "/")
@@ -313,7 +383,10 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
     try {
       const SWB: typeof import("@simplewebauthn/browser") = await import("@simplewebauthn/browser")
       const options = await api.beginPasskeyDiscoverableLogin()
-      if ((options as any)?.error) { setError((options as any).error); return }
+      if ((options as any)?.error) {
+        setError((options as any).error)
+        return
+      }
       let assertion: any
       try {
         assertion = await SWB.startAuthentication({ optionsJSON: options })
@@ -323,8 +396,14 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
         return
       }
       const res = await api.finishPasskeyDiscoverableLogin(assertion)
-      if ((res as any).error) { setError((res as any).error); return }
-      if (!res.token) { setError("Authentication failed"); return }
+      if ((res as any).error) {
+        setError((res as any).error)
+        return
+      }
+      if (!res.token) {
+        setError("Authentication failed")
+        return
+      }
       if (window.location.pathname === "/signup") history.replaceState(null, "", "/")
       if (oauthNext) {
         history.replaceState(null, "", oauthNext)
@@ -338,14 +417,26 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
 
   const heading = needsSetup
     ? "Set up your Stohr"
-    : mode === "login" ? "Sign in to your cloud storage" : "Create your account"
+    : mode === "login"
+      ? "Sign in to your cloud storage"
+      : "Create your account"
 
   return (
     <div className="auth">
       <Logo className="auth-logo" />
       <h2>{heading}</h2>
       {needsSetup && (
-        <div style={{ background: "var(--accent-bg)", color: "var(--brand)", border: "1px solid var(--brand)", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 }}>
+        <div
+          style={{
+            background: "var(--accent-bg)",
+            color: "var(--brand)",
+            border: "1px solid var(--brand)",
+            padding: 10,
+            borderRadius: 6,
+            marginBottom: 12,
+            fontSize: 13,
+          }}
+        >
           No accounts yet. The first user becomes the owner and can invite others.
         </div>
       )}
@@ -376,18 +467,36 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
               onKeyDown={e => e.key === "Enter" && submitMfa()}
             />
           )}
-          <button className="primary" onClick={submitMfa}>Verify</button>
-          <div className="toggle" onClick={() => { setMfaUseBackup(!mfaUseBackup); setError("") }}>
+          <button type="button" className="primary" onClick={submitMfa}>
+            Verify
+          </button>
+          <div
+            className="toggle"
+            onClick={() => {
+              setMfaUseBackup(!mfaUseBackup)
+              setError("")
+            }}
+          >
             {mfaUseBackup ? "Use authenticator code instead" : "Use a backup code"}
           </div>
-          <div className="toggle" onClick={() => { setMfaToken(null); setMfaCode(""); setMfaBackup(""); setError("") }}>
+          <div
+            className="toggle"
+            onClick={() => {
+              setMfaToken(null)
+              setMfaCode("")
+              setMfaBackup("")
+              setError("")
+            }}
+          >
             Cancel
           </div>
         </>
       ) : mode === "signup" ? (
         <>
           <input placeholder="Name" value={name} onChange={e => setName(e.target.value)} />
-          <input placeholder="Username" value={username}
+          <input
+            placeholder="Username"
+            value={username}
             onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
             autoCapitalize="off"
             autoCorrect="off"
@@ -399,12 +508,17 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
             onChange={e => setEmail(e.target.value)}
             disabled={!!inviteEmailLock}
           />
-          <input placeholder="Password (min 8 chars)" type="password" value={password}
+          <input
+            placeholder="Password (min 8 chars)"
+            type="password"
+            value={password}
             onChange={e => setPassword(e.target.value)}
             onKeyDown={e => needsSetup && e.key === "Enter" && submit()}
           />
           {!needsSetup && (
-            <input placeholder="Invite token" value={inviteToken}
+            <input
+              placeholder="Invite token"
+              value={inviteToken}
               onChange={e => setInviteToken(e.target.value.trim())}
               onKeyDown={e => e.key === "Enter" && submit()}
             />
@@ -417,11 +531,15 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
               <button
                 type="button"
                 className="passkey-cta"
-                onClick={() => { window.location.href = "/auth/sso/login" }}
+                onClick={() => {
+                  window.location.href = "/auth/sso/login"
+                }}
               >
                 🏰 Sign in with {sso.label}
               </button>
-              <div className="auth-divider"><span>or</span></div>
+              <div className="auth-divider">
+                <span>or</span>
+              </div>
             </>
           )}
           {!needsSetup && oidc?.available && (
@@ -430,35 +548,39 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
                 type="button"
                 className="passkey-cta"
                 onClick={() => {
-                  const next = oauthNext ?? (window.location.pathname + window.location.search)
+                  const next = oauthNext ?? window.location.pathname + window.location.search
                   const q = next && next !== "/" ? `?redirect_to=${encodeURIComponent(next)}` : ""
                   window.location.href = `/api/auth/oidc/start${q}`
                 }}
               >
                 🔐 {oidc.label}
               </button>
-              <div className="auth-divider"><span>or</span></div>
+              <div className="auth-divider">
+                <span>or</span>
+              </div>
             </>
           )}
           {!needsSetup && (
             <>
-              <button
-                type="button"
-                className="passkey-cta"
-                onClick={signInWithPasskey}
-                disabled={passkeyBusy}
-              >
+              <button type="button" className="passkey-cta" onClick={signInWithPasskey} disabled={passkeyBusy}>
                 🔑 {passkeyBusy ? "Waiting for passkey…" : "Sign in with a passkey"}
               </button>
-              <div className="auth-divider"><span>or</span></div>
+              <div className="auth-divider">
+                <span>or</span>
+              </div>
             </>
           )}
-          <input placeholder={useLdap ? "LDAP username" : "Email or username"} value={identity}
+          <input
+            placeholder={useLdap ? "LDAP username" : "Email or username"}
+            value={identity}
             onChange={e => setIdentity(e.target.value)}
             autoCapitalize="off"
             autoCorrect="off"
           />
-          <input placeholder="Password" type="password" value={password}
+          <input
+            placeholder="Password"
+            type="password"
+            value={password}
             onChange={e => setPassword(e.target.value)}
             onKeyDown={e => e.key === "Enter" && submit()}
           />
@@ -466,7 +588,7 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
       )}
       {!mfaToken && (
         <>
-          <button className="primary" onClick={submit}>
+          <button type="button" className="primary" onClick={submit}>
             {needsSetup ? "Create owner account" : mode === "login" ? "Sign in" : "Create account"}
           </button>
           {!needsSetup && (
@@ -480,7 +602,14 @@ const Auth: React.FC<{ onLogin: () => void; initialInvite?: string | null; needs
             </div>
           )}
           {!needsSetup && mode === "login" && ldap?.available && (
-            <div className="toggle" onClick={() => { setUseLdap(!useLdap); setError("") }} style={{ marginTop: 4 }}>
+            <div
+              className="toggle"
+              onClick={() => {
+                setUseLdap(!useLdap)
+                setError("")
+              }}
+              style={{ marginTop: 4 }}
+            >
               {useLdap ? "Use a Stohr account instead" : "Sign in with LDAP"}
             </div>
           )}
@@ -497,8 +626,12 @@ const ForgotPasswordPage: React.FC = () => {
 
   const submit = async () => {
     if (status === "submitting") return
-    if (!email.trim()) { setError("Email is required"); return }
-    setStatus("submitting"); setError("")
+    if (!email.trim()) {
+      setError("Email is required")
+      return
+    }
+    setStatus("submitting")
+    setError("")
     const res = await api.requestPasswordReset(email.trim())
     if (res.error) {
       setError(res.error)
@@ -515,10 +648,12 @@ const ForgotPasswordPage: React.FC = () => {
       {status === "sent" ? (
         <>
           <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.5, margin: "0 0 16px" }}>
-            If an account exists for <strong style={{ color: "var(--text)" }}>{email}</strong>, we've sent a link to reset your password.
-            The link expires in one hour.
+            If an account exists for <strong style={{ color: "var(--text)" }}>{email}</strong>, we've sent a link to
+            reset your password. The link expires in one hour.
           </p>
-          <div className="toggle" onClick={() => navigate("/login")}>Back to sign in</div>
+          <div className="toggle" onClick={() => navigate("/login")}>
+            Back to sign in
+          </div>
         </>
       ) : (
         <>
@@ -533,10 +668,12 @@ const ForgotPasswordPage: React.FC = () => {
             onChange={e => setEmail(e.target.value)}
             onKeyDown={e => e.key === "Enter" && submit()}
           />
-          <button className="primary" onClick={submit} disabled={status === "submitting"}>
+          <button type="button" className="primary" onClick={submit} disabled={status === "submitting"}>
             {status === "submitting" ? "Sending…" : "Send reset link"}
           </button>
-          <div className="toggle" onClick={() => navigate("/login")}>Back to sign in</div>
+          <div className="toggle" onClick={() => navigate("/login")}>
+            Back to sign in
+          </div>
         </>
       )}
     </div>
@@ -552,9 +689,18 @@ const ResetPasswordPage: React.FC<{ token: string }> = ({ token }) => {
   const submit = async () => {
     if (status === "submitting") return
     setError("")
-    if (!token) { setError("Missing reset token"); return }
-    if (password.length < 8) { setError("Password must be at least 8 characters"); return }
-    if (password !== confirm) { setError("Passwords don't match"); return }
+    if (!token) {
+      setError("Missing reset token")
+      return
+    }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters")
+      return
+    }
+    if (password !== confirm) {
+      setError("Passwords don't match")
+      return
+    }
     setStatus("submitting")
     const res = await api.resetPassword(token, password)
     if (res.error) {
@@ -574,7 +720,9 @@ const ResetPasswordPage: React.FC<{ token: string }> = ({ token }) => {
           <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.5, margin: "0 0 16px" }}>
             Your password has been updated. All your other sessions have been signed out.
           </p>
-          <button className="primary" onClick={() => navigate("/login")}>Sign in</button>
+          <button type="button" className="primary" onClick={() => navigate("/login")}>
+            Sign in
+          </button>
         </>
       ) : (
         <>
@@ -593,10 +741,12 @@ const ResetPasswordPage: React.FC<{ token: string }> = ({ token }) => {
             onChange={e => setConfirm(e.target.value)}
             onKeyDown={e => e.key === "Enter" && submit()}
           />
-          <button className="primary" onClick={submit} disabled={status === "submitting"}>
+          <button type="button" className="primary" onClick={submit} disabled={status === "submitting"}>
             {status === "submitting" ? "Updating…" : "Update password"}
           </button>
-          <div className="toggle" onClick={() => navigate("/login")}>Cancel</div>
+          <div className="toggle" onClick={() => navigate("/login")}>
+            Cancel
+          </div>
         </>
       )}
     </div>
@@ -625,9 +775,14 @@ const ContactForm: React.FC<{
       setError("All fields are required")
       return
     }
-    setStatus("submitting"); setError("")
+    setStatus("submitting")
+    setError("")
     const res = await api.submitContact({
-      name: name.trim(), email: email.trim(), subject: subject.trim(), message: message.trim(), hp,
+      name: name.trim(),
+      email: email.trim(),
+      subject: subject.trim(),
+      message: message.trim(),
+      hp,
     })
     if (res.error) {
       setError(res.error)
@@ -641,11 +796,17 @@ const ContactForm: React.FC<{
   if (status === "sent") {
     return (
       <div className="contact-sent">
-        <div className="contact-sent-icon"><Check size={28} strokeWidth={2} /></div>
+        <div className="contact-sent-icon">
+          <Check size={28} strokeWidth={2} />
+        </div>
         <h3>Message sent</h3>
-        <p>Thanks — we read every one. We'll get back to you at <strong>{email}</strong>.</p>
+        <p>
+          Thanks — we read every one. We'll get back to you at <strong>{email}</strong>.
+        </p>
         {variant === "page" && (
-          <button className="primary" onClick={() => navigate("/")}>Back home</button>
+          <button type="button" className="primary" onClick={() => navigate("/")}>
+            Back home
+          </button>
         )}
       </div>
     )
@@ -678,21 +839,11 @@ const ContactForm: React.FC<{
       </div>
       <label>
         <span>Subject</span>
-        <input
-          type="text"
-          value={subject}
-          onChange={e => setSubject(e.target.value)}
-          maxLength={200}
-        />
+        <input type="text" value={subject} onChange={e => setSubject(e.target.value)} maxLength={200} />
       </label>
       <label>
         <span>Message</span>
-        <textarea
-          value={message}
-          onChange={e => setMessage(e.target.value)}
-          rows={6}
-          maxLength={10000}
-        />
+        <textarea value={message} onChange={e => setMessage(e.target.value)} rows={6} maxLength={10000} />
       </label>
       {/* Honeypot: real users never see or fill this. */}
       <input
@@ -705,11 +856,7 @@ const ContactForm: React.FC<{
         onChange={e => setHp(e.target.value)}
         aria-hidden="true"
       />
-      <button
-        className="primary"
-        onClick={submit}
-        disabled={status === "submitting"}
-      >
+      <button type="button" className="primary" onClick={submit} disabled={status === "submitting"}>
         {status === "submitting" ? "Sending…" : "Send message"}
       </button>
     </div>
@@ -717,19 +864,29 @@ const ContactForm: React.FC<{
 }
 
 const ContactPage: React.FC = () => {
-  useEffect(() => { document.title = "Stohr — Contact" }, [])
+  useEffect(() => {
+    document.title = "Stohr — Contact"
+  }, [])
   return (
     <div className="lp">
       <header className="lp-nav">
-        <a href="/" className="lp-brand"><Logo /></a>
+        <a href="/" className="lp-brand">
+          <Logo />
+        </a>
         <nav className="lp-nav-links">
           <a href="/#features">Features</a>
           <a href="/developers">Developers</a>
-          <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer">GitHub</a>
+          <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer">
+            GitHub
+          </a>
         </nav>
         <div className="lp-nav-cta">
-          <a href="/login" className="lp-link">Sign in</a>
-          <a href="/" className="lp-btn lp-btn-ghost">Home</a>
+          <a href="/login" className="lp-link">
+            Sign in
+          </a>
+          <a href="/" className="lp-btn lp-btn-ghost">
+            Home
+          </a>
         </div>
       </header>
 
@@ -765,12 +922,22 @@ const UploadPanel: React.FC<{
       <div className="upload-panel-header">
         <div>
           {active > 0 ? (
-            <>Uploading <span style={{ color: "var(--muted)" }}>{active} of {uploads.length}</span> · {formatBytes(totalLoaded)} / {formatBytes(totalSize)}</>
+            <>
+              Uploading{" "}
+              <span style={{ color: "var(--muted)" }}>
+                {active} of {uploads.length}
+              </span>{" "}
+              · {formatBytes(totalLoaded)} / {formatBytes(totalSize)}
+            </>
           ) : (
-            <>{uploads.length} upload{uploads.length === 1 ? "" : "s"}</>
+            <>
+              {uploads.length} upload{uploads.length === 1 ? "" : "s"}
+            </>
           )}
         </div>
-        <button onClick={onClear}>Clear</button>
+        <button type="button" onClick={onClear}>
+          Clear
+        </button>
       </div>
       <div className="upload-list">
         {uploads.map(u => {
@@ -778,7 +945,9 @@ const UploadPanel: React.FC<{
           return (
             <div key={u.id} className={`upload-item ${u.status}`}>
               <div className="upload-line">
-                <div className="upload-name" title={u.name}>{u.name}</div>
+                <div className="upload-name" title={u.name}>
+                  {u.name}
+                </div>
                 <div className="upload-meta">
                   {u.status === "uploading" && `${pct}% · ${formatBytes(u.loaded)} / ${formatBytes(u.size)}`}
                   {u.status === "done" && `${formatBytes(u.size)}`}
@@ -789,10 +958,14 @@ const UploadPanel: React.FC<{
                 <div className="upload-fill" style={{ width: `${pct}%` }} />
               </div>
               {u.status === "uploading" && (
-                <button className="upload-cancel" onClick={() => onCancel(u.id)} aria-label="Cancel"><X size={12} /></button>
+                <button type="button" className="upload-cancel" onClick={() => onCancel(u.id)} aria-label="Cancel">
+                  <X size={12} />
+                </button>
               )}
               {u.status !== "uploading" && (
-                <button className="upload-cancel" onClick={() => onDismiss(u.id)} aria-label="Dismiss"><X size={12} /></button>
+                <button type="button" className="upload-cancel" onClick={() => onDismiss(u.id)} aria-label="Dismiss">
+                  <X size={12} />
+                </button>
               )}
             </div>
           )
@@ -802,7 +975,12 @@ const UploadPanel: React.FC<{
   )
 }
 
-const Modal: React.FC<{ title: string; onClose: () => void; children: React.ReactNode; size?: "default" | "wide" }> = ({ title, onClose, children, size = "default" }) => (
+const Modal: React.FC<{ title: string; onClose: () => void; children: React.ReactNode; size?: "default" | "wide" }> = ({
+  title,
+  onClose,
+  children,
+  size = "default",
+}) => (
   <div className="modal-backdrop" onClick={onClose}>
     <div className={`modal${size === "wide" ? " modal-wide" : ""}`} onClick={e => e.stopPropagation()}>
       <h3>{title}</h3>
@@ -814,7 +992,14 @@ const Modal: React.FC<{ title: string; onClose: () => void; children: React.Reac
 type PaletteFolder = { id: number; name: string; parent_id: number | null }
 type PaletteResults = { files: FileItem[]; folders: PaletteFolder[]; content: api.ContentHit[] }
 
-type FolderDetail = { id: number; name: string; parent_id: number | null; role: "owner" | "editor" | "viewer"; owner: { id: number; username: string; name: string } | null; trail: Crumb[] }
+type FolderDetail = {
+  id: number
+  name: string
+  parent_id: number | null
+  role: "owner" | "editor" | "viewer"
+  owner: { id: number; username: string; name: string } | null
+  trail: Crumb[]
+}
 
 type Uploading = {
   id: string
@@ -843,7 +1028,9 @@ const CardKebab: React.FC<{ items: KebabItem[]; ariaLabel?: string }> = ({ items
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false) }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false)
+    }
     document.addEventListener("mousedown", onDoc)
     document.addEventListener("keydown", onKey)
     return () => {
@@ -861,7 +1048,10 @@ const CardKebab: React.FC<{ items: KebabItem[]; ariaLabel?: string }> = ({ items
         className="kebab-trigger"
         aria-label={ariaLabel}
         title={ariaLabel}
-        onClick={e => { e.stopPropagation(); setOpen(v => !v) }}
+        onClick={e => {
+          e.stopPropagation()
+          setOpen(v => !v)
+        }}
       >
         <MoreVertical size={16} strokeWidth={2} />
       </button>
@@ -873,7 +1063,10 @@ const CardKebab: React.FC<{ items: KebabItem[]; ariaLabel?: string }> = ({ items
               type="button"
               role="menuitem"
               className={`kebab-item${item.danger ? " danger" : ""}`}
-              onClick={() => { setOpen(false); item.onClick() }}
+              onClick={() => {
+                setOpen(false)
+                item.onClick()
+              }}
             >
               {item.label}
             </button>
@@ -884,7 +1077,10 @@ const CardKebab: React.FC<{ items: KebabItem[]; ariaLabel?: string }> = ({ items
   )
 }
 
-const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null }> = ({ routeFolderId, routeFileId }) => {
+const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null }> = ({
+  routeFolderId,
+  routeFileId,
+}) => {
   const [folders, setFolders] = useState<Folder[]>([])
   const [files, setFiles] = useState<FileItem[]>([])
   const [currentId, setCurrentId] = useState<number | null>(routeFolderId)
@@ -923,7 +1119,9 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
       setCurrentId(f.folder_id ?? null)
       setPreviewing(f)
     })()
-    return () => { aborted = true }
+    return () => {
+      aborted = true
+    }
   }, [routeFileId])
 
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -932,13 +1130,24 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
   const [paletteActive, setPaletteActive] = useState(0)
   const [paletteLoading, setPaletteLoading] = useState(false)
 
+  const [moreFiles, setMoreFiles] = useState(false)
+  const [moreFolders, setMoreFolders] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+
+  // Listings are paged. A full page back means there is probably another one;
+  // that's the same signal the API reports in x-has-more, without needing the
+  // response headers here.
   const load = async () => {
     const [fo, fi] = await Promise.all([
-      api.listFolders(currentId),
-      api.listFiles(currentId, search || undefined),
+      api.listFolders(currentId, { limit: PAGE_SIZE }),
+      api.listFiles(currentId, search || undefined, { limit: PAGE_SIZE }),
     ])
-    setFolders(Array.isArray(fo) ? fo : [])
-    setFiles(Array.isArray(fi) ? fi : [])
+    const foRows = Array.isArray(fo) ? fo : []
+    const fiRows = Array.isArray(fi) ? fi : []
+    setFolders(foRows)
+    setFiles(fiRows)
+    setMoreFolders(foRows.length >= PAGE_SIZE)
+    setMoreFiles(fiRows.length >= PAGE_SIZE)
     if (currentId == null) {
       setCrumbs([])
       setCurrentRole("owner")
@@ -946,7 +1155,9 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
       setCurrentKind("standard")
       setCurrentIsPublic(false)
     } else {
-      const data = await api.getFolder(currentId) as (FolderDetail & { kind?: string; is_public?: boolean }) & { error?: string }
+      const data = (await api.getFolder(currentId)) as (FolderDetail & { kind?: string; is_public?: boolean }) & {
+        error?: string
+      }
       if (data && !data.error) {
         setCrumbs(data.trail ?? [])
         setCurrentRole(data.role ?? "owner")
@@ -957,8 +1168,38 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
     }
   }
 
-  useEffect(() => { load() }, [currentId, search])
-  useEffect(() => { setSelected(new Set()); setLastClicked(null) }, [currentId, search])
+  const loadMore = async () => {
+    if (loadingMore) return
+    setLoadingMore(true)
+    try {
+      const [fo, fi] = await Promise.all([
+        moreFolders ? api.listFolders(currentId, { limit: PAGE_SIZE, offset: folders.length }) : Promise.resolve([]),
+        moreFiles
+          ? api.listFiles(currentId, search || undefined, { limit: PAGE_SIZE, offset: files.length })
+          : Promise.resolve([]),
+      ])
+      const foRows = Array.isArray(fo) ? fo : []
+      const fiRows = Array.isArray(fi) ? fi : []
+      if (moreFolders) {
+        setFolders(prev => [...prev, ...foRows])
+        setMoreFolders(foRows.length >= PAGE_SIZE)
+      }
+      if (moreFiles) {
+        setFiles(prev => [...prev, ...fiRows])
+        setMoreFiles(fiRows.length >= PAGE_SIZE)
+      }
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
+  useEffect(() => {
+    load()
+  }, [currentId, search])
+  useEffect(() => {
+    setSelected(new Set())
+    setLastClicked(null)
+  }, [currentId, search])
 
   useEffect(() => {
     if (currentId == null) {
@@ -1029,7 +1270,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
 
   const orderedKeys = useMemo(
     () => [...folders.map(f => `fo-${f.id}`), ...files.map(f => `fi-${f.id}`)],
-    [folders, files]
+    [folders, files],
   )
 
   const toggleSelect = (key: string, e: React.MouseEvent) => {
@@ -1051,7 +1292,10 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
     setLastClicked(key)
   }
 
-  const clearSelection = () => { setSelected(new Set()); setLastClicked(null) }
+  const clearSelection = () => {
+    setSelected(new Set())
+    setLastClicked(null)
+  }
 
   const selectAll = () => {
     if (selected.size === orderedKeys.length) clearSelection()
@@ -1102,22 +1346,24 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
     for (let i = 0; i < files.length; i++) {
       const f = files[i]!
       const u = queued[i]!
-      const handle = api.uploadFile(f, currentId, (loaded) => {
-        setUploads(prev => prev.map(p => p.id === u.id ? { ...p, loaded } : p))
+      const handle = api.uploadFile(f, currentId, loaded => {
+        setUploads(prev => prev.map(p => (p.id === u.id ? { ...p, loaded } : p)))
       })
-      setUploads(prev => prev.map(p => p.id === u.id ? { ...p, abort: handle.abort } : p))
+      setUploads(prev => prev.map(p => (p.id === u.id ? { ...p, abort: handle.abort } : p)))
       try {
         await handle.promise
-        setUploads(prev => prev.map(p => p.id === u.id ? { ...p, loaded: f.size, status: "done" } : p))
+        setUploads(prev => prev.map(p => (p.id === u.id ? { ...p, loaded: f.size, status: "done" } : p)))
       } catch (e: any) {
-        setUploads(prev => prev.map(p => p.id === u.id ? { ...p, status: "error", error: e?.message ?? "Failed" } : p))
+        setUploads(prev =>
+          prev.map(p => (p.id === u.id ? { ...p, status: "error", error: e?.message ?? "Failed" } : p)),
+        )
       }
     }
 
     await load()
   }
 
-  const onDrop: React.DragEventHandler = (e) => {
+  const onDrop: React.DragEventHandler = e => {
     e.preventDefault()
     setDragOver(false)
     if (e.dataTransfer.files.length) upload(e.dataTransfer.files)
@@ -1131,27 +1377,34 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
     }
     let stream: MediaStream | null = null
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: "monitor" } as any, audio: false })
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: "monitor" } as any,
+        audio: false,
+      })
       const blob = await captureFrame(stream)
       const folderId = await ensureScreenshotsFolder()
       const stamp = stampForFilename(new Date())
       const filename = `Screenshot ${stamp}.png`
       const file = new File([blob], filename, { type: "image/png" })
       const handle = api.uploadFile(file, folderId)
-      const res = await handle.promise as { id?: number; error?: string } | Array<{ id: number }>
+      const res = (await handle.promise) as { id?: number; error?: string } | Array<{ id: number }>
       const fileId = Array.isArray(res) ? res[0]?.id : res?.id
       if (!fileId) throw new Error("Upload failed")
-      const share = await api.createShare(fileId, { expiresIn: 30 * 86400 }) as { token?: string; error?: string }
+      const share = (await api.createShare(fileId, { expiresIn: 30 * 86400 })) as { token?: string; error?: string }
       if (!share.token) throw new Error(share.error ?? "Share failed")
       const url = `${window.location.origin}/s/${share.token}`
-      try { await navigator.clipboard.writeText(url) } catch {}
+      try {
+        await navigator.clipboard.writeText(url)
+      } catch {}
       setCaptureNotice(`Link copied: ${url}`)
       await load()
     } catch (e: any) {
       const msg = e?.message ?? String(e)
       if (!/cancel|abort|denied/i.test(msg)) setCaptureNotice(`Screenshot failed: ${msg}`)
     } finally {
-      stream?.getTracks().forEach(t => t.stop())
+      stream?.getTracks().forEach(t => {
+        t.stop()
+      })
     }
   }
 
@@ -1171,10 +1424,11 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
   }
 
   const rename = async () => {
-    if (!renaming || !renaming.name.trim()) return
-    const res = renaming.kind === "folder"
-      ? await api.renameFolder(renaming.id, renaming.name.trim())
-      : await api.renameFile(renaming.id, renaming.name.trim())
+    if (!renaming?.name.trim()) return
+    const res =
+      renaming.kind === "folder"
+        ? await api.renameFolder(renaming.id, renaming.name.trim())
+        : await api.renameFile(renaming.id, renaming.name.trim())
     if (res.error) alert(res.error)
     setRenaming(null)
     await load()
@@ -1184,21 +1438,37 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
 
   const pathCrumbs = (
     <div className="crumbs">
-      {currentRole === "owner"
-        ? <span className="crumb" onClick={() => navigate("/")}>All Files</span>
-        : currentOwner && <span className="crumb" onClick={() => navigate("/app/shared")}>Shared with me</span>}
+      {currentRole === "owner" ? (
+        <span className="crumb" onClick={() => navigate("/")}>
+          All Files
+        </span>
+      ) : (
+        currentOwner && (
+          <span className="crumb" onClick={() => navigate("/app/shared")}>
+            Shared with me
+          </span>
+        )
+      )}
       {currentOwner && currentRole !== "owner" && (
         <>
-          <span className="sep"><ChevronRight size={14} /></span>
+          <span className="sep">
+            <ChevronRight size={14} />
+          </span>
           <span style={{ color: "var(--muted)" }}>@{currentOwner.username}</span>
         </>
       )}
       {crumbs.map((c, i) => (
         <React.Fragment key={c.id}>
-          <span className="sep"><ChevronRight size={14} /></span>
-          {i === crumbs.length - 1
-            ? <span className="current">{c.name}</span>
-            : <span className="crumb" onClick={() => navigate(folderHref(c.id, ownerSlug))}>{c.name}</span>}
+          <span className="sep">
+            <ChevronRight size={14} />
+          </span>
+          {i === crumbs.length - 1 ? (
+            <span className="current">{c.name}</span>
+          ) : (
+            <span className="crumb" onClick={() => navigate(folderHref(c.id, ownerSlug))}>
+              {c.name}
+            </span>
+          )}
         </React.Fragment>
       ))}
     </div>
@@ -1207,20 +1477,30 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
   return (
     <div className="main">
       <div className="toolbar">
-        <input className="search" placeholder="Search files..." value={search} onChange={e => setSearch(e.target.value)} />
+        <input
+          className="search"
+          placeholder="Search files..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
         <div className="toolbar-actions">
           {currentId != null && currentRole === "owner" && (
-            <button onClick={() => setShowFolderSettings(true)} aria-label="Folder settings" title="Folder settings">
+            <button
+              type="button"
+              onClick={() => setShowFolderSettings(true)}
+              aria-label="Folder settings"
+              title="Folder settings"
+            >
               <SettingsIcon size={14} />
             </button>
           )}
-          <button onClick={() => setCreatingFolder(true)}>
+          <button type="button" onClick={() => setCreatingFolder(true)}>
             <FolderPlus size={14} /> <span>Folder</span>
           </button>
-          <button onClick={captureScreenshot} title="Capture screenshot">
+          <button type="button" onClick={captureScreenshot} title="Capture screenshot">
             <Camera size={14} /> <span>Capture</span>
           </button>
-          <button className="primary" onClick={() => fileInput.current?.click()}>
+          <button type="button" className="primary" onClick={() => fileInput.current?.click()}>
             <UploadIcon size={14} /> <span>Upload</span>
           </button>
           <input ref={fileInput} type="file" multiple hidden onChange={e => e.target.files && upload(e.target.files)} />
@@ -1229,23 +1509,32 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
       {captureNotice && (
         <div className="capture-notice">
           <span>{captureNotice}</span>
-          <button onClick={() => setCaptureNotice(null)} aria-label="Dismiss"><X size={14} /></button>
+          <button type="button" onClick={() => setCaptureNotice(null)} aria-label="Dismiss">
+            <X size={14} />
+          </button>
         </div>
       )}
 
-      <div className="content"
-        onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+      <div
+        className="content"
+        onDragOver={e => {
+          e.preventDefault()
+          setDragOver(true)
+        }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
       >
         <div className="path-bar">{pathCrumbs}</div>
         <div className={`dropzone${dragOver ? " over" : ""}`}>
-          Drag & drop files here to upload to {currentId == null ? "your Stohr" : `"${crumbs[crumbs.length - 1]?.name ?? ""}"`}
+          Drag & drop files here to upload to{" "}
+          {currentId == null ? "your Stohr" : `"${crumbs[crumbs.length - 1]?.name ?? ""}"`}
         </div>
 
         {folders.length === 0 && files.length === 0 && !search && (
           <div className="empty">
-            <div className="big"><Inbox size={64} strokeWidth={1.25} /></div>
+            <div className="big">
+              <Inbox size={64} strokeWidth={1.25} />
+            </div>
             <div>This folder is empty</div>
             <div style={{ marginTop: 8, fontSize: 13 }}>Upload files or create a folder to get started</div>
           </div>
@@ -1253,7 +1542,9 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
 
         {search && folders.length === 0 && files.length === 0 && (
           <div className="empty">
-            <div className="big"><Search size={64} strokeWidth={1.25} /></div>
+            <div className="big">
+              <Search size={64} strokeWidth={1.25} />
+            </div>
             <div>No files match "{search}"</div>
           </div>
         )}
@@ -1262,14 +1553,18 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
           <div className="selbar">
             <div>{selected.size} selected</div>
             <div className="selbar-actions">
-              <button onClick={selectAll}>
+              <button type="button" onClick={selectAll}>
                 {selected.size === orderedKeys.length ? "Deselect all" : "Select all"}
               </button>
-              <button onClick={() => setMovingOpen(true)}>Move to...</button>
-              <button className="danger" onClick={bulkDelete}>
+              <button type="button" onClick={() => setMovingOpen(true)}>
+                Move to...
+              </button>
+              <button type="button" className="danger" onClick={bulkDelete}>
                 <Trash2 size={14} /> <span>Delete</span>
               </button>
-              <button onClick={clearSelection} aria-label="Clear"><X size={14} /></button>
+              <button type="button" onClick={clearSelection} aria-label="Clear">
+                <X size={14} />
+              </button>
             </div>
           </div>
         )}
@@ -1282,7 +1577,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
               <div
                 key={key}
                 className={`card${sel ? " selected" : ""}`}
-                onClick={(e) => {
+                onClick={e => {
                   if (selected.size > 0) return toggleSelect(key, e)
                   const ownerSlug = currentOwner && me && currentOwner.id !== me.id ? currentOwner.username : undefined
                   navigate(folderHref(f.id, ownerSlug))
@@ -1294,15 +1589,25 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                 <CardKebab
                   ariaLabel="Folder actions"
                   items={[
-                    { label: "Share", onClick: () => setSharing({ kind: "folder", id: f.id, name: f.name }), hidden: currentRole !== "owner" },
-                    { label: "Rename", onClick: () => setRenaming({ kind: "folder", id: f.id, name: f.name }), hidden: !canEdit },
+                    {
+                      label: "Share",
+                      onClick: () => setSharing({ kind: "folder", id: f.id, name: f.name }),
+                      hidden: currentRole !== "owner",
+                    },
+                    {
+                      label: "Rename",
+                      onClick: () => setRenaming({ kind: "folder", id: f.id, name: f.name }),
+                      hidden: !canEdit,
+                    },
                     { label: "Delete", onClick: () => del("folder", f.id), danger: true, hidden: !canEdit },
                   ]}
                 />
                 <div className="icon">
-                  {f.kind === "screenshots"
-                    ? <Camera size={32} strokeWidth={1.5} />
-                    : <FolderIcon size={32} strokeWidth={1.5} />}
+                  {f.kind === "screenshots" ? (
+                    <Camera size={32} strokeWidth={1.5} />
+                  ) : (
+                    <FolderIcon size={32} strokeWidth={1.5} />
+                  )}
                 </div>
                 <div className="name">{f.name}</div>
                 <div className="meta">
@@ -1311,86 +1616,111 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
               </div>
             )
           })}
-          {currentKind !== "photos" && currentKind !== "screenshots" && files.map(f => {
-            const key = `fi-${f.id}`
-            const sel = selected.has(key)
-            return (
-              <div
-                key={key}
-                className={`card${sel ? " selected" : ""}`}
-                onClick={(e) => selected.size > 0 ? toggleSelect(key, e) : setPreviewing(f)}
-              >
-                <div className={`check${sel ? " on" : ""}`} onClick={e => toggleSelect(key, e)}>
-                  <div className="check-box" />
+          {currentKind !== "photos" &&
+            currentKind !== "screenshots" &&
+            files.map(f => {
+              const key = `fi-${f.id}`
+              const sel = selected.has(key)
+              return (
+                <div
+                  key={key}
+                  className={`card${sel ? " selected" : ""}`}
+                  onClick={e => (selected.size > 0 ? toggleSelect(key, e) : setPreviewing(f))}
+                >
+                  <div className={`check${sel ? " on" : ""}`} onClick={e => toggleSelect(key, e)}>
+                    <div className="check-box" />
+                  </div>
+                  <CardKebab
+                    ariaLabel="File actions"
+                    items={[
+                      { label: "Download", onClick: () => downloadFile(f) },
+                      {
+                        label: "Share",
+                        onClick: () => setSharing({ kind: "file", id: f.id, name: f.name }),
+                        hidden: currentRole !== "owner",
+                      },
+                      { label: "Versions", onClick: () => setViewingVersions(f), hidden: f.version <= 1 },
+                      {
+                        label: "Rename",
+                        onClick: () => setRenaming({ kind: "file", id: f.id, name: f.name }),
+                        hidden: !canEdit,
+                      },
+                      { label: "Delete", onClick: () => del("file", f.id), danger: true, hidden: !canEdit },
+                    ]}
+                  />
+                  <FileThumb file={f} />
+                  <div className="name">{f.name}</div>
+                  <div className="meta">
+                    {formatBytes(f.size)}
+                    {f.version > 1 && <span className="badge">v{f.version}</span>}
+                  </div>
                 </div>
-                <CardKebab
-                  ariaLabel="File actions"
-                  items={[
-                    { label: "Download", onClick: () => downloadFile(f) },
-                    { label: "Share", onClick: () => setSharing({ kind: "file", id: f.id, name: f.name }), hidden: currentRole !== "owner" },
-                    { label: "Versions", onClick: () => setViewingVersions(f), hidden: f.version <= 1 },
-                    { label: "Rename", onClick: () => setRenaming({ kind: "file", id: f.id, name: f.name }), hidden: !canEdit },
-                    { label: "Delete", onClick: () => del("file", f.id), danger: true, hidden: !canEdit },
-                  ]}
-                />
-                <FileThumb file={f} />
-                <div className="name">{f.name}</div>
-                <div className="meta">
-                  {formatBytes(f.size)}
-                  {f.version > 1 && <span className="badge">v{f.version}</span>}
-                </div>
-              </div>
-            )
-          })}
+              )
+            })}
         </div>
 
         {(currentKind === "photos" || currentKind === "screenshots") && (
           <PhotosGallery
             files={files}
             thumbUrl={(id, version) => `/api/files/${id}/thumb?v=${version}`}
-            fullUrl={(id) => `${api.downloadUrl(id)}?inline=1`}
+            fullUrl={id => `${api.downloadUrl(id)}?inline=1`}
             authHeader
           />
+        )}
+
+        {(moreFiles || moreFolders) && (
+          <div className="load-more">
+            <button type="button" onClick={loadMore} disabled={loadingMore}>
+              {loadingMore ? "Loading…" : "Load more"}
+            </button>
+          </div>
         )}
       </div>
 
       {creatingFolder && (
         <Modal title="Create folder" onClose={() => setCreatingFolder(false)}>
-          <input autoFocus placeholder="Folder name" value={newFolderName}
+          <input
+            autoFocus
+            placeholder="Folder name"
+            value={newFolderName}
             onChange={e => setNewFolderName(e.target.value)}
             onKeyDown={e => e.key === "Enter" && createFolder()}
           />
           <div className="actions">
-            <button onClick={() => setCreatingFolder(false)}>Cancel</button>
-            <button className="primary" onClick={createFolder}>Create</button>
+            <button type="button" onClick={() => setCreatingFolder(false)}>
+              Cancel
+            </button>
+            <button type="button" className="primary" onClick={createFolder}>
+              Create
+            </button>
           </div>
         </Modal>
       )}
 
       {sharing && (
-        <SharingModal
-          target={sharing}
-          ownerUsername={me?.username ?? null}
-          onClose={() => setSharing(null)}
-        />
+        <SharingModal target={sharing} ownerUsername={me?.username ?? null} onClose={() => setSharing(null)} />
       )}
 
       {renaming && (
         <Modal title={`Rename ${renaming.kind}`} onClose={() => setRenaming(null)}>
-          <input autoFocus value={renaming.name}
+          <input
+            autoFocus
+            value={renaming.name}
             onChange={e => setRenaming({ ...renaming, name: e.target.value })}
             onKeyDown={e => e.key === "Enter" && rename()}
           />
           <div className="actions">
-            <button onClick={() => setRenaming(null)}>Cancel</button>
-            <button className="primary" onClick={rename}>Rename</button>
+            <button type="button" onClick={() => setRenaming(null)}>
+              Cancel
+            </button>
+            <button type="button" className="primary" onClick={rename}>
+              Rename
+            </button>
           </div>
         </Modal>
       )}
 
-      {previewing && (
-        <PreviewModal file={previewing} onClose={() => setPreviewing(null)} />
-      )}
+      {previewing && <PreviewModal file={previewing} onClose={() => setPreviewing(null)} />}
 
       {showFolderSettings && currentId != null && (
         <FolderSettingsModal
@@ -1400,7 +1730,10 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
           initialKind={currentKind}
           initialIsPublic={currentIsPublic}
           onClose={() => setShowFolderSettings(false)}
-          onSaved={async () => { setShowFolderSettings(false); await load() }}
+          onSaved={async () => {
+            setShowFolderSettings(false)
+            await load()
+          }}
         />
       )}
 
@@ -1408,7 +1741,10 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
         <VersionsModal
           file={viewingVersions}
           onClose={() => setViewingVersions(null)}
-          onRestored={async () => { setViewingVersions(null); await load() }}
+          onRestored={async () => {
+            setViewingVersions(null)
+            await load()
+          }}
         />
       )}
 
@@ -1420,131 +1756,209 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
         />
       )}
 
-      {paletteOpen && (() => {
-        const combined: Array<PaletteFolder | FileItem | api.ContentHit> = [
-          ...paletteResults.folders,
-          ...paletteResults.files,
-          ...paletteResults.content,
-        ]
-        const closePalette = () => { setPaletteOpen(false); setPaletteQuery(""); setPaletteResults({ files: [], folders: [], content: [] }); setPaletteActive(0) }
-        const activate = (idx: number) => {
-          const item = combined[idx]
-          if (!item) return
-          closePalette()
-          if ("mime" in item) {
-            setPreviewing(item as FileItem)
-          } else {
-            navigate(folderHref(item.id))
+      {paletteOpen &&
+        (() => {
+          const combined: Array<PaletteFolder | FileItem | api.ContentHit> = [
+            ...paletteResults.folders,
+            ...paletteResults.files,
+            ...paletteResults.content,
+          ]
+          const closePalette = () => {
+            setPaletteOpen(false)
+            setPaletteQuery("")
+            setPaletteResults({ files: [], folders: [], content: [] })
+            setPaletteActive(0)
           }
-        }
-        const onKeyDown = (e: React.KeyboardEvent) => {
-          if (e.key === "ArrowDown") {
-            e.preventDefault()
-            setPaletteActive(prev => Math.min(prev + 1, combined.length - 1))
-          } else if (e.key === "ArrowUp") {
-            e.preventDefault()
-            setPaletteActive(prev => Math.max(prev - 1, 0))
-          } else if (e.key === "Enter") {
-            e.preventDefault()
-            activate(paletteActive)
-          } else if (e.key === "Escape") {
+          const activate = (idx: number) => {
+            const item = combined[idx]
+            if (!item) return
             closePalette()
+            if ("mime" in item) {
+              setPreviewing(item as FileItem)
+            } else {
+              navigate(folderHref(item.id))
+            }
           }
-        }
-        return (
-          <div className="modal-backdrop" onClick={closePalette}>
-            <div className="modal" style={{ maxWidth: 520, width: "100%" }} onClick={e => e.stopPropagation()} onKeyDown={onKeyDown}>
-              <input
-                autoFocus
-                className="search"
-                style={{ width: "100%", marginBottom: 8, boxSizing: "border-box" }}
-                placeholder="Search files and folders..."
-                value={paletteQuery}
-                onChange={e => { setPaletteQuery(e.target.value); setPaletteActive(0) }}
-              />
-              {paletteQuery.length > 0 && !paletteLoading && paletteResults.folders.length === 0 && paletteResults.files.length === 0 && paletteResults.content.length === 0 && (
-                <div style={{ padding: "12px 0", color: "var(--muted)", textAlign: "center", fontSize: 14 }}>No matches.</div>
-              )}
-              {paletteResults.folders.length > 0 && (
-                <>
-                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", padding: "6px 0 2px" }}>Folders</div>
-                  {paletteResults.folders.map((f, i) => (
-                    <div
-                      key={`pf-${f.id}`}
-                      className={`picker-row${paletteActive === i ? " active" : ""}`}
-                      style={{ cursor: "pointer", borderRadius: 6, padding: "6px 8px", background: paletteActive === i ? "var(--hover)" : undefined }}
-                      onClick={() => activate(i)}
-                      onMouseEnter={() => setPaletteActive(i)}
-                    >
-                      <FolderIcon size={16} strokeWidth={1.5} />
-                      <span style={{ marginLeft: 8 }}>{f.name}</span>
+          const onKeyDown = (e: React.KeyboardEvent) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault()
+              setPaletteActive(prev => Math.min(prev + 1, combined.length - 1))
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault()
+              setPaletteActive(prev => Math.max(prev - 1, 0))
+            } else if (e.key === "Enter") {
+              e.preventDefault()
+              activate(paletteActive)
+            } else if (e.key === "Escape") {
+              closePalette()
+            }
+          }
+          return (
+            <div className="modal-backdrop" onClick={closePalette}>
+              <div
+                className="modal"
+                style={{ maxWidth: 520, width: "100%" }}
+                onClick={e => e.stopPropagation()}
+                onKeyDown={onKeyDown}
+              >
+                <input
+                  autoFocus
+                  className="search"
+                  style={{ width: "100%", marginBottom: 8, boxSizing: "border-box" }}
+                  placeholder="Search files and folders..."
+                  value={paletteQuery}
+                  onChange={e => {
+                    setPaletteQuery(e.target.value)
+                    setPaletteActive(0)
+                  }}
+                />
+                {paletteQuery.length > 0 &&
+                  !paletteLoading &&
+                  paletteResults.folders.length === 0 &&
+                  paletteResults.files.length === 0 &&
+                  paletteResults.content.length === 0 && (
+                    <div style={{ padding: "12px 0", color: "var(--muted)", textAlign: "center", fontSize: 14 }}>
+                      No matches.
                     </div>
-                  ))}
-                </>
-              )}
-              {paletteResults.files.length > 0 && (
-                <>
-                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", padding: "6px 0 2px" }}>Files</div>
-                  {paletteResults.files.map((f, i) => {
-                    const globalIdx = paletteResults.folders.length + i
-                    return (
+                  )}
+                {paletteResults.folders.length > 0 && (
+                  <>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.08em",
+                        color: "var(--muted)",
+                        padding: "6px 0 2px",
+                      }}
+                    >
+                      Folders
+                    </div>
+                    {paletteResults.folders.map((f, i) => (
                       <div
-                        key={`pfi-${f.id}`}
-                        className={`picker-row${paletteActive === globalIdx ? " active" : ""}`}
-                        style={{ cursor: "pointer", borderRadius: 6, padding: "6px 8px", background: paletteActive === globalIdx ? "var(--hover)" : undefined }}
-                        onClick={() => activate(globalIdx)}
-                        onMouseEnter={() => setPaletteActive(globalIdx)}
+                        key={`pf-${f.id}`}
+                        className={`picker-row${paletteActive === i ? " active" : ""}`}
+                        style={{
+                          cursor: "pointer",
+                          borderRadius: 6,
+                          padding: "6px 8px",
+                          background: paletteActive === i ? "var(--hover)" : undefined,
+                        }}
+                        onClick={() => activate(i)}
+                        onMouseEnter={() => setPaletteActive(i)}
                       >
-                        <MimeIcon mime={f.mime} size={16} />
+                        <FolderIcon size={16} strokeWidth={1.5} />
                         <span style={{ marginLeft: 8 }}>{f.name}</span>
                       </div>
-                    )
-                  })}
-                </>
-              )}
-              {paletteResults.content.length > 0 && (
-                <>
-                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", padding: "6px 0 2px" }}>Inside files</div>
-                  {paletteResults.content.map((f, i) => {
-                    const globalIdx = paletteResults.folders.length + paletteResults.files.length + i
-                    return (
-                      <div
-                        key={`pco-${f.id}`}
-                        className={`picker-row${paletteActive === globalIdx ? " active" : ""}`}
-                        style={{ cursor: "pointer", borderRadius: 6, padding: "6px 8px", background: paletteActive === globalIdx ? "var(--hover)" : undefined, display: "flex", flexDirection: "column", alignItems: "flex-start" }}
-                        onClick={() => activate(globalIdx)}
-                        onMouseEnter={() => setPaletteActive(globalIdx)}
-                      >
-                        <div style={{ display: "flex", alignItems: "center" }}>
+                    ))}
+                  </>
+                )}
+                {paletteResults.files.length > 0 && (
+                  <>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.08em",
+                        color: "var(--muted)",
+                        padding: "6px 0 2px",
+                      }}
+                    >
+                      Files
+                    </div>
+                    {paletteResults.files.map((f, i) => {
+                      const globalIdx = paletteResults.folders.length + i
+                      return (
+                        <div
+                          key={`pfi-${f.id}`}
+                          className={`picker-row${paletteActive === globalIdx ? " active" : ""}`}
+                          style={{
+                            cursor: "pointer",
+                            borderRadius: 6,
+                            padding: "6px 8px",
+                            background: paletteActive === globalIdx ? "var(--hover)" : undefined,
+                          }}
+                          onClick={() => activate(globalIdx)}
+                          onMouseEnter={() => setPaletteActive(globalIdx)}
+                        >
                           <MimeIcon mime={f.mime} size={16} />
                           <span style={{ marginLeft: 8 }}>{f.name}</span>
                         </div>
-                        {f.snippet && (
-                          <div
-                            style={{ marginLeft: 24, fontSize: 12, color: "var(--muted)", lineHeight: 1.3, marginTop: 2 }}
-                            dangerouslySetInnerHTML={{ __html: f.snippet }}
-                          />
-                        )}
-                      </div>
-                    )
-                  })}
-                </>
-              )}
+                      )
+                    })}
+                  </>
+                )}
+                {paletteResults.content.length > 0 && (
+                  <>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.08em",
+                        color: "var(--muted)",
+                        padding: "6px 0 2px",
+                      }}
+                    >
+                      Inside files
+                    </div>
+                    {paletteResults.content.map((f, i) => {
+                      const globalIdx = paletteResults.folders.length + paletteResults.files.length + i
+                      return (
+                        <div
+                          key={`pco-${f.id}`}
+                          className={`picker-row${paletteActive === globalIdx ? " active" : ""}`}
+                          style={{
+                            cursor: "pointer",
+                            borderRadius: 6,
+                            padding: "6px 8px",
+                            background: paletteActive === globalIdx ? "var(--hover)" : undefined,
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "flex-start",
+                          }}
+                          onClick={() => activate(globalIdx)}
+                          onMouseEnter={() => setPaletteActive(globalIdx)}
+                        >
+                          <div style={{ display: "flex", alignItems: "center" }}>
+                            <MimeIcon mime={f.mime} size={16} />
+                            <span style={{ marginLeft: 8 }}>{f.name}</span>
+                          </div>
+                          {f.snippet && (
+                            <div
+                              style={{
+                                marginLeft: 24,
+                                fontSize: 12,
+                                color: "var(--muted)",
+                                lineHeight: 1.3,
+                                marginTop: 2,
+                              }}
+                              // biome-ignore lint/security/noDangerouslySetInnerHtml: the server HTML-escapes the whole snippet and re-introduces only <mark> around hits (renderSnippet in src/search/content/routes.ts), so nothing from file contents can reach here as markup.
+                              dangerouslySetInnerHTML={{ __html: f.snippet }}
+                            />
+                          )}
+                        </div>
+                      )
+                    })}
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        )
-      })()}
+          )
+        })()}
 
       <UploadPanel
         uploads={uploads}
-        onCancel={(id) => {
+        onCancel={id => {
           setUploads(prev => {
             const target = prev.find(p => p.id === id)
             if (target?.abort) target.abort()
             return prev.filter(p => p.id !== id)
           })
         }}
-        onDismiss={(id) => setUploads(prev => prev.filter(p => p.id !== id))}
+        onDismiss={id => setUploads(prev => prev.filter(p => p.id !== id))}
         onClear={() => {
           setUploads(prev => {
             for (const p of prev) if (p.status === "uploading") p.abort?.()
@@ -1556,7 +1970,11 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
   )
 }
 
-const FolderPicker: React.FC<{ excludeIds: number[]; onClose: () => void; onPick: (folderId: number | null) => void }> = ({ excludeIds, onClose, onPick }) => {
+const FolderPicker: React.FC<{
+  excludeIds: number[]
+  onClose: () => void
+  onPick: (folderId: number | null) => void
+}> = ({ excludeIds, onClose, onPick }) => {
   const [currentId, setCurrentId] = useState<number | null>(null)
   const [crumbs, setCrumbs] = useState<Crumb[]>([])
   const [folders, setFolders] = useState<Folder[]>([])
@@ -1570,18 +1988,28 @@ const FolderPicker: React.FC<{ excludeIds: number[]; onClose: () => void; onPick
       setCrumbs(data.trail ?? [])
     }
   }
-  useEffect(() => { load() }, [currentId])
+  useEffect(() => {
+    load()
+  }, [currentId])
 
   return (
     <Modal title="Move to folder" onClose={onClose}>
       <div className="picker-crumbs">
-        <span className="crumb" onClick={() => setCurrentId(null)}>All Files</span>
+        <span className="crumb" onClick={() => setCurrentId(null)}>
+          All Files
+        </span>
         {crumbs.map((c, i) => (
           <React.Fragment key={c.id}>
-            <span className="sep"><ChevronRight size={14} /></span>
-            {i === crumbs.length - 1
-              ? <span className="current">{c.name}</span>
-              : <span className="crumb" onClick={() => setCurrentId(c.id)}>{c.name}</span>}
+            <span className="sep">
+              <ChevronRight size={14} />
+            </span>
+            {i === crumbs.length - 1 ? (
+              <span className="current">{c.name}</span>
+            ) : (
+              <span className="crumb" onClick={() => setCurrentId(c.id)}>
+                {c.name}
+              </span>
+            )}
           </React.Fragment>
         ))}
       </div>
@@ -1602,8 +2030,10 @@ const FolderPicker: React.FC<{ excludeIds: number[]; onClose: () => void; onPick
         })}
       </div>
       <div className="actions">
-        <button onClick={onClose}>Cancel</button>
-        <button className="primary" onClick={() => onPick(currentId)}>
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="button" className="primary" onClick={() => onPick(currentId)}>
           Move here{crumbs.length > 0 ? `: ${crumbs[crumbs.length - 1]?.name}` : ""}
         </button>
       </div>
@@ -1611,7 +2041,13 @@ const FolderPicker: React.FC<{ excludeIds: number[]; onClose: () => void; onPick
   )
 }
 
-const TEXT_MIMES = ["application/json", "application/xml", "application/javascript", "application/typescript", "application/x-sh"]
+const TEXT_MIMES = [
+  "application/json",
+  "application/xml",
+  "application/javascript",
+  "application/typescript",
+  "application/x-sh",
+]
 
 const kindFor = (mime: string): "image" | "video" | "audio" | "pdf" | "text" | "other" => {
   if (mime.startsWith("image/")) return "image"
@@ -1671,41 +2107,64 @@ const PreviewModal: React.FC<{ file: FileItem; onClose: () => void }> = ({ file,
       <div className="preview" onClick={e => e.stopPropagation()}>
         <div className="preview-head">
           <div className="preview-title">
-            <span className="preview-icon"><MimeIcon mime={file.mime} size={28} /></span>
+            <span className="preview-icon">
+              <MimeIcon mime={file.mime} size={28} />
+            </span>
             <div>
               <div className="preview-name">{file.name}</div>
-              <div className="preview-meta">{formatBytes(file.size)} • {file.mime}</div>
+              <div className="preview-meta">
+                {formatBytes(file.size)} • {file.mime}
+              </div>
             </div>
           </div>
           <div className="preview-actions">
-            <button onClick={() => setCommentsOpen(v => !v)} title="Comments">
+            <button type="button" onClick={() => setCommentsOpen(v => !v)} title="Comments">
               <MessageSquare size={16} /> {commentsOpen ? "Hide comments" : "Comments"}
             </button>
-            <button onClick={() => downloadFile(file)}>Download</button>
-            <button onClick={onClose} aria-label="Close"><X size={16} /></button>
+            <button type="button" onClick={() => downloadFile(file)}>
+              Download
+            </button>
+            <button type="button" onClick={onClose} aria-label="Close">
+              <X size={16} />
+            </button>
           </div>
         </div>
         <div className="preview-body" style={{ display: "flex" }}>
-          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "stretch", justifyContent: "center" }}>
-          {loading && <div className="preview-empty">Loading preview...</div>}
-          {error && <div className="preview-empty">Could not load preview: {error}</div>}
-          {kind === "image" && url && <img src={url} alt={file.name} />}
-          {kind === "video" && url && <video src={url} controls autoPlay />}
-          {kind === "audio" && url && (
-            <div className="preview-audio">
-              <div className="preview-audio-icon"><Music size={72} strokeWidth={1.25} /></div>
-              <audio src={url} controls autoPlay />
-            </div>
-          )}
-          {kind === "pdf" && url && <iframe src={url} title={file.name} />}
-          {kind === "text" && text !== null && <pre className="preview-text">{text}</pre>}
-          {kind === "other" && (
-            <div className="preview-empty">
-              <div className="preview-empty-icon"><MimeIcon mime={file.mime} size={64} /></div>
-              <div>No inline preview for this file type</div>
-              <button className="primary" style={{ marginTop: 16 }} onClick={() => downloadFile(file)}>Download</button>
-            </div>
-          )}
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "stretch",
+              justifyContent: "center",
+            }}
+          >
+            {loading && <div className="preview-empty">Loading preview...</div>}
+            {error && <div className="preview-empty">Could not load preview: {error}</div>}
+            {kind === "image" && url && <img src={url} alt={file.name} />}
+            {kind === "video" && url && <video src={url} controls autoPlay />}
+            {kind === "audio" && url && (
+              <div className="preview-audio">
+                <div className="preview-audio-icon">
+                  <Music size={72} strokeWidth={1.25} />
+                </div>
+                <audio src={url} controls autoPlay />
+              </div>
+            )}
+            {kind === "pdf" && url && <iframe src={url} title={file.name} />}
+            {kind === "text" && text !== null && <pre className="preview-text">{text}</pre>}
+            {kind === "other" && (
+              <div className="preview-empty">
+                <div className="preview-empty-icon">
+                  <MimeIcon mime={file.mime} size={64} />
+                </div>
+                <div>No inline preview for this file type</div>
+                <button type="button" className="primary" style={{ marginTop: 16 }} onClick={() => downloadFile(file)}>
+                  Download
+                </button>
+              </div>
+            )}
           </div>
           {commentsOpen && (
             <div className="preview-comments">
@@ -1730,9 +2189,13 @@ const CommentsPanel: React.FC<{ kind: "file" | "folder"; resourceId: number }> =
     try {
       const data = kind === "file" ? await api.listFileComments(resourceId) : await api.listFolderComments(resourceId)
       setItems(Array.isArray(data.comments) ? data.comments : [])
-    } finally { setLoading(false) }
+    } finally {
+      setLoading(false)
+    }
   }
-  useEffect(() => { refresh() }, [kind, resourceId])
+  useEffect(() => {
+    refresh()
+  }, [kind, resourceId])
 
   const post = async () => {
     const trimmed = body.trim()
@@ -1740,11 +2203,19 @@ const CommentsPanel: React.FC<{ kind: "file" | "folder"; resourceId: number }> =
     setPosting(true)
     setErr("")
     try {
-      const res = kind === "file" ? await api.createFileComment(resourceId, trimmed) : await api.createFolderComment(resourceId, trimmed)
-      if ((res as any).error) { setErr((res as any).error); return }
+      const res =
+        kind === "file"
+          ? await api.createFileComment(resourceId, trimmed)
+          : await api.createFolderComment(resourceId, trimmed)
+      if ((res as any).error) {
+        setErr((res as any).error)
+        return
+      }
       setBody("")
       await refresh()
-    } finally { setPosting(false) }
+    } finally {
+      setPosting(false)
+    }
   }
 
   const remove = async (id: number) => {
@@ -1769,9 +2240,23 @@ const CommentsPanel: React.FC<{ kind: "file" | "folder"; resourceId: number }> =
                 <strong>{c.user.name ?? c.user.username ?? "Someone"}</strong>
                 <span style={{ fontSize: 11, color: "var(--muted)" }}>{new Date(c.created_at).toLocaleString()}</span>
               </div>
-              <div style={{ whiteSpace: "pre-wrap" }}>{c.deleted_at ? <em style={{ color: "var(--muted)" }}>(deleted)</em> : c.body}</div>
+              <div style={{ whiteSpace: "pre-wrap" }}>
+                {c.deleted_at ? <em style={{ color: "var(--muted)" }}>(deleted)</em> : c.body}
+              </div>
               {!c.deleted_at && me?.id === c.user.id && (
-                <button onClick={() => remove(c.id)} style={{ background: "transparent", border: "none", color: "var(--muted)", fontSize: 11, padding: 0, marginTop: 4, cursor: "pointer" }}>
+                <button
+                  type="button"
+                  onClick={() => remove(c.id)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--muted)",
+                    fontSize: 11,
+                    padding: 0,
+                    marginTop: 4,
+                    cursor: "pointer",
+                  }}
+                >
                   Delete
                 </button>
               )}
@@ -1787,24 +2272,31 @@ const CommentsPanel: React.FC<{ kind: "file" | "folder"; resourceId: number }> =
         style={{ width: "100%", boxSizing: "border-box", marginBottom: 8 }}
       />
       {err && <div className="msg err">{err}</div>}
-      <button className="primary" onClick={post} disabled={posting || !body.trim()}>
+      <button type="button" className="primary" onClick={post} disabled={posting || !body.trim()}>
         {posting ? "Posting…" : "Post"}
       </button>
     </div>
   )
 }
 
-const VersionsModal: React.FC<{ file: FileItem; onClose: () => void; onRestored: () => void }> = ({ file, onClose, onRestored }) => {
+const VersionsModal: React.FC<{ file: FileItem; onClose: () => void; onRestored: () => void }> = ({
+  file,
+  onClose,
+  onRestored,
+}) => {
   const [versions, setVersions] = useState<FileVersion[]>([])
   const [err, setErr] = useState("")
 
   const load = async () => {
     const data = await api.listVersions(file.id)
     if (Array.isArray(data)) setVersions(data)
-    else if (data && Array.isArray((data as { items?: FileVersion[] }).items)) setVersions((data as { items: FileVersion[] }).items)
+    else if (data && Array.isArray((data as { items?: FileVersion[] }).items))
+      setVersions((data as { items: FileVersion[] }).items)
     else setErr((data as { error?: string }).error ?? "Failed to load versions")
   }
-  useEffect(() => { load() }, [file.id])
+  useEffect(() => {
+    load()
+  }, [file.id])
 
   const downloadVersion = async (v: FileVersion) => {
     const res = await fetch(api.versionDownloadUrl(file.id, v.version), {
@@ -1816,7 +2308,9 @@ const VersionsModal: React.FC<{ file: FileItem; onClose: () => void; onRestored:
     const a = document.createElement("a")
     a.href = url
     a.download = `${file.name}.v${v.version}`
-    document.body.appendChild(a); a.click(); document.body.removeChild(a)
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
     URL.revokeObjectURL(url)
   }
 
@@ -1845,18 +2339,32 @@ const VersionsModal: React.FC<{ file: FileItem; onClose: () => void; onRestored:
               <div className="version-title">
                 v{v.version} {v.is_current && <span className="chip">Current</span>}
               </div>
-              <div className="version-meta">{formatBytes(v.size)} • {new Date(v.uploaded_at).toLocaleString()}</div>
+              <div className="version-meta">
+                {formatBytes(v.size)} • {new Date(v.uploaded_at).toLocaleString()}
+              </div>
             </div>
             <div className="version-actions">
-              <button onClick={() => downloadVersion(v)}>Download</button>
-              {!v.is_current && <button onClick={() => restore(v)}>Restore</button>}
-              {!v.is_current && <button className="danger" onClick={() => remove(v)}>Delete</button>}
+              <button type="button" onClick={() => downloadVersion(v)}>
+                Download
+              </button>
+              {!v.is_current && (
+                <button type="button" onClick={() => restore(v)}>
+                  Restore
+                </button>
+              )}
+              {!v.is_current && (
+                <button type="button" className="danger" onClick={() => remove(v)}>
+                  Delete
+                </button>
+              )}
             </div>
           </div>
         ))}
       </div>
       <div className="actions">
-        <button className="primary" onClick={onClose}>Close</button>
+        <button type="button" className="primary" onClick={onClose}>
+          Close
+        </button>
       </div>
     </Modal>
   )
@@ -1870,7 +2378,9 @@ const TrashView: React.FC = () => {
     if (res && "folders" in res) setData(res)
     else setData({ folders: [], files: [] })
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const restoreF = async (kind: "file" | "folder", id: number) => {
     const res = kind === "file" ? await api.restoreFile(id) : await api.restoreFolder(id)
@@ -1897,34 +2407,59 @@ const TrashView: React.FC = () => {
   return (
     <div className="main">
       <div className="toolbar">
-        <div className="crumbs"><span className="current">Trash</span></div>
-        {!isEmpty && <button className="danger" onClick={emptyAll}>Empty trash</button>}
+        <div className="crumbs">
+          <span className="current">Trash</span>
+        </div>
+        {!isEmpty && (
+          <button type="button" className="danger" onClick={emptyAll}>
+            Empty trash
+          </button>
+        )}
       </div>
       <div className="content">
         {isEmpty && (
-          <div className="empty"><div className="big"><Trash2 size={64} strokeWidth={1.25} /></div><div>Trash is empty</div></div>
+          <div className="empty">
+            <div className="big">
+              <Trash2 size={64} strokeWidth={1.25} />
+            </div>
+            <div>Trash is empty</div>
+          </div>
         )}
         {!isEmpty && (
           <div className="grid">
             {data.folders.map(f => (
               <div key={`tf-${f.id}`} className="card">
-                <div className="icon"><FolderIcon size={32} strokeWidth={1.5} /></div>
+                <div className="icon">
+                  <FolderIcon size={32} strokeWidth={1.5} />
+                </div>
                 <div className="name">{f.name}</div>
                 <div className="meta">Deleted {new Date(f.deleted_at).toLocaleDateString()}</div>
                 <div className="row">
-                  <button onClick={() => restoreF("folder", f.id)}>Restore</button>
-                  <button className="danger" onClick={() => purge("folder", f.id)}>Delete forever</button>
+                  <button type="button" onClick={() => restoreF("folder", f.id)}>
+                    Restore
+                  </button>
+                  <button type="button" className="danger" onClick={() => purge("folder", f.id)}>
+                    Delete forever
+                  </button>
                 </div>
               </div>
             ))}
             {data.files.map(f => (
               <div key={`tfi-${f.id}`} className="card">
-                <div className="icon"><MimeIcon mime={f.mime} size={32} /></div>
+                <div className="icon">
+                  <MimeIcon mime={f.mime} size={32} />
+                </div>
                 <div className="name">{f.name}</div>
-                <div className="meta">{formatBytes(f.size)} • Deleted {new Date(f.deleted_at).toLocaleDateString()}</div>
+                <div className="meta">
+                  {formatBytes(f.size)} • Deleted {new Date(f.deleted_at).toLocaleDateString()}
+                </div>
                 <div className="row">
-                  <button onClick={() => restoreF("file", f.id)}>Restore</button>
-                  <button className="danger" onClick={() => purge("file", f.id)}>Delete forever</button>
+                  <button type="button" onClick={() => restoreF("file", f.id)}>
+                    Restore
+                  </button>
+                  <button type="button" className="danger" onClick={() => purge("file", f.id)}>
+                    Delete forever
+                  </button>
                 </div>
               </div>
             ))}
@@ -1972,7 +2507,9 @@ const CollaboratorsPanel: React.FC<{ kind: "file" | "folder"; id: number }> = ({
     const list = kind === "folder" ? await api.listFolderCollabs(id) : await api.listFileCollabs(id)
     setRows(Array.isArray(list) ? list : [])
   }
-  useEffect(() => { load() }, [kind, id])
+  useEffect(() => {
+    load()
+  }, [kind, id])
 
   const add = async () => {
     if (!identity.trim() || busy) return
@@ -2016,38 +2553,74 @@ const CollaboratorsPanel: React.FC<{ kind: "file" | "folder"; id: number }> = ({
         <select
           value={role}
           onChange={e => setRole(e.target.value as "viewer" | "editor")}
-          style={{ padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 6, background: "var(--panel)", color: "var(--text)" }}
+          style={{
+            padding: "8px 10px",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            background: "var(--panel)",
+            color: "var(--text)",
+          }}
         >
           <option value="viewer">Viewer</option>
           <option value="editor">Editor</option>
         </select>
-        <button className="primary" onClick={add} disabled={busy}>
+        <button type="button" className="primary" onClick={add} disabled={busy}>
           <UserPlus size={14} /> <span>Add</span>
         </button>
       </div>
-      {error && <div className="msg err" style={{ marginTop: 8 }}>{error}</div>}
+      {error && (
+        <div className="msg err" style={{ marginTop: 8 }}>
+          {error}
+        </div>
+      )}
       {pendingInvite && (
         <div className="msg ok" style={{ marginTop: 8 }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>Invite link for {pendingInvite.email}:</div>
           <div className="share-link" style={{ margin: "4px 0" }}>
             {window.location.origin}/signup?invite={pendingInvite.token}
           </div>
-          <button onClick={() => navigator.clipboard.writeText(`${window.location.origin}/signup?invite=${pendingInvite.token}`)}>Copy invite link</button>
+          <button
+            type="button"
+            onClick={() =>
+              navigator.clipboard.writeText(`${window.location.origin}/signup?invite=${pendingInvite.token}`)
+            }
+          >
+            Copy invite link
+          </button>
         </div>
       )}
       <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6 }}>
         {rows.length === 0 && <div style={{ color: "var(--muted)", fontSize: 13 }}>No collaborators yet</div>}
         {rows.map(r => (
-          <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 6 }}>
+          <div
+            key={r.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "8px 10px",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+            }}
+          >
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {r.user ? `@${r.user.username}` : r.email}
                 {r.user && <span style={{ color: "var(--muted)", marginLeft: 6, fontWeight: 400 }}>{r.user.name}</span>}
-                {!r.user && <span className="badge" style={{ marginLeft: 8 }}>pending</span>}
+                {!r.user && (
+                  <span className="badge" style={{ marginLeft: 8 }}>
+                    pending
+                  </span>
+                )}
               </div>
             </div>
             <span style={{ fontSize: 12, color: "var(--muted)", textTransform: "capitalize" }}>{r.role}</span>
-            <button className="danger" onClick={() => remove(r.id)} style={{ padding: "4px 8px", fontSize: 12 }}>
+            <button
+              type="button"
+              className="danger"
+              onClick={() => remove(r.id)}
+              style={{ padding: "4px 8px", fontSize: 12 }}
+            >
               <X size={12} />
             </button>
           </div>
@@ -2066,7 +2639,9 @@ const SharingModal: React.FC<{
     ? `${window.location.origin}${target.kind === "folder" ? `/app/u/${ownerUsername}/f/${target.id}` : `/app/u/${ownerUsername}/file/${target.id}`}`
     : null
   const [tab, setTab] = useState<"people" | "link">("people")
-  const [publicLink, setPublicLink] = useState<{ url: string; passwordRequired: boolean; burnOnView: boolean } | null>(null)
+  const [publicLink, setPublicLink] = useState<{ url: string; passwordRequired: boolean; burnOnView: boolean } | null>(
+    null,
+  )
   const [linkExpiry, setLinkExpiry] = useState<number>(86400)
   const [linkPassword, setLinkPassword] = useState("")
   const [linkBurn, setLinkBurn] = useState(false)
@@ -2075,7 +2650,8 @@ const SharingModal: React.FC<{
 
   const createPublic = async () => {
     if (target.kind !== "file") return
-    setLinkBusy(true); setLinkErr("")
+    setLinkBusy(true)
+    setLinkErr("")
     const res = await api.createShare(target.id, {
       expiresIn: linkExpiry,
       password: linkPassword.trim() || undefined,
@@ -2097,6 +2673,7 @@ const SharingModal: React.FC<{
     <Modal title={`Share "${target.name}"`} onClose={onClose}>
       <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--border)", marginBottom: 16 }}>
         <button
+          type="button"
           onClick={() => setTab("people")}
           style={{
             border: "none",
@@ -2112,6 +2689,7 @@ const SharingModal: React.FC<{
         </button>
         {target.kind === "file" && (
           <button
+            type="button"
             onClick={() => setTab("link")}
             style={{
               border: "none",
@@ -2133,61 +2711,104 @@ const SharingModal: React.FC<{
           <CollaboratorsPanel kind={target.kind} id={target.id} />
           {directLink && (
             <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Collaborators with access can open:</div>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
+                Collaborators with access can open:
+              </div>
               <div className="share-link">{directLink}</div>
-              <button onClick={() => navigator.clipboard.writeText(directLink)} style={{ marginTop: 6 }}>Copy link</button>
+              <button type="button" onClick={() => navigator.clipboard.writeText(directLink)} style={{ marginTop: 6 }}>
+                Copy link
+              </button>
             </div>
           )}
         </>
       )}
 
-      {tab === "link" && target.kind === "file" && (
-        <>
-          {publicLink ? (
-            <>
-              <div style={{ marginBottom: 6 }}>Send this link to anyone:</div>
-              <div className="share-link">{publicLink.url}</div>
-              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "var(--muted)" }}>
-                {publicLink.passwordRequired && <span>· Recipient will need the password you set.</span>}
-                {publicLink.burnOnView && <span>· Link self-destructs after the first viewer (other than you) downloads it.</span>}
+      {tab === "link" &&
+        target.kind === "file" &&
+        (publicLink ? (
+          <>
+            <div style={{ marginBottom: 6 }}>Send this link to anyone:</div>
+            <div className="share-link">{publicLink.url}</div>
+            <div
+              style={{
+                marginTop: 10,
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                fontSize: 13,
+                color: "var(--muted)",
+              }}
+            >
+              {publicLink.passwordRequired && <span>· Recipient will need the password you set.</span>}
+              {publicLink.burnOnView && (
+                <span>· Link self-destructs after the first viewer (other than you) downloads it.</span>
+              )}
+            </div>
+            <div className="actions">
+              <button type="button" onClick={() => navigator.clipboard.writeText(publicLink.url)}>
+                Copy
+              </button>
+              <button type="button" className="primary" onClick={onClose}>
+                Done
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Expires in</label>
+            <select value={linkExpiry} onChange={e => setLinkExpiry(Number(e.target.value))}>
+              <option value={3600}>1 hour</option>
+              <option value={86400}>1 day</option>
+              <option value={604800}>7 days</option>
+              <option value={2592000}>30 days</option>
+            </select>
+            <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginTop: 14, marginBottom: 6 }}>
+              Password (optional)
+            </label>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={linkPassword}
+              onChange={e => setLinkPassword(e.target.value)}
+              placeholder="Leave blank for no password"
+            />
+            <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 14, fontSize: 13 }}>
+              <input type="checkbox" checked={linkBurn} onChange={e => setLinkBurn(e.target.checked)} />
+              <span>Self-destruct after first non-owner view</span>
+            </label>
+            {linkErr && (
+              <div className="msg err" style={{ marginTop: 10 }}>
+                {linkErr}
               </div>
-              <div className="actions">
-                <button onClick={() => navigator.clipboard.writeText(publicLink.url)}>Copy</button>
-                <button className="primary" onClick={onClose}>Done</button>
-              </div>
-            </>
-          ) : (
-            <>
-              <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Expires in</label>
-              <select value={linkExpiry} onChange={e => setLinkExpiry(Number(e.target.value))}>
-                <option value={3600}>1 hour</option>
-                <option value={86400}>1 day</option>
-                <option value={604800}>7 days</option>
-                <option value={2592000}>30 days</option>
-              </select>
-              <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginTop: 14, marginBottom: 6 }}>Password (optional)</label>
-              <input type="password" autoComplete="new-password" value={linkPassword} onChange={e => setLinkPassword(e.target.value)} placeholder="Leave blank for no password" />
-              <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 14, fontSize: 13 }}>
-                <input type="checkbox" checked={linkBurn} onChange={e => setLinkBurn(e.target.checked)} />
-                <span>Self-destruct after first non-owner view</span>
-              </label>
-              {linkErr && <div className="msg err" style={{ marginTop: 10 }}>{linkErr}</div>}
-              <div className="actions">
-                <button onClick={onClose}>Cancel</button>
-                <button className="primary" disabled={linkBusy} onClick={createPublic}>
-                  {linkBusy ? "Creating…" : "Create link"}
-                </button>
-              </div>
-            </>
-          )}
-        </>
-      )}
+            )}
+            <div className="actions">
+              <button type="button" onClick={onClose}>
+                Cancel
+              </button>
+              <button type="button" className="primary" disabled={linkBusy} onClick={createPublic}>
+                {linkBusy ? "Creating…" : "Create link"}
+              </button>
+            </div>
+          </>
+        ))}
     </Modal>
   )
 }
 
-type SharedFolder = { id: number; user_id: number; parent_id: number | null; name: string; created_at: string; role: "viewer" | "editor"; owner: { id: number; username: string; name: string } | null }
-type SharedFile = FileItem & { user_id: number; role: "viewer" | "editor"; owner: { id: number; username: string; name: string } | null }
+type SharedFolder = {
+  id: number
+  user_id: number
+  parent_id: number | null
+  name: string
+  created_at: string
+  role: "viewer" | "editor"
+  owner: { id: number; username: string; name: string } | null
+}
+type SharedFile = FileItem & {
+  user_id: number
+  role: "viewer" | "editor"
+  owner: { id: number; username: string; name: string } | null
+}
 
 const SharedView: React.FC = () => {
   const [data, setData] = useState<{ folders: SharedFolder[]; files: SharedFile[] }>({ folders: [], files: [] })
@@ -2198,19 +2819,25 @@ const SharedView: React.FC = () => {
     if (res && "folders" in res) setData(res)
     else setData({ folders: [], files: [] })
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const isEmpty = data.folders.length === 0 && data.files.length === 0
 
   return (
     <div className="main">
       <div className="toolbar">
-        <div className="crumbs"><span className="current">Shared with me</span></div>
+        <div className="crumbs">
+          <span className="current">Shared with me</span>
+        </div>
       </div>
       <div className="content">
         {isEmpty && (
           <div className="empty">
-            <div className="big"><Users size={64} strokeWidth={1.25} /></div>
+            <div className="big">
+              <Users size={64} strokeWidth={1.25} />
+            </div>
             <div>Nothing shared with you yet</div>
             <div style={{ marginTop: 8, fontSize: 13 }}>
               When someone adds you as a collaborator, the folder or file will appear here.
@@ -2220,34 +2847,34 @@ const SharedView: React.FC = () => {
         {!isEmpty && (
           <div className="grid">
             {data.folders.map(f => (
-              <div
-                key={`sf-${f.id}`}
-                className="card"
-                onClick={() => navigate(folderHref(f.id, f.owner?.username))}
-              >
-                <div className="icon"><FolderIcon size={32} strokeWidth={1.5} /></div>
+              <div key={`sf-${f.id}`} className="card" onClick={() => navigate(folderHref(f.id, f.owner?.username))}>
+                <div className="icon">
+                  <FolderIcon size={32} strokeWidth={1.5} />
+                </div>
                 <div className="name">{f.name}</div>
                 <div className="meta">
                   {f.owner && <span>@{f.owner.username}</span>}
-                  <span className="badge" style={{ marginLeft: 6 }}>{f.role}</span>
+                  <span className="badge" style={{ marginLeft: 6 }}>
+                    {f.role}
+                  </span>
                 </div>
               </div>
             ))}
             {data.files.map(f => (
-              <div
-                key={`sfi-${f.id}`}
-                className="card"
-                onClick={() => setPreviewing(f)}
-              >
+              <div key={`sfi-${f.id}`} className="card" onClick={() => setPreviewing(f)}>
                 <FileThumb file={f} />
                 <div className="name">{f.name}</div>
                 <div className="meta">
                   {formatBytes(f.size)}
                   {f.owner && <span style={{ marginLeft: 8 }}>@{f.owner.username}</span>}
-                  <span className="badge" style={{ marginLeft: 6 }}>{f.role}</span>
+                  <span className="badge" style={{ marginLeft: 6 }}>
+                    {f.role}
+                  </span>
                 </div>
                 <div className="row" onClick={e => e.stopPropagation()}>
-                  <button onClick={() => downloadFile(f)}>Download</button>
+                  <button type="button" onClick={() => downloadFile(f)}>
+                    Download
+                  </button>
                 </div>
               </div>
             ))}
@@ -2266,7 +2893,9 @@ const SharesView: React.FC = () => {
     const data = await api.listShares()
     setShares(Array.isArray(data) ? data : [])
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const revoke = async (id: number) => {
     if (!confirm("Revoke this share?")) return
@@ -2277,9 +2906,18 @@ const SharesView: React.FC = () => {
   if (shares.length === 0) {
     return (
       <div className="main">
-        <div className="toolbar"><div className="crumbs"><span className="current">Shared links</span></div></div>
+        <div className="toolbar">
+          <div className="crumbs">
+            <span className="current">Shared links</span>
+          </div>
+        </div>
         <div className="content">
-          <div className="empty"><div className="big"><Link2 size={64} strokeWidth={1.25} /></div><div>No active shares</div></div>
+          <div className="empty">
+            <div className="big">
+              <Link2 size={64} strokeWidth={1.25} />
+            </div>
+            <div>No active shares</div>
+          </div>
         </div>
       </div>
     )
@@ -2287,26 +2925,57 @@ const SharesView: React.FC = () => {
 
   return (
     <div className="main">
-      <div className="toolbar"><div className="crumbs"><span className="current">Shared links</span></div></div>
+      <div className="toolbar">
+        <div className="crumbs">
+          <span className="current">Shared links</span>
+        </div>
+      </div>
       <div className="content">
         <table className="shares-table">
-          <thead><tr><th>File</th><th>Link</th><th>Size</th><th>Expires</th><th></th></tr></thead>
+          <thead>
+            <tr>
+              <th>File</th>
+              <th>Link</th>
+              <th>Size</th>
+              <th>Expires</th>
+              <th></th>
+            </tr>
+          </thead>
           <tbody>
             {shares.map(s => {
               const url = `${window.location.origin}/s/${s.token}`
               return (
                 <tr key={s.id}>
                   <td>
-                    <span className="inline-icon"><MimeIcon mime={s.mime} size={16} /></span> {s.name}
-                    {s.password_required && <span className="badge" style={{ marginLeft: 6 }}>password</span>}
-                    {s.burn_on_view && <span className="badge" style={{ marginLeft: 6 }}>burn</span>}
+                    <span className="inline-icon">
+                      <MimeIcon mime={s.mime} size={16} />
+                    </span>{" "}
+                    {s.name}
+                    {s.password_required && (
+                      <span className="badge" style={{ marginLeft: 6 }}>
+                        password
+                      </span>
+                    )}
+                    {s.burn_on_view && (
+                      <span className="badge" style={{ marginLeft: 6 }}>
+                        burn
+                      </span>
+                    )}
                   </td>
-                  <td><a href={url} target="_blank" rel="noreferrer">{url}</a></td>
+                  <td>
+                    <a href={url} target="_blank" rel="noreferrer">
+                      {url}
+                    </a>
+                  </td>
                   <td>{formatBytes(s.size)}</td>
                   <td>{s.expires_at ? new Date(s.expires_at).toLocaleString() : "Never"}</td>
                   <td>
-                    <button onClick={() => navigator.clipboard.writeText(url)}>Copy</button>
-                    <button className="danger" onClick={() => revoke(s.id)}>Revoke</button>
+                    <button type="button" onClick={() => navigator.clipboard.writeText(url)}>
+                      Copy
+                    </button>
+                    <button type="button" className="danger" onClick={() => revoke(s.id)}>
+                      Revoke
+                    </button>
                   </td>
                 </tr>
               )
@@ -2330,12 +2999,15 @@ const AuthedImage: React.FC<{ src: string; alt: string; useAuth: boolean }> = ({
     if (!useAuth) return
     const node = ref.current
     if (!node) return
-    const obs = new IntersectionObserver(entries => {
-      if (entries[0]?.isIntersecting) {
-        setVisible(true)
-        obs.disconnect()
-      }
-    }, { rootMargin: "200px" })
+    const obs = new IntersectionObserver(
+      entries => {
+        if (entries[0]?.isIntersecting) {
+          setVisible(true)
+          obs.disconnect()
+        }
+      },
+      { rootMargin: "200px" },
+    )
     obs.observe(node)
     return () => obs.disconnect()
   }, [useAuth])
@@ -2408,7 +3080,9 @@ const PhotosGallery: React.FC<{
   if (photos.length === 0) {
     return (
       <div className="empty">
-        <div className="big"><FileImage size={64} strokeWidth={1.25} /></div>
+        <div className="big">
+          <FileImage size={64} strokeWidth={1.25} />
+        </div>
         <div>No photos yet</div>
       </div>
     )
@@ -2419,11 +3093,7 @@ const PhotosGallery: React.FC<{
       <div className="gallery">
         {photos.map((p, i) => (
           <div key={p.id} className="tile" onClick={() => setActive(i)}>
-            <AuthedImage
-              src={thumbUrl(p.id, p.version)}
-              alt={p.name}
-              useAuth={!!authHeader}
-            />
+            <AuthedImage src={thumbUrl(p.id, p.version)} alt={p.name} useAuth={!!authHeader} />
           </div>
         ))}
       </div>
@@ -2466,7 +3136,10 @@ const LightboxView: React.FC<{
       const res = await fetch(fullUrl(file.id), {
         headers: { authorization: `Bearer ${api.getToken()}` },
       })
-      if (!res.ok) { setSrc(null); return }
+      if (!res.ok) {
+        setSrc(null)
+        return
+      }
       const blob = await res.blob()
       if (aborted) return
       objectUrl = URL.createObjectURL(blob)
@@ -2482,19 +3155,23 @@ const LightboxView: React.FC<{
     <div className="lightbox" onClick={onClose}>
       <div className="lightbox-bar" onClick={e => e.stopPropagation()}>
         <div className="lightbox-title">{file.name}</div>
-        <button onClick={onClose} aria-label="Close"><X size={18} /></button>
+        <button type="button" onClick={onClose} aria-label="Close">
+          <X size={18} />
+        </button>
       </div>
       <div className="lightbox-stage" onClick={e => e.stopPropagation()}>
         {hasPrev && (
-          <button className="lightbox-nav prev" onClick={onPrev} aria-label="Previous">‹</button>
+          <button type="button" className="lightbox-nav prev" onClick={onPrev} aria-label="Previous">
+            ‹
+          </button>
         )}
-        {file.mime.startsWith("video/") ? (
-          src && <video src={src} controls autoPlay />
-        ) : (
-          src && <img src={src} alt={file.name} />
-        )}
+        {file.mime.startsWith("video/")
+          ? src && <video src={src} controls autoPlay />
+          : src && <img src={src} alt={file.name} />}
         {hasNext && (
-          <button className="lightbox-nav next" onClick={onNext} aria-label="Next">›</button>
+          <button type="button" className="lightbox-nav next" onClick={onNext} aria-label="Next">
+            ›
+          </button>
         )}
       </div>
     </div>
@@ -2526,8 +3203,8 @@ type RecipeFieldSelect = {
   help?: string
 }
 type RecipeFieldNumberUnit = {
-  key: string                    // value lives at draft[key]
-  unitKey: string                // chosen unit lives at draft[unitKey]
+  key: string // value lives at draft[key]
+  unitKey: string // chosen unit lives at draft[unitKey]
   label: string
   type: "number-unit"
   defaultUnit: string
@@ -2555,7 +3232,8 @@ const RECIPES: Recipe[] = [
   {
     id: "resize-images",
     name: "Make images smaller",
-    description: "Shrinks every image to a maximum width while keeping its proportions. Great for photo folders that don't need full-size originals.",
+    description:
+      "Shrinks every image to a maximum width while keeping its proportions. Great for photo folders that don't need full-size originals.",
     icon: <FileImage size={20} strokeWidth={1.6} />,
     fields: [
       {
@@ -2571,7 +3249,7 @@ const RECIPES: Recipe[] = [
         help: "Pixels = a fixed maximum. Percent = relative to each image's original width.",
       },
     ],
-    apply: (v) => {
+    apply: v => {
       const unit = (v.width_unit as string) ?? "px"
       const raw = Number(v.width)
       const cfg: Record<string, unknown> = { fit: "inside" }
@@ -2588,7 +3266,7 @@ const RECIPES: Recipe[] = [
       ]
     },
     matches: (slug, config) => slug === "stohr/resize-image" && !config.format,
-    summarize: (config) => {
+    summarize: config => {
       if (typeof config.width === "number") return `Maximum width ${config.width}px`
       if (typeof config.width_pct === "number") return `${config.width_pct}% of original width`
       return ""
@@ -2597,7 +3275,8 @@ const RECIPES: Recipe[] = [
   {
     id: "compress-images",
     name: "Save space (compress images)",
-    description: "Re-saves images at smaller file sizes with little quality loss. Saves a lot of storage on photo-heavy folders.",
+    description:
+      "Re-saves images at smaller file sizes with little quality loss. Saves a lot of storage on photo-heavy folders.",
     icon: <Zap size={20} strokeWidth={1.8} />,
     fields: [
       {
@@ -2621,7 +3300,7 @@ const RECIPES: Recipe[] = [
         ],
       },
     ],
-    apply: (v) => {
+    apply: v => {
       const width = Math.max(64, Math.min(8192, Number(v.width ?? 2048) || 2048))
       const quality = Math.max(1, Math.min(100, Number(v.quality ?? 85) || 85))
       const cfg = { width, quality, format: "webp" }
@@ -2631,7 +3310,7 @@ const RECIPES: Recipe[] = [
       ]
     },
     matches: (slug, config) => slug === "stohr/resize-image" && config.format === "webp",
-    summarize: (config) => {
+    summarize: config => {
       const q = Number(config.quality ?? 85)
       const label = q <= 75 ? "Good" : q >= 95 ? "Best" : "Great"
       return `${label} quality, max ${config.width ?? 2048}px wide`
@@ -2654,7 +3333,7 @@ const RECIPES: Recipe[] = [
         ],
       },
     ],
-    apply: (v) => {
+    apply: v => {
       const pattern = v.depth === "day" ? "YYYY/MM/DD" : "YYYY/MM"
       const cfg = { pattern }
       return [
@@ -2662,8 +3341,8 @@ const RECIPES: Recipe[] = [
         { slug: "stohr/organize-by-date", event: "file.moved.in", config: cfg },
       ]
     },
-    matches: (slug) => slug === "stohr/organize-by-date",
-    summarize: (config) => config.pattern === "YYYY/MM/DD" ? "By year, month, and day" : "By year and month",
+    matches: slug => slug === "stohr/organize-by-date",
+    summarize: config => (config.pattern === "YYYY/MM/DD" ? "By year, month, and day" : "By year and month"),
   },
 ]
 
@@ -2679,14 +3358,13 @@ const FolderAutomationsPanel: React.FC<{ folderId: number }> = ({ folderId }) =>
   const [error, setError] = useState("")
 
   const load = async () => {
-    const [list, uas] = await Promise.all([
-      api.listFolderActions(folderId),
-      api.listUserActions(),
-    ])
+    const [list, uas] = await Promise.all([api.listFolderActions(folderId), api.listUserActions()])
     setActions(Array.isArray(list) ? list : [])
     setUserActions(Array.isArray(uas) ? uas : [])
   }
-  useEffect(() => { void load() }, [folderId])
+  useEffect(() => {
+    void load()
+  }, [folderId])
 
   /* Group existing rows so users see one entry per "automation".
    * - Built-in recipes group by recipe id
@@ -2728,7 +3406,8 @@ const FolderAutomationsPanel: React.FC<{ folderId: number }> = ({ folderId }) =>
       setError(`"${ua.name}" has no triggers selected. Open it in Actions to add some.`)
       return
     }
-    setBusy(true); setError("")
+    setBusy(true)
+    setError("")
     for (const trigger of ua.triggers) {
       const res = await api.createFolderAction(folderId, { event: trigger, slug: ua.slug })
       if ((res as any).error) {
@@ -2760,7 +3439,8 @@ const FolderAutomationsPanel: React.FC<{ folderId: number }> = ({ folderId }) =>
 
   const submitAdd = async () => {
     if (!adding) return
-    setBusy(true); setError("")
+    setBusy(true)
+    setError("")
     const tuples = adding.apply(draft)
     for (const t of tuples) {
       const res = await api.createFolderAction(folderId, t)
@@ -2801,15 +3481,11 @@ const FolderAutomationsPanel: React.FC<{ folderId: number }> = ({ folderId }) =>
       <div className="auto-panel-head">
         <div>
           <div className="auto-panel-title">Automations</div>
-          <div className="auto-panel-sub">
-            Run a helpful little task every time files arrive in this folder.
-          </div>
+          <div className="auto-panel-sub">Run a helpful little task every time files arrive in this folder.</div>
         </div>
       </div>
 
-      {groups.length === 0 && !adding && (
-        <div className="auto-empty">Nothing automated yet.</div>
-      )}
+      {groups.length === 0 && !adding && <div className="auto-empty">Nothing automated yet.</div>}
 
       {groups.map(g => {
         const label = g.recipe?.name ?? g.userAction?.name ?? "Custom automation"
@@ -2829,14 +3505,21 @@ const FolderAutomationsPanel: React.FC<{ folderId: number }> = ({ folderId }) =>
             </div>
             <div className="auto-row-buttons">
               {g.userAction && (
-                <button onClick={() => navigate(`/app/actions/${g.userAction!.id}/edit`)} disabled={busy} title="Edit in Actions">
+                <button
+                  type="button"
+                  onClick={() => navigate(`/app/actions/${g.userAction!.id}/edit`)}
+                  disabled={busy}
+                  title="Edit in Actions"
+                >
                   <Edit3 size={13} />
                 </button>
               )}
-              <button onClick={() => togglePause(g.rows)} disabled={busy}>
+              <button type="button" onClick={() => togglePause(g.rows)} disabled={busy}>
                 {allOn ? "Pause" : "Resume"}
               </button>
-              <button className="danger" onClick={() => removeGroup(label, g.rows)} disabled={busy}>Remove</button>
+              <button type="button" className="danger" onClick={() => removeGroup(label, g.rows)} disabled={busy}>
+                Remove
+              </button>
             </div>
           </div>
         )
@@ -2868,7 +3551,9 @@ const FolderAutomationsPanel: React.FC<{ folderId: number }> = ({ folderId }) =>
 
           {userActions.length > 0 && (
             <>
-              <div className="auto-recipes-label" style={{ marginTop: 12 }}>Your actions</div>
+              <div className="auto-recipes-label" style={{ marginTop: 12 }}>
+                Your actions
+              </div>
               <div className="auto-recipe-grid">
                 {userActions.map(ua => {
                   const already = groups.some(g => g.userAction?.slug === ua.slug)
@@ -2881,7 +3566,9 @@ const FolderAutomationsPanel: React.FC<{ folderId: number }> = ({ folderId }) =>
                       disabled={already || busy}
                       title={already ? "Already added" : ""}
                     >
-                      <div className="auto-recipe-icon"><Zap size={20} strokeWidth={1.6} /></div>
+                      <div className="auto-recipe-icon">
+                        <Zap size={20} strokeWidth={1.6} />
+                      </div>
                       <div className="auto-recipe-name">{ua.name}</div>
                       <div className="auto-recipe-desc">{ua.description ?? ""}</div>
                       {already && <div className="auto-recipe-flag">Already added</div>}
@@ -2890,7 +3577,18 @@ const FolderAutomationsPanel: React.FC<{ folderId: number }> = ({ folderId }) =>
                 })}
               </div>
               <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
-                Manage your actions in <a onClick={(e) => { e.preventDefault(); navigate("/app/actions") }} href="/app/actions" style={{ color: "var(--brand)", cursor: "pointer" }}>Actions</a>.
+                Manage your actions in{" "}
+                <a
+                  onClick={e => {
+                    e.preventDefault()
+                    navigate("/app/actions")
+                  }}
+                  href="/app/actions"
+                  style={{ color: "var(--brand)", cursor: "pointer" }}
+                >
+                  Actions
+                </a>
+                .
               </div>
             </>
           )}
@@ -2910,7 +3608,9 @@ const FolderAutomationsPanel: React.FC<{ folderId: number }> = ({ folderId }) =>
           <div className="auto-form-fields">
             {adding.fields.map(f => (
               <div key={f.key} className="auto-field">
-                <label className="auto-field-label" htmlFor={`auto-${f.key}`}>{f.label}</label>
+                <label className="auto-field-label" htmlFor={`auto-${f.key}`}>
+                  {f.label}
+                </label>
                 {f.type === "number" && (
                   <div className="auto-input-row">
                     <input
@@ -2934,42 +3634,45 @@ const FolderAutomationsPanel: React.FC<{ folderId: number }> = ({ folderId }) =>
                     onChange={e => setDraft({ ...draft, [f.key]: e.target.value })}
                   >
                     {f.options.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
                     ))}
                   </select>
                 )}
-                {f.type === "number-unit" && (() => {
-                  const currentUnit = (draft[f.unitKey] as string) ?? f.defaultUnit
-                  const unitDef = f.units.find(u => u.value === currentUnit) ?? f.units[0]
-                  return (
-                    <div className="auto-input-row">
-                      <input
-                        id={`auto-${f.key}`}
-                        type="number"
-                        min={unitDef.min}
-                        max={unitDef.max}
-                        value={(draft[f.key] as number | undefined) ?? ""}
-                        onChange={e => {
-                          const v = e.target.value
-                          setDraft({ ...draft, [f.key]: v === "" ? undefined : parseInt(v, 10) })
-                        }}
-                      />
-                      <div className="auto-unit-toggle" role="group" aria-label="Unit">
-                        {f.units.map(u => (
-                          <button
-                            key={u.value}
-                            type="button"
-                            className={`auto-unit-option${u.value === currentUnit ? " selected" : ""}`}
-                            onClick={() => setDraft({ ...draft, [f.unitKey]: u.value, [f.key]: u.defaultValue })}
-                            aria-pressed={u.value === currentUnit}
-                          >
-                            {u.label}
-                          </button>
-                        ))}
+                {f.type === "number-unit" &&
+                  (() => {
+                    const currentUnit = (draft[f.unitKey] as string) ?? f.defaultUnit
+                    const unitDef = f.units.find(u => u.value === currentUnit) ?? f.units[0]
+                    return (
+                      <div className="auto-input-row">
+                        <input
+                          id={`auto-${f.key}`}
+                          type="number"
+                          min={unitDef.min}
+                          max={unitDef.max}
+                          value={(draft[f.key] as number | undefined) ?? ""}
+                          onChange={e => {
+                            const v = e.target.value
+                            setDraft({ ...draft, [f.key]: v === "" ? undefined : parseInt(v, 10) })
+                          }}
+                        />
+                        <div className="auto-unit-toggle" role="group" aria-label="Unit">
+                          {f.units.map(u => (
+                            <button
+                              key={u.value}
+                              type="button"
+                              className={`auto-unit-option${u.value === currentUnit ? " selected" : ""}`}
+                              onClick={() => setDraft({ ...draft, [f.unitKey]: u.value, [f.key]: u.defaultValue })}
+                              aria-pressed={u.value === currentUnit}
+                            >
+                              {u.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  )
-                })()}
+                    )
+                  })()}
                 {f.help && <div className="auto-field-help">{f.help}</div>}
               </div>
             ))}
@@ -2978,8 +3681,10 @@ const FolderAutomationsPanel: React.FC<{ folderId: number }> = ({ folderId }) =>
           {error && <div className="msg err">{error}</div>}
 
           <div className="auto-form-buttons">
-            <button onClick={() => setAdding(null)} disabled={busy}>Back</button>
-            <button className="primary" onClick={submitAdd} disabled={busy}>
+            <button type="button" onClick={() => setAdding(null)} disabled={busy}>
+              Back
+            </button>
+            <button type="button" className="primary" onClick={submitAdd} disabled={busy}>
               {busy ? "Saving…" : "Add automation"}
             </button>
           </div>
@@ -3020,10 +3725,30 @@ const FolderSettingsModal: React.FC<{
     onSaved()
   }
 
-  const KIND_OPTIONS: Array<{ value: "standard" | "photos" | "screenshots"; label: string; desc: string; icon: React.ReactNode }> = [
-    { value: "standard", label: "Files & folders", desc: "The classic. Anything goes.", icon: <FolderIcon size={20} strokeWidth={1.6} /> },
-    { value: "photos", label: "Photo album", desc: "Show as a clean photo grid with lightbox.", icon: <FileImage size={20} strokeWidth={1.6} /> },
-    { value: "screenshots", label: "Screenshots", desc: "Drop captures here from the menu bar.", icon: <Camera size={20} strokeWidth={1.6} /> },
+  const KIND_OPTIONS: Array<{
+    value: "standard" | "photos" | "screenshots"
+    label: string
+    desc: string
+    icon: React.ReactNode
+  }> = [
+    {
+      value: "standard",
+      label: "Files & folders",
+      desc: "The classic. Anything goes.",
+      icon: <FolderIcon size={20} strokeWidth={1.6} />,
+    },
+    {
+      value: "photos",
+      label: "Photo album",
+      desc: "Show as a clean photo grid with lightbox.",
+      icon: <FileImage size={20} strokeWidth={1.6} />,
+    },
+    {
+      value: "screenshots",
+      label: "Screenshots",
+      desc: "Drop captures here from the menu bar.",
+      icon: <Camera size={20} strokeWidth={1.6} />,
+    },
   ]
 
   return (
@@ -3055,17 +3780,19 @@ const FolderSettingsModal: React.FC<{
         <section className="settings-section">
           <div className="settings-section-head">
             <div className="settings-section-title">Who can see this folder?</div>
-            <div className="settings-section-sub">Public folders are visible to anyone with the link, no sign-in needed.</div>
+            <div className="settings-section-sub">
+              Public folders are visible to anyone with the link, no sign-in needed.
+            </div>
           </div>
           <label className="settings-toggle">
-            <input
-              type="checkbox"
-              checked={isPublic}
-              onChange={e => setIsPublic(e.target.checked)}
-            />
-            <span className="settings-toggle-track" aria-hidden="true"><span className="settings-toggle-dot" /></span>
+            <input type="checkbox" checked={isPublic} onChange={e => setIsPublic(e.target.checked)} />
+            <span className="settings-toggle-track" aria-hidden="true">
+              <span className="settings-toggle-dot" />
+            </span>
             <div>
-              <div className="settings-toggle-label">{isPublic ? "Public — anyone with the link" : "Private — only people I share with"}</div>
+              <div className="settings-toggle-label">
+                {isPublic ? "Public — anyone with the link" : "Private — only people I share with"}
+              </div>
               {isPublic && (
                 <div className="settings-toggle-help">Share the link below with anyone you want to give access.</div>
               )}
@@ -3073,8 +3800,13 @@ const FolderSettingsModal: React.FC<{
           </label>
           {isPublic && (
             <div className="settings-link-row">
-              <input className="settings-link-input" value={publicUrl} readOnly onFocus={e => e.currentTarget.select()} />
-              <button onClick={() => navigator.clipboard.writeText(publicUrl)}>
+              <input
+                className="settings-link-input"
+                value={publicUrl}
+                readOnly
+                onFocus={e => e.currentTarget.select()}
+              />
+              <button type="button" onClick={() => navigator.clipboard.writeText(publicUrl)}>
                 <Copy size={14} /> <span>Copy link</span>
               </button>
             </div>
@@ -3089,8 +3821,10 @@ const FolderSettingsModal: React.FC<{
         {error && <div className="msg err">{error}</div>}
       </div>
       <div className="actions">
-        <button onClick={onClose}>Cancel</button>
-        <button className="primary" onClick={save} disabled={!dirty || busy}>
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="button" className="primary" onClick={save} disabled={!dirty || busy}>
           {busy ? "Saving…" : "Save"}
         </button>
       </div>
@@ -3099,7 +3833,13 @@ const FolderSettingsModal: React.FC<{
 }
 
 type OAuthInfo = {
-  client?: { client_id: string; name: string; description: string | null; icon_url: string | null; is_official: boolean }
+  client?: {
+    client_id: string
+    name: string
+    description: string | null
+    icon_url: string | null
+    is_official: boolean
+  }
   scopes?: string[]
   redirect_uri?: string
   state?: string | null
@@ -3124,15 +3864,16 @@ const OAuthConsent: React.FC<{ query: string }> = ({ query }) => {
 
   const params = useMemo(() => {
     const out: Record<string, string> = {}
-    new URLSearchParams(query).forEach((v, k) => { out[k] = v })
+    new URLSearchParams(query).forEach((v, k) => {
+      out[k] = v
+    })
     return out
   }, [query])
 
   const decide = async (approve: boolean) => {
-    setBusy(true); setError(null)
-    const res = approve
-      ? await api.oauthAuthorizeApprove(params)
-      : await api.oauthAuthorizeDeny(params)
+    setBusy(true)
+    setError(null)
+    const res = approve ? await api.oauthAuthorizeApprove(params) : await api.oauthAuthorizeDeny(params)
     setBusy(false)
     if (res.error) {
       setError(res.error_description ?? res.error)
@@ -3147,7 +3888,9 @@ const OAuthConsent: React.FC<{ query: string }> = ({ query }) => {
   if (info.error || !info.client) {
     return (
       <div className="share-page">
-        <div className="file-icon"><AlertTriangle size={64} strokeWidth={1.5} /></div>
+        <div className="file-icon">
+          <AlertTriangle size={64} strokeWidth={1.5} />
+        </div>
         <div className="filename">Authorization failed</div>
         <div className="filemeta">{info.error_description ?? info.error ?? "Unknown error"}</div>
       </div>
@@ -3163,9 +3906,7 @@ const OAuthConsent: React.FC<{ query: string }> = ({ query }) => {
           <strong>{info.client.name}</strong> wants to access your Stohr
         </h2>
         {info.client.description && <div className="oauth-desc">{info.client.description}</div>}
-        {info.client.is_official && (
-          <div className="oauth-official">Official Stohr application</div>
-        )}
+        {info.client.is_official && <div className="oauth-official">Official Stohr application</div>}
 
         <div className="oauth-scopes">
           <div className="oauth-scopes-title">It will be able to:</div>
@@ -3186,8 +3927,10 @@ const OAuthConsent: React.FC<{ query: string }> = ({ query }) => {
         {error && <div className="msg err">{error}</div>}
 
         <div className="oauth-actions">
-          <button onClick={() => decide(false)} disabled={busy}>Deny</button>
-          <button className="primary" onClick={() => decide(true)} disabled={busy}>
+          <button type="button" onClick={() => decide(false)} disabled={busy}>
+            Deny
+          </button>
+          <button type="button" className="primary" onClick={() => decide(true)} disabled={busy}>
             {busy ? "Working…" : "Authorize"}
           </button>
         </div>
@@ -3200,7 +3943,13 @@ const OAuthConsent: React.FC<{ query: string }> = ({ query }) => {
 }
 
 type DeviceInfo = {
-  client?: { client_id: string; name: string; description: string | null; icon_url: string | null; is_official: boolean }
+  client?: {
+    client_id: string
+    name: string
+    description: string | null
+    icon_url: string | null
+    is_official: boolean
+  }
   scopes?: string[]
   user_code?: string
   error?: string
@@ -3222,8 +3971,9 @@ const DevicePair: React.FC<{ query: string }> = ({ query }) => {
   const fetchInfo = async (raw: string) => {
     const trimmed = raw.trim()
     if (!trimmed) return
-    setBusy(true); setLookupErr(null)
-    const res = await api.oauthDeviceInfo(trimmed) as DeviceInfo
+    setBusy(true)
+    setLookupErr(null)
+    const res = (await api.oauthDeviceInfo(trimmed)) as DeviceInfo
     setBusy(false)
     if (res.error) {
       setInfo(null)
@@ -3240,10 +3990,9 @@ const DevicePair: React.FC<{ query: string }> = ({ query }) => {
 
   const decide = async (approve: boolean) => {
     if (!info?.user_code) return
-    setBusy(true); setLookupErr(null)
-    const res = approve
-      ? await api.oauthDeviceApprove(info.user_code)
-      : await api.oauthDeviceDeny(info.user_code)
+    setBusy(true)
+    setLookupErr(null)
+    const res = approve ? await api.oauthDeviceApprove(info.user_code) : await api.oauthDeviceDeny(info.user_code)
     setBusy(false)
     if (res.error) {
       setLookupErr(res.error_description ?? res.error)
@@ -3279,27 +4028,42 @@ const DevicePair: React.FC<{ query: string }> = ({ query }) => {
 
         {!info && (
           <>
-            <div className="oauth-desc">
-              Enter the code shown by the app you're trying to sign in.
-            </div>
+            <div className="oauth-desc">Enter the code shown by the app you're trying to sign in.</div>
             <input
               autoFocus
               placeholder="ABCD-1234"
               value={code}
               onChange={e => setCode(e.target.value.toUpperCase())}
-              onKeyDown={e => { if (e.key === "Enter") void fetchInfo(code) }}
-              style={{ marginTop: 12, textAlign: "center", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 18, letterSpacing: 2 }}
+              onKeyDown={e => {
+                if (e.key === "Enter") void fetchInfo(code)
+              }}
+              style={{
+                marginTop: 12,
+                textAlign: "center",
+                fontFamily: "ui-monospace, Menlo, monospace",
+                fontSize: 18,
+                letterSpacing: 2,
+              }}
             />
-            {lookupErr && <div className="msg err" style={{ marginTop: 10 }}>{lookupErr}</div>}
+            {lookupErr && (
+              <div className="msg err" style={{ marginTop: 10 }}>
+                {lookupErr}
+              </div>
+            )}
             <div className="oauth-actions">
-              <button className="primary" disabled={busy || code.trim().length === 0} onClick={() => fetchInfo(code)}>
+              <button
+                type="button"
+                className="primary"
+                disabled={busy || code.trim().length === 0}
+                onClick={() => fetchInfo(code)}
+              >
                 {busy ? "Looking up…" : "Continue"}
               </button>
             </div>
           </>
         )}
 
-        {info && info.client && (
+        {info?.client && (
           <>
             <div className="oauth-title" style={{ marginTop: 12 }}>
               <strong>{info.client.name}</strong> wants access
@@ -3321,8 +4085,10 @@ const DevicePair: React.FC<{ query: string }> = ({ query }) => {
             )}
             {lookupErr && <div className="msg err">{lookupErr}</div>}
             <div className="oauth-actions">
-              <button onClick={() => decide(false)} disabled={busy}>Deny</button>
-              <button className="primary" onClick={() => decide(true)} disabled={busy}>
+              <button type="button" onClick={() => decide(false)} disabled={busy}>
+                Deny
+              </button>
+              <button type="button" className="primary" onClick={() => decide(true)} disabled={busy}>
                 {busy ? "Working…" : "Authorize"}
               </button>
             </div>
@@ -3338,7 +4104,11 @@ const DevicePair: React.FC<{ query: string }> = ({ query }) => {
 
 const PublicFolderPage: React.FC<{ username: string; folderId: number }> = ({ username, folderId }) => {
   const [data, setData] = useState<
-    | { folder: { id: number; name: string; kind: string }; owner: { username: string; name: string }; files: GalleryFile[] }
+    | {
+        folder: { id: number; name: string; kind: string }
+        owner: { username: string; name: string }
+        files: GalleryFile[]
+      }
     | { error: string }
     | null
   >(null)
@@ -3351,7 +4121,9 @@ const PublicFolderPage: React.FC<{ username: string; folderId: number }> = ({ us
   if ("error" in data) {
     return (
       <div className="share-page">
-        <div className="file-icon"><AlertTriangle size={64} strokeWidth={1.5} /></div>
+        <div className="file-icon">
+          <AlertTriangle size={64} strokeWidth={1.5} />
+        </div>
         <div className="filename">Not found</div>
         <div className="filemeta">This folder isn't public, or doesn't exist.</div>
       </div>
@@ -3413,7 +4185,8 @@ const SharePage: React.FC<{ token: string }> = ({ token }) => {
   }, [content])
 
   const reveal = async () => {
-    setBusy(true); setError(null)
+    setBusy(true)
+    setError(null)
     try {
       const res = await api.fetchShare(token, password || undefined, true)
       if (!res.ok) {
@@ -3455,7 +4228,9 @@ const SharePage: React.FC<{ token: string }> = ({ token }) => {
   if (meta.error) {
     return (
       <div className="share-page">
-        <div className="file-icon"><AlertTriangle size={64} strokeWidth={1.5} /></div>
+        <div className="file-icon">
+          <AlertTriangle size={64} strokeWidth={1.5} />
+        </div>
         <div className="filename">{meta.error}</div>
       </div>
     )
@@ -3472,10 +4247,12 @@ const SharePage: React.FC<{ token: string }> = ({ token }) => {
         </div>
         <div className="public-meta">
           <div className="public-title">{meta.name}</div>
-          <div className="public-owner">{formatBytes(meta.size ?? 0)} • {meta.mime}</div>
+          <div className="public-owner">
+            {formatBytes(meta.size ?? 0)} • {meta.mime}
+          </div>
         </div>
         {unlocked && content && (
-          <button className="primary" onClick={triggerDownload}>
+          <button type="button" className="primary" onClick={triggerDownload}>
             <Download size={14} /> <span>Download</span>
           </button>
         )}
@@ -3485,9 +4262,13 @@ const SharePage: React.FC<{ token: string }> = ({ token }) => {
         <div className="public-content share-viewer">
           <div className="share-gate">
             <div className="share-gate-card">
-              <div className="share-gate-icon"><MimeIcon mime={meta.mime ?? ""} size={48} /></div>
+              <div className="share-gate-icon">
+                <MimeIcon mime={meta.mime ?? ""} size={48} />
+              </div>
               <div className="share-gate-name">{meta.name}</div>
-              <div className="share-gate-meta">{formatBytes(meta.size ?? 0)} • {meta.mime}</div>
+              <div className="share-gate-meta">
+                {formatBytes(meta.size ?? 0)} • {meta.mime}
+              </div>
               {expiresLabel && <div className="share-gate-warn">Expires {expiresLabel}</div>}
               {meta.burn_on_view && (
                 <div className="share-gate-burn">
@@ -3501,14 +4282,25 @@ const SharePage: React.FC<{ token: string }> = ({ token }) => {
                   placeholder="Password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") reveal() }}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") reveal()
+                  }}
                   style={{ marginTop: 12 }}
                 />
               )}
-              {error && <div className="msg err" style={{ marginTop: 10 }}>{error}</div>}
+              {error && (
+                <div className="msg err" style={{ marginTop: 10 }}>
+                  {error}
+                </div>
+              )}
               <div className="actions" style={{ marginTop: 14 }}>
-                <button className="primary" disabled={busy || (!!meta.password_required && !password)} onClick={reveal}>
-                  {busy ? "Loading…" : (meta.burn_on_view ? "Open & destroy link" : "Open")}
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={busy || (!!meta.password_required && !password)}
+                  onClick={reveal}
+                >
+                  {busy ? "Loading…" : meta.burn_on_view ? "Open & destroy link" : "Open"}
                 </button>
               </div>
             </div>
@@ -3522,7 +4314,9 @@ const SharePage: React.FC<{ token: string }> = ({ token }) => {
           {kind === "video" && <video className="share-media" src={content.blobUrl} controls />}
           {kind === "audio" && (
             <div className="share-audio">
-              <div className="preview-audio-icon"><Music size={72} strokeWidth={1.25} /></div>
+              <div className="preview-audio-icon">
+                <Music size={72} strokeWidth={1.25} />
+              </div>
               <audio src={content.blobUrl} controls />
             </div>
           )}
@@ -3530,9 +4324,11 @@ const SharePage: React.FC<{ token: string }> = ({ token }) => {
           {kind === "text" && <ShareText blobUrl={content.blobUrl} />}
           {kind === "other" && (
             <div className="empty">
-              <div className="big"><MimeIcon mime={meta.mime ?? ""} size={64} /></div>
+              <div className="big">
+                <MimeIcon mime={meta.mime ?? ""} size={64} />
+              </div>
               <div>No inline preview for this file type</div>
-              <button className="primary" onClick={triggerDownload} style={{ marginTop: 16 }}>
+              <button type="button" className="primary" onClick={triggerDownload} style={{ marginTop: 16 }}>
                 Download {meta.name}
               </button>
             </div>
@@ -3548,12 +4344,20 @@ const ShareText: React.FC<{ blobUrl: string }> = ({ blobUrl }) => {
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     let aborted = false
-    fetch(blobUrl).then(r => {
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      return r.text()
-    }).then(t => { if (!aborted) setText(t) })
-      .catch(e => { if (!aborted) setError(e.message) })
-    return () => { aborted = true }
+    fetch(blobUrl)
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.text()
+      })
+      .then(t => {
+        if (!aborted) setText(t)
+      })
+      .catch(e => {
+        if (!aborted) setError(e.message)
+      })
+    return () => {
+      aborted = true
+    }
   }, [blobUrl])
   if (error) return <div className="empty">Could not load: {error}</div>
   if (text === null) return <div className="empty">Loading…</div>
@@ -3576,8 +4380,16 @@ const TRIGGER_LABELS: Record<api.ActionEventName, string> = {
 }
 
 const ALL_TRIGGERS: api.ActionEventName[] = [
-  "file.created", "file.moved.in", "file.updated", "file.deleted", "file.moved.out",
-  "folder.created", "folder.moved.in", "folder.updated", "folder.deleted", "folder.moved.out",
+  "file.created",
+  "file.moved.in",
+  "file.updated",
+  "file.deleted",
+  "file.moved.out",
+  "folder.created",
+  "folder.moved.in",
+  "folder.updated",
+  "folder.deleted",
+  "folder.moved.out",
 ]
 
 type RegistryAction = {
@@ -3599,13 +4411,16 @@ const ActionsListView: React.FC = () => {
     const reg = await jsonFetch("/api/actions/registry")
     setRegistry(reg.actions ?? [])
   }
-  useEffect(() => { void load() }, [])
+  useEffect(() => {
+    void load()
+  }, [])
 
   const builtins = registry.filter(r => r.is_builtin)
   const userActions = registry.filter(r => !r.is_builtin)
 
   const cloneBuiltin = async (slug: string) => {
-    setBusy(true); setError("")
+    setBusy(true)
+    setError("")
     const res = await api.cloneBuiltin(slug)
     setBusy(false)
     if (res.error) return setError(res.error)
@@ -3613,7 +4428,8 @@ const ActionsListView: React.FC = () => {
   }
 
   const createBlank = async () => {
-    setBusy(true); setError("")
+    setBusy(true)
+    setError("")
     const res = await api.createUserAction({
       name: "New action",
       description: "",
@@ -3638,14 +4454,18 @@ const ActionsListView: React.FC = () => {
     <div className="main">
       <div className="toolbar">
         <div className="toolbar-actions">
-          <button className="primary" onClick={createBlank} disabled={busy}>
+          <button type="button" className="primary" onClick={createBlank} disabled={busy}>
             <Plus size={14} /> <span>New action</span>
           </button>
         </div>
       </div>
 
       <div className="content">
-        <div className="path-bar"><div className="crumbs"><span className="current">Actions</span></div></div>
+        <div className="path-bar">
+          <div className="crumbs">
+            <span className="current">Actions</span>
+          </div>
+        </div>
 
         {error && <div className="msg err">{error}</div>}
 
@@ -3660,11 +4480,17 @@ const ActionsListView: React.FC = () => {
             {builtins.length === 0 && <div className="actions-empty">No built-in actions.</div>}
             {builtins.map(a => (
               <div key={a.slug} className="action-tile builtin">
-                <div className="action-tile-icon"><Zap size={20} strokeWidth={1.6} /></div>
-                <div className="action-tile-name">{a.name} <span className="action-tile-badge">Built-in</span></div>
+                <div className="action-tile-icon">
+                  <Zap size={20} strokeWidth={1.6} />
+                </div>
+                <div className="action-tile-name">
+                  {a.name} <span className="action-tile-badge">Built-in</span>
+                </div>
                 <div className="action-tile-desc">{a.description}</div>
                 <div className="action-tile-buttons">
-                  <button onClick={() => cloneBuiltin(a.slug)} disabled={busy}>Save a copy</button>
+                  <button type="button" onClick={() => cloneBuiltin(a.slug)} disabled={busy}>
+                    Save a copy
+                  </button>
                 </div>
               </div>
             ))}
@@ -3686,15 +4512,24 @@ const ActionsListView: React.FC = () => {
             )}
             {userActions.map(a => (
               <div key={a.slug} className="action-tile">
-                <div className="action-tile-icon"><Zap size={20} strokeWidth={1.6} /></div>
+                <div className="action-tile-icon">
+                  <Zap size={20} strokeWidth={1.6} />
+                </div>
                 <div className="action-tile-name">{a.name}</div>
                 {a.description && <div className="action-tile-desc">{a.description}</div>}
                 {a.forked_from && <div className="action-tile-sub">Based on {a.forked_from}</div>}
                 <div className="action-tile-buttons">
-                  <button onClick={() => navigate(`/app/actions/${(a as any).id ?? Number(a.slug.replace(/^u\//, ""))}/edit`)}>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/app/actions/${(a as any).id ?? Number(a.slug.replace(/^u\//, ""))}/edit`)}
+                  >
                     <Edit3 size={13} /> <span>Edit</span>
                   </button>
-                  <button className="danger" onClick={() => remove((a as any).id ?? Number(a.slug.replace(/^u\//, "")), a.name)}>
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => remove((a as any).id ?? Number(a.slug.replace(/^u\//, "")), a.name)}
+                  >
                     Remove
                   </button>
                 </div>
@@ -3717,11 +4552,11 @@ const ActionEditView: React.FC<{ id: number }> = ({ id }) => {
 
   useEffect(() => {
     void (async () => {
-      const [a, p] = await Promise.all([
-        api.getUserAction(id),
-        api.listPrimitives(),
-      ])
-      if ((a as any).error) { setError((a as any).error); return }
+      const [a, p] = await Promise.all([api.getUserAction(id), api.listPrimitives()])
+      if ((a as any).error) {
+        setError((a as any).error)
+        return
+      }
       setDraft(a as api.UserAction)
       setPrimitives(p.primitives ?? [])
     })()
@@ -3735,7 +4570,7 @@ const ActionEditView: React.FC<{ id: number }> = ({ id }) => {
 
   const updateStep = (i: number, config: Record<string, unknown>) => {
     if (!draft) return
-    const steps = draft.steps.map((s, idx) => idx === i ? { ...s, config } : s)
+    const steps = draft.steps.map((s, idx) => (idx === i ? { ...s, config } : s))
     update({ steps })
   }
 
@@ -3776,7 +4611,8 @@ const ActionEditView: React.FC<{ id: number }> = ({ id }) => {
 
   const save = async () => {
     if (!draft) return
-    setBusy(true); setError("")
+    setBusy(true)
+    setError("")
     const res = await api.updateUserAction(draft.id, {
       name: draft.name,
       description: draft.description,
@@ -3809,8 +4645,10 @@ const ActionEditView: React.FC<{ id: number }> = ({ id }) => {
     <div className="main">
       <div className="toolbar">
         <div className="toolbar-actions">
-          <button onClick={() => navigate("/app/actions")}>← Back</button>
-          <button className="primary" onClick={save} disabled={!dirty || busy}>
+          <button type="button" onClick={() => navigate("/app/actions")}>
+            ← Back
+          </button>
+          <button type="button" className="primary" onClick={save} disabled={!dirty || busy}>
             {busy ? "Saving…" : "Save"}
           </button>
         </div>
@@ -3819,8 +4657,12 @@ const ActionEditView: React.FC<{ id: number }> = ({ id }) => {
       <div className="content">
         <div className="path-bar">
           <div className="crumbs">
-            <span className="crumb" onClick={() => navigate("/app/actions")}>Actions</span>
-            <span className="sep"><ChevronRight size={14} /></span>
+            <span className="crumb" onClick={() => navigate("/app/actions")}>
+              Actions
+            </span>
+            <span className="sep">
+              <ChevronRight size={14} />
+            </span>
             <span className="current">{draft.name}</span>
           </div>
         </div>
@@ -3829,11 +4671,7 @@ const ActionEditView: React.FC<{ id: number }> = ({ id }) => {
           <section className="action-edit-section">
             <label className="action-edit-field">
               <span>Name</span>
-              <input
-                type="text"
-                value={draft.name}
-                onChange={e => update({ name: e.target.value })}
-              />
+              <input type="text" value={draft.name} onChange={e => update({ name: e.target.value })} />
             </label>
             <label className="action-edit-field">
               <span>Description</span>
@@ -3866,11 +4704,11 @@ const ActionEditView: React.FC<{ id: number }> = ({ id }) => {
 
           <section className="action-edit-section">
             <div className="action-edit-section-title">Steps to run, in order</div>
-            <div className="action-edit-section-sub">Each step happens to the file in turn. Filters can stop the chain.</div>
+            <div className="action-edit-section-sub">
+              Each step happens to the file in turn. Filters can stop the chain.
+            </div>
 
-            {draft.steps.length === 0 && !picking && (
-              <div className="actions-empty">No steps yet. Add one below.</div>
-            )}
+            {draft.steps.length === 0 && !picking && <div className="actions-empty">No steps yet. Add one below.</div>}
 
             {draft.steps.map((step, i) => {
               const prim = primitives.find(p => p.kind === step.kind)
@@ -3882,18 +4720,23 @@ const ActionEditView: React.FC<{ id: number }> = ({ id }) => {
                       <div className="step-card-cat">{prim?.category ?? "step"}</div>
                     </div>
                     <div className="step-card-buttons">
-                      <button onClick={() => moveStep(i, -1)} disabled={i === 0} title="Move up">↑</button>
-                      <button onClick={() => moveStep(i, 1)} disabled={i === draft.steps.length - 1} title="Move down">↓</button>
-                      <button className="danger" onClick={() => removeStep(i)} title="Remove">×</button>
+                      <button type="button" onClick={() => moveStep(i, -1)} disabled={i === 0} title="Move up">
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveStep(i, 1)}
+                        disabled={i === draft.steps.length - 1}
+                        title="Move down"
+                      >
+                        ↓
+                      </button>
+                      <button type="button" className="danger" onClick={() => removeStep(i)} title="Remove">
+                        ×
+                      </button>
                     </div>
                   </div>
-                  {prim && (
-                    <PrimitiveConfigForm
-                      prim={prim}
-                      value={step.config}
-                      onChange={cfg => updateStep(i, cfg)}
-                    />
-                  )}
+                  {prim && <PrimitiveConfigForm prim={prim} value={step.config} onChange={cfg => updateStep(i, cfg)} />}
                 </div>
               )
             })}
@@ -3902,24 +4745,29 @@ const ActionEditView: React.FC<{ id: number }> = ({ id }) => {
               <div className="step-picker">
                 <div className="step-picker-head">
                   <div className="step-picker-title">Add a step</div>
-                  <button onClick={() => setPicking(false)}>Cancel</button>
+                  <button type="button" onClick={() => setPicking(false)}>
+                    Cancel
+                  </button>
                 </div>
-                {(["filter", "transform", "route"] as const).map(cat => groups[cat].length > 0 && (
-                  <div key={cat} className="step-picker-group">
-                    <div className="step-picker-group-title">{cat}</div>
-                    <div className="step-picker-grid">
-                      {groups[cat].map(p => (
-                        <button key={p.kind} type="button" className="step-picker-card" onClick={() => addStep(p)}>
-                          <div className="step-picker-card-name">{p.name}</div>
-                          <div className="step-picker-card-desc">{p.description}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+                {(["filter", "transform", "route"] as const).map(
+                  cat =>
+                    groups[cat].length > 0 && (
+                      <div key={cat} className="step-picker-group">
+                        <div className="step-picker-group-title">{cat}</div>
+                        <div className="step-picker-grid">
+                          {groups[cat].map(p => (
+                            <button key={p.kind} type="button" className="step-picker-card" onClick={() => addStep(p)}>
+                              <div className="step-picker-card-name">{p.name}</div>
+                              <div className="step-picker-card-desc">{p.description}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ),
+                )}
               </div>
             ) : (
-              <button className="step-add" onClick={() => setPicking(true)}>
+              <button type="button" className="step-add" onClick={() => setPicking(true)}>
                 <Plus size={14} /> <span>Add step</span>
               </button>
             )}
@@ -3954,10 +4802,17 @@ const PrimitiveConfigForm: React.FC<{
         if (Array.isArray(prop.enum) && prop.type === "string") {
           return (
             <label key={key} className="step-config-field">
-              <span>{label}{isRequired && <em className="req"> *</em>}</span>
+              <span>
+                {label}
+                {isRequired && <em className="req"> *</em>}
+              </span>
               <select value={(val as string) ?? ""} onChange={e => onChange({ ...value, [key]: e.target.value })}>
                 {!isRequired && !prop.default && <option value="">— choose —</option>}
-                {prop.enum.map((opt: string) => <option key={opt} value={opt}>{opt}</option>)}
+                {prop.enum.map((opt: string) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
               </select>
               {help && <span className="step-config-help">{help}</span>}
             </label>
@@ -3966,7 +4821,10 @@ const PrimitiveConfigForm: React.FC<{
         if (prop.type === "integer" || prop.type === "number") {
           return (
             <label key={key} className="step-config-field">
-              <span>{label}{isRequired && <em className="req"> *</em>}</span>
+              <span>
+                {label}
+                {isRequired && <em className="req"> *</em>}
+              </span>
               <input
                 type="number"
                 min={prop.minimum}
@@ -3974,7 +4832,10 @@ const PrimitiveConfigForm: React.FC<{
                 value={val === undefined || val === null ? "" : String(val)}
                 onChange={e => {
                   const v = e.target.value
-                  onChange({ ...value, [key]: v === "" ? undefined : (prop.type === "integer" ? parseInt(v, 10) : parseFloat(v)) })
+                  onChange({
+                    ...value,
+                    [key]: v === "" ? undefined : prop.type === "integer" ? parseInt(v, 10) : parseFloat(v),
+                  })
                 }}
               />
               {help && <span className="step-config-help">{help}</span>}
@@ -3985,17 +4846,23 @@ const PrimitiveConfigForm: React.FC<{
           return (
             <label key={key} className="step-config-field step-config-row">
               <input type="checkbox" checked={!!val} onChange={e => onChange({ ...value, [key]: e.target.checked })} />
-              <span>{label}{isRequired && <em className="req"> *</em>}</span>
+              <span>
+                {label}
+                {isRequired && <em className="req"> *</em>}
+              </span>
               {help && <span className="step-config-help">{help}</span>}
             </label>
           )
         }
         if (prop.type === "array" && prop.items?.enum) {
           const arr = Array.isArray(val) ? (val as string[]) : []
-          const items = (prop.items.enum as string[])
+          const items = prop.items.enum as string[]
           return (
             <div key={key} className="step-config-field">
-              <span>{label}{isRequired && <em className="req"> *</em>}</span>
+              <span>
+                {label}
+                {isRequired && <em className="req"> *</em>}
+              </span>
               <div className="step-config-chips">
                 {items.map(item => {
                   const on = arr.includes(item)
@@ -4017,7 +4884,10 @@ const PrimitiveConfigForm: React.FC<{
         }
         return (
           <label key={key} className="step-config-field">
-            <span>{label}{isRequired && <em className="req"> *</em>}</span>
+            <span>
+              {label}
+              {isRequired && <em className="req"> *</em>}
+            </span>
             <input
               type="text"
               value={(val as string) ?? ""}
@@ -4042,15 +4912,24 @@ const SIDEBAR_COLLAPSED_KEY = "stohr_sidebar_collapsed"
 
 const summarizeNotification = (n: api.NotificationRow): string => {
   switch (n.kind) {
-    case "comment.created": return "New comment"
-    case "comment.reply": return "New reply"
-    case "collab.invited": return n.payload?.role ? `Shared with you (${n.payload.role})` : "Shared with you"
-    case "share.created": return "Public link created"
-    case "file.added": return "File added"
-    case "file.changed": return "File updated"
-    case "file.moved": return "File moved"
-    case "folder.added": return "Folder added"
-    default: return n.kind
+    case "comment.created":
+      return "New comment"
+    case "comment.reply":
+      return "New reply"
+    case "collab.invited":
+      return n.payload?.role ? `Shared with you (${n.payload.role})` : "Shared with you"
+    case "share.created":
+      return "Public link created"
+    case "file.added":
+      return "File added"
+    case "file.changed":
+      return "File updated"
+    case "file.moved":
+      return "File moved"
+    case "folder.added":
+      return "Folder added"
+    default:
+      return n.kind
   }
 }
 
@@ -4076,18 +4955,20 @@ const NotificationsView: React.FC<{ onChange: () => void }> = ({ onChange }) => 
       setLoading(false)
     }
   }
-  useEffect(() => { refresh() }, [filter])
+  useEffect(() => {
+    refresh()
+  }, [filter])
 
   const markRead = async (n: api.NotificationRow) => {
     if (n.read_at) return
     await api.markNotificationRead(n.id)
-    setItems(prev => prev.map(x => x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x))
+    setItems(prev => prev.map(x => (x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x)))
     setUnread(u => Math.max(0, u - 1))
     onChange()
   }
   const markAll = async () => {
     await api.markAllNotificationsRead()
-    setItems(prev => prev.map(x => x.read_at ? x : { ...x, read_at: new Date().toISOString() }))
+    setItems(prev => prev.map(x => (x.read_at ? x : { ...x, read_at: new Date().toISOString() })))
     setUnread(0)
     onChange()
   }
@@ -4103,11 +4984,21 @@ const NotificationsView: React.FC<{ onChange: () => void }> = ({ onChange }) => 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <h2 style={{ margin: 0 }}>Notifications</h2>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => setFilter("all")} className={filter === "all" ? "primary" : undefined}>All</button>
-          <button onClick={() => setFilter("unread")} className={filter === "unread" ? "primary" : undefined}>
+          <button type="button" onClick={() => setFilter("all")} className={filter === "all" ? "primary" : undefined}>
+            All
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilter("unread")}
+            className={filter === "unread" ? "primary" : undefined}
+          >
             Unread{unread > 0 ? ` (${unread})` : ""}
           </button>
-          {unread > 0 && <button onClick={markAll}>Mark all read</button>}
+          {unread > 0 && (
+            <button type="button" onClick={markAll}>
+              Mark all read
+            </button>
+          )}
         </div>
       </div>
       {loading && items.length === 0 ? (
@@ -4124,8 +5015,11 @@ const NotificationsView: React.FC<{ onChange: () => void }> = ({ onChange }) => 
               <div
                 key={n.id}
                 style={{
-                  display: "flex", alignItems: "center", padding: "10px 12px",
-                  borderRadius: 6, marginBottom: 4,
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "10px 12px",
+                  borderRadius: 6,
+                  marginBottom: 4,
                   background: n.read_at ? "transparent" : "var(--accent-bg)",
                   cursor: href ? "pointer" : "default",
                 }}
@@ -4134,15 +5028,21 @@ const NotificationsView: React.FC<{ onChange: () => void }> = ({ onChange }) => 
                   if (href) navigate(href)
                 }}
               >
-                <Bell size={16} strokeWidth={1.75} style={{ marginRight: 12, color: n.read_at ? "var(--muted)" : "var(--brand)" }} />
+                <Bell
+                  size={16}
+                  strokeWidth={1.75}
+                  style={{ marginRight: 12, color: n.read_at ? "var(--muted)" : "var(--brand)" }}
+                />
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 14 }}>{summarizeNotification(n)}</div>
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                    {new Date(n.created_at).toLocaleString()}
-                  </div>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>{new Date(n.created_at).toLocaleString()}</div>
                 </div>
                 <button
-                  onClick={e => { e.stopPropagation(); remove(n) }}
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation()
+                    remove(n)
+                  }}
                   style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}
                   aria-label="Dismiss"
                 >
@@ -4177,10 +5077,14 @@ const MessagesView: React.FC<{ onChange: () => void }> = ({ onChange }) => {
     try {
       const data = await api.listMessages(box)
       setItems(Array.isArray(data.messages) ? data.messages : [])
-    } finally { setLoading(false) }
+    } finally {
+      setLoading(false)
+    }
     onChange()
   }
-  useEffect(() => { refresh() }, [box])
+  useEffect(() => {
+    refresh()
+  }, [box])
 
   const send = async () => {
     setComposeErr("")
@@ -4193,16 +5097,21 @@ const MessagesView: React.FC<{ onChange: () => void }> = ({ onChange }) => {
       ? { email: to, subject: composeSubject.trim(), body: composeBody.trim() }
       : { username: to.toLowerCase(), subject: composeSubject.trim(), body: composeBody.trim() }
     const res = await api.sendMessage(input)
-    if ((res as any).error) { setComposeErr((res as any).error); return }
+    if ((res as any).error) {
+      setComposeErr((res as any).error)
+      return
+    }
     setComposing(false)
-    setComposeTo(""); setComposeSubject(""); setComposeBody("")
+    setComposeTo("")
+    setComposeSubject("")
+    setComposeBody("")
     if (box === "sent") refresh()
   }
 
   const markRead = async (m: api.Message) => {
     if (m.read_at) return
     await api.markMessageRead(m.id)
-    setItems(prev => prev.map(x => x.id === m.id ? { ...x, read_at: new Date().toISOString() } : x))
+    setItems(prev => prev.map(x => (x.id === m.id ? { ...x, read_at: new Date().toISOString() } : x)))
     onChange()
   }
   const archive = async (m: api.Message) => {
@@ -4224,10 +5133,22 @@ const MessagesView: React.FC<{ onChange: () => void }> = ({ onChange }) => {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <h2 style={{ margin: 0 }}>Messages</h2>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => setBox("inbox")} className={box === "inbox" ? "primary" : undefined}>Inbox</button>
-          <button onClick={() => setBox("sent")} className={box === "sent" ? "primary" : undefined}>Sent</button>
-          <button onClick={() => setBox("archived")} className={box === "archived" ? "primary" : undefined}>Archived</button>
-          <button onClick={() => setComposing(true)}><Plus size={14} strokeWidth={1.75} /> New message</button>
+          <button type="button" onClick={() => setBox("inbox")} className={box === "inbox" ? "primary" : undefined}>
+            Inbox
+          </button>
+          <button type="button" onClick={() => setBox("sent")} className={box === "sent" ? "primary" : undefined}>
+            Sent
+          </button>
+          <button
+            type="button"
+            onClick={() => setBox("archived")}
+            className={box === "archived" ? "primary" : undefined}
+          >
+            Archived
+          </button>
+          <button type="button" onClick={() => setComposing(true)}>
+            <Plus size={14} strokeWidth={1.75} /> New message
+          </button>
         </div>
       </div>
       {loading ? (
@@ -4240,39 +5161,92 @@ const MessagesView: React.FC<{ onChange: () => void }> = ({ onChange }) => {
         <div>
           {items.map(m => {
             const unread = !m.read_at && box === "inbox"
-            const partyLabel = box === "sent"
-              ? `to @${m.to.username ?? "?"}`
-              : `from ${formatSender(m)}`
+            const partyLabel = box === "sent" ? `to @${m.to.username ?? "?"}` : `from ${formatSender(m)}`
             return (
               <div
                 key={m.id}
                 style={{
-                  padding: "10px 12px", borderRadius: 6, marginBottom: 4,
-                  display: "flex", alignItems: "center",
+                  padding: "10px 12px",
+                  borderRadius: 6,
+                  marginBottom: 4,
+                  display: "flex",
+                  alignItems: "center",
                   background: unread ? "var(--accent-bg)" : "transparent",
                   cursor: "pointer",
                 }}
-                onClick={() => { markRead(m); navigate(`/app/messages/thread/${m.thread_id}`) }}
+                onClick={() => {
+                  markRead(m)
+                  navigate(`/app/messages/thread/${m.thread_id}`)
+                }}
               >
-                <Mail size={16} strokeWidth={1.75} style={{ marginRight: 12, color: unread ? "var(--brand)" : "var(--muted)" }} />
+                <Mail
+                  size={16}
+                  strokeWidth={1.75}
+                  style={{ marginRight: 12, color: unread ? "var(--brand)" : "var(--muted)" }}
+                />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: unread ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <div
+                    style={{
+                      fontWeight: unread ? 600 : 400,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
                     {m.subject}
                   </div>
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>{partyLabel} · {new Date(m.created_at).toLocaleString()}</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                    {partyLabel} · {new Date(m.created_at).toLocaleString()}
+                  </div>
                 </div>
                 {box === "inbox" && (
-                  <button onClick={e => { e.stopPropagation(); archive(m) }} title="Archive" style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer", marginRight: 4 }}>
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation()
+                      archive(m)
+                    }}
+                    title="Archive"
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "var(--muted)",
+                      cursor: "pointer",
+                      marginRight: 4,
+                    }}
+                  >
                     <Inbox size={14} strokeWidth={1.75} />
                   </button>
                 )}
                 {box === "archived" && (
-                  <button onClick={e => { e.stopPropagation(); unarchive(m) }} title="Unarchive" style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer", marginRight: 4 }}>
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation()
+                      unarchive(m)
+                    }}
+                    title="Unarchive"
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "var(--muted)",
+                      cursor: "pointer",
+                      marginRight: 4,
+                    }}
+                  >
                     <ArrowRight size={14} strokeWidth={1.75} />
                   </button>
                 )}
                 {box !== "sent" && (
-                  <button onClick={e => { e.stopPropagation(); remove(m) }} title="Delete" style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}>
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation()
+                      remove(m)
+                    }}
+                    title="Delete"
+                    style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}
+                  >
                     <X size={14} strokeWidth={1.75} />
                   </button>
                 )}
@@ -4285,12 +5259,27 @@ const MessagesView: React.FC<{ onChange: () => void }> = ({ onChange }) => {
       {composing && (
         <Modal title="New message" onClose={() => setComposing(false)}>
           {composeErr && <div className="msg err">{composeErr}</div>}
-          <input placeholder="To (username or email)" value={composeTo} onChange={e => setComposeTo(e.target.value)} autoFocus />
+          <input
+            placeholder="To (username or email)"
+            value={composeTo}
+            onChange={e => setComposeTo(e.target.value)}
+            autoFocus
+          />
           <input placeholder="Subject" value={composeSubject} onChange={e => setComposeSubject(e.target.value)} />
-          <textarea placeholder="Message" rows={8} value={composeBody} onChange={e => setComposeBody(e.target.value)} style={{ width: "100%", boxSizing: "border-box" }} />
+          <textarea
+            placeholder="Message"
+            rows={8}
+            value={composeBody}
+            onChange={e => setComposeBody(e.target.value)}
+            style={{ width: "100%", boxSizing: "border-box" }}
+          />
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button onClick={() => setComposing(false)}>Cancel</button>
-            <button className="primary" onClick={send}>Send</button>
+            <button type="button" onClick={() => setComposing(false)}>
+              Cancel
+            </button>
+            <button type="button" className="primary" onClick={send}>
+              Send
+            </button>
           </div>
         </Modal>
       )}
@@ -4310,12 +5299,19 @@ const MessageThreadView: React.FC<{ threadId: number; onChange: () => void }> = 
     setErr("")
     try {
       const data = await api.messageThread(threadId)
-      if ((data as any).error) { setErr((data as any).error); return }
+      if ((data as any).error) {
+        setErr((data as any).error)
+        return
+      }
       setItems(Array.isArray(data.messages) ? data.messages : [])
-    } finally { setLoading(false) }
+    } finally {
+      setLoading(false)
+    }
     onChange()
   }
-  useEffect(() => { refresh() }, [threadId])
+  useEffect(() => {
+    refresh()
+  }, [threadId])
 
   const reply = async () => {
     const last = items[items.length - 1]
@@ -4323,29 +5319,66 @@ const MessageThreadView: React.FC<{ threadId: number; onChange: () => void }> = 
     setSending(true)
     try {
       const res = await api.replyMessage(last.id, replyBody.trim())
-      if ((res as any).error) { setErr((res as any).error); return }
+      if ((res as any).error) {
+        setErr((res as any).error)
+        return
+      }
       setReplyBody("")
       await refresh()
-    } finally { setSending(false) }
+    } finally {
+      setSending(false)
+    }
   }
 
   const last = items[items.length - 1]
   const canReply = last && last.kind !== "system" && !!last.from
 
-  if (err) return <div className="main"><div className="content"><div className="msg err">{err}</div></div></div>
-  if (loading && items.length === 0) return <div className="main"><div className="content"><div style={{ color: "var(--muted)" }}>Loading…</div></div></div>
-  if (items.length === 0) return <div className="main"><div className="content"><div style={{ color: "var(--muted)" }}>Thread is empty or unavailable.</div></div></div>
+  if (err)
+    return (
+      <div className="main">
+        <div className="content">
+          <div className="msg err">{err}</div>
+        </div>
+      </div>
+    )
+  if (loading && items.length === 0)
+    return (
+      <div className="main">
+        <div className="content">
+          <div style={{ color: "var(--muted)" }}>Loading…</div>
+        </div>
+      </div>
+    )
+  if (items.length === 0)
+    return (
+      <div className="main">
+        <div className="content">
+          <div style={{ color: "var(--muted)" }}>Thread is empty or unavailable.</div>
+        </div>
+      </div>
+    )
 
   return (
     <div className="main">
       <div className="content">
         <div style={{ marginBottom: 8 }}>
-          <span style={{ color: "var(--muted)", cursor: "pointer" }} onClick={() => navigate("/app/messages")}>← Messages</span>
+          <span style={{ color: "var(--muted)", cursor: "pointer" }} onClick={() => navigate("/app/messages")}>
+            ← Messages
+          </span>
         </div>
         <h2 style={{ margin: "0 0 16px" }}>{items[0]!.subject}</h2>
         <div>
           {items.map(m => (
-            <div key={m.id} style={{ padding: 12, borderRadius: 6, marginBottom: 8, background: "var(--panel-elev)", border: "1px solid var(--border)" }}>
+            <div
+              key={m.id}
+              style={{
+                padding: 12,
+                borderRadius: 6,
+                marginBottom: 8,
+                background: "var(--panel-elev)",
+                border: "1px solid var(--border)",
+              }}
+            >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                 <strong>{formatSender(m)}</strong>
                 <span style={{ fontSize: 12, color: "var(--muted)" }}>{new Date(m.created_at).toLocaleString()}</span>
@@ -4356,8 +5389,16 @@ const MessageThreadView: React.FC<{ threadId: number; onChange: () => void }> = 
         </div>
         {canReply ? (
           <div style={{ marginTop: 16 }}>
-            <textarea placeholder="Reply…" rows={4} value={replyBody} onChange={e => setReplyBody(e.target.value)} style={{ width: "100%", boxSizing: "border-box" }} />
-            <button className="primary" onClick={reply} disabled={sending || !replyBody.trim()}>{sending ? "Sending…" : "Reply"}</button>
+            <textarea
+              placeholder="Reply…"
+              rows={4}
+              value={replyBody}
+              onChange={e => setReplyBody(e.target.value)}
+              style={{ width: "100%", boxSizing: "border-box" }}
+            />
+            <button type="button" className="primary" onClick={reply} disabled={sending || !replyBody.trim()}>
+              {sending ? "Sending…" : "Reply"}
+            </button>
           </div>
         ) : (
           <div style={{ marginTop: 16, color: "var(--muted)", fontSize: 13 }}>Cannot reply to a system message.</div>
@@ -4380,17 +5421,26 @@ const SpacesListView: React.FC = () => {
     try {
       const data = await api.listSpaces()
       setSpaces(Array.isArray(data.spaces) ? data.spaces : [])
-    } finally { setLoading(false) }
+    } finally {
+      setLoading(false)
+    }
   }
-  useEffect(() => { refresh() }, [])
+  useEffect(() => {
+    refresh()
+  }, [])
 
   const create = async () => {
     setErr("")
     const trimmed = name.trim()
     if (!trimmed) return
     const res = await api.createSpace({ name: trimmed, description: description.trim() || undefined })
-    if ((res as any).error) { setErr((res as any).error); return }
-    setName(""); setDescription(""); setCreating(false)
+    if ((res as any).error) {
+      setErr((res as any).error)
+      return
+    }
+    setName("")
+    setDescription("")
+    setCreating(false)
     await refresh()
   }
 
@@ -4398,7 +5448,7 @@ const SpacesListView: React.FC = () => {
     <div className="main">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <h2 style={{ margin: 0 }}>Spaces</h2>
-        <button className="primary" onClick={() => setCreating(true)}>
+        <button type="button" className="primary" onClick={() => setCreating(true)}>
           <Plus size={14} strokeWidth={1.75} /> New space
         </button>
       </div>
@@ -4416,7 +5466,13 @@ const SpacesListView: React.FC = () => {
           {spaces.map(s => (
             <div
               key={s.id}
-              style={{ padding: 16, borderRadius: 8, border: "1px solid var(--border)", cursor: "pointer", background: "var(--panel-elev)" }}
+              style={{
+                padding: 16,
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                cursor: "pointer",
+                background: "var(--panel-elev)",
+              }}
               onClick={() => navigate(`/app/spaces/${s.id}`)}
             >
               <div style={{ fontWeight: 600, marginBottom: 4 }}>
@@ -4438,10 +5494,20 @@ const SpacesListView: React.FC = () => {
         <Modal title="Create a space" onClose={() => setCreating(false)}>
           {err && <div className="msg err">{err}</div>}
           <input placeholder="Space name" value={name} onChange={e => setName(e.target.value)} autoFocus />
-          <textarea placeholder="Description (optional)" rows={3} value={description} onChange={e => setDescription(e.target.value)} style={{ width: "100%", boxSizing: "border-box" }} />
+          <textarea
+            placeholder="Description (optional)"
+            rows={3}
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            style={{ width: "100%", boxSizing: "border-box" }}
+          />
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button onClick={() => setCreating(false)}>Cancel</button>
-            <button className="primary" onClick={create} disabled={!name.trim()}>Create</button>
+            <button type="button" onClick={() => setCreating(false)}>
+              Cancel
+            </button>
+            <button type="button" className="primary" onClick={create} disabled={!name.trim()}>
+              Create
+            </button>
           </div>
         </Modal>
       )}
@@ -4464,12 +5530,11 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
   const refresh = async () => {
     setErr("")
     try {
-      const [s, f, m] = await Promise.all([
-        api.getSpace(id),
-        api.listSpaceFolders(id),
-        api.listSpaceMembers(id),
-      ])
-      if ((s as any).error) { setErr((s as any).error); return }
+      const [s, f, m] = await Promise.all([api.getSpace(id), api.listSpaceFolders(id), api.listSpaceMembers(id)])
+      if ((s as any).error) {
+        setErr((s as any).error)
+        return
+      }
       setSpace(s)
       setFolders(Array.isArray(f.folders) ? f.folders : [])
       setMembers(Array.isArray(m.members) ? m.members : [])
@@ -4477,10 +5542,26 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
       setErr(e?.message ?? "Failed to load space")
     }
   }
-  useEffect(() => { refresh() }, [id])
+  useEffect(() => {
+    refresh()
+  }, [id])
 
-  if (err) return <div className="main"><div className="content"><div className="msg err">{err}</div></div></div>
-  if (!space) return <div className="main"><div className="content"><div style={{ color: "var(--muted)" }}>Loading…</div></div></div>
+  if (err)
+    return (
+      <div className="main">
+        <div className="content">
+          <div className="msg err">{err}</div>
+        </div>
+      </div>
+    )
+  if (!space)
+    return (
+      <div className="main">
+        <div className="content">
+          <div style={{ color: "var(--muted)" }}>Loading…</div>
+        </div>
+      </div>
+    )
 
   const isAdmin = space.my_role === "admin"
   const canEdit = isAdmin || space.my_role === "editor"
@@ -4489,7 +5570,10 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
     const trimmed = newFolderName.trim()
     if (!trimmed) return
     const res = await api.createSpaceFolder(id, trimmed)
-    if ((res as any).error) { setErr((res as any).error); return }
+    if ((res as any).error) {
+      setErr((res as any).error)
+      return
+    }
     setNewFolderName("")
     setCreatingFolder(false)
     await refresh()
@@ -4498,9 +5582,14 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
   const addMember = async () => {
     const ident = memberIdentity.trim()
     if (!ident) return
-    const input = ident.includes("@") ? { email: ident, role: memberRole } : { username: ident.toLowerCase(), role: memberRole }
+    const input = ident.includes("@")
+      ? { email: ident, role: memberRole }
+      : { username: ident.toLowerCase(), role: memberRole }
     const res = await api.addSpaceMember(id, input)
-    if ((res as any).error) { setErr((res as any).error); return }
+    if ((res as any).error) {
+      setErr((res as any).error)
+      return
+    }
     setMemberIdentity("")
     setAddingMember(false)
     await refresh()
@@ -4521,7 +5610,9 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
     <div className="main">
       <div className="content">
         <div style={{ marginBottom: 8 }}>
-          <span style={{ color: "var(--muted)", cursor: "pointer" }} onClick={() => navigate("/app/spaces")}>← Spaces</span>
+          <span style={{ color: "var(--muted)", cursor: "pointer" }} onClick={() => navigate("/app/spaces")}>
+            ← Spaces
+          </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <div>
@@ -4537,13 +5628,33 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
         </div>
         <div style={{ display: "flex", gap: 8, marginBottom: 16, borderBottom: "1px solid var(--border)" }}>
           <button
+            type="button"
             onClick={() => setTab("folders")}
-            style={{ background: "transparent", border: "none", padding: "8px 12px", borderBottom: tab === "folders" ? "2px solid var(--brand)" : "2px solid transparent", cursor: "pointer", color: tab === "folders" ? "var(--brand)" : "var(--text)" }}
-          >Folders</button>
+            style={{
+              background: "transparent",
+              border: "none",
+              padding: "8px 12px",
+              borderBottom: tab === "folders" ? "2px solid var(--brand)" : "2px solid transparent",
+              cursor: "pointer",
+              color: tab === "folders" ? "var(--brand)" : "var(--text)",
+            }}
+          >
+            Folders
+          </button>
           <button
+            type="button"
             onClick={() => setTab("members")}
-            style={{ background: "transparent", border: "none", padding: "8px 12px", borderBottom: tab === "members" ? "2px solid var(--brand)" : "2px solid transparent", cursor: "pointer", color: tab === "members" ? "var(--brand)" : "var(--text)" }}
-          >Members ({members.length})</button>
+            style={{
+              background: "transparent",
+              border: "none",
+              padding: "8px 12px",
+              borderBottom: tab === "members" ? "2px solid var(--brand)" : "2px solid transparent",
+              cursor: "pointer",
+              color: tab === "members" ? "var(--brand)" : "var(--text)",
+            }}
+          >
+            Members ({members.length})
+          </button>
         </div>
 
         {tab === "folders" && (
@@ -4552,12 +5663,30 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
               <div style={{ marginBottom: 12 }}>
                 {creatingFolder ? (
                   <div style={{ display: "flex", gap: 8 }}>
-                    <input autoFocus placeholder="Folder name" value={newFolderName} onChange={e => setNewFolderName(e.target.value)} onKeyDown={e => e.key === "Enter" && createFolder()} />
-                    <button className="primary" onClick={createFolder} disabled={!newFolderName.trim()}>Create</button>
-                    <button onClick={() => { setCreatingFolder(false); setNewFolderName("") }}>Cancel</button>
+                    <input
+                      autoFocus
+                      placeholder="Folder name"
+                      value={newFolderName}
+                      onChange={e => setNewFolderName(e.target.value)}
+                      onKeyDown={e => e.key === "Enter" && createFolder()}
+                    />
+                    <button type="button" className="primary" onClick={createFolder} disabled={!newFolderName.trim()}>
+                      Create
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreatingFolder(false)
+                        setNewFolderName("")
+                      }}
+                    >
+                      Cancel
+                    </button>
                   </div>
                 ) : (
-                  <button onClick={() => setCreatingFolder(true)}><FolderPlus size={14} strokeWidth={1.75} /> New folder</button>
+                  <button type="button" onClick={() => setCreatingFolder(true)}>
+                    <FolderPlus size={14} strokeWidth={1.75} /> New folder
+                  </button>
                 )}
               </div>
             )}
@@ -4568,7 +5697,13 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
                 {folders.map(f => (
                   <div
                     key={f.id}
-                    style={{ padding: "8px 12px", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center" }}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                    }}
                     className="picker-row"
                     onClick={() => navigate(`/app/f/${f.id}`)}
                   >
@@ -4587,40 +5722,78 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
               <div style={{ marginBottom: 12 }}>
                 {addingMember ? (
                   <div style={{ display: "flex", gap: 8 }}>
-                    <input autoFocus placeholder="username or email" value={memberIdentity} onChange={e => setMemberIdentity(e.target.value)} />
+                    <input
+                      autoFocus
+                      placeholder="username or email"
+                      value={memberIdentity}
+                      onChange={e => setMemberIdentity(e.target.value)}
+                    />
                     <select value={memberRole} onChange={e => setMemberRole(e.target.value as api.SpaceRole)}>
                       <option value="viewer">Viewer</option>
                       <option value="editor">Editor</option>
                       <option value="admin">Admin</option>
                     </select>
-                    <button className="primary" onClick={addMember} disabled={!memberIdentity.trim()}>Add</button>
-                    <button onClick={() => { setAddingMember(false); setMemberIdentity("") }}>Cancel</button>
+                    <button type="button" className="primary" onClick={addMember} disabled={!memberIdentity.trim()}>
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddingMember(false)
+                        setMemberIdentity("")
+                      }}
+                    >
+                      Cancel
+                    </button>
                   </div>
                 ) : (
-                  <button onClick={() => setAddingMember(true)}><UserPlus size={14} strokeWidth={1.75} /> Add member</button>
+                  <button type="button" onClick={() => setAddingMember(true)}>
+                    <UserPlus size={14} strokeWidth={1.75} /> Add member
+                  </button>
                 )}
               </div>
             )}
             <div>
               {members.map(m => (
-                <div key={m.id} style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderRadius: 6, marginBottom: 4 }}>
+                <div
+                  key={m.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    padding: "8px 12px",
+                    borderRadius: 6,
+                    marginBottom: 4,
+                  }}
+                >
                   <div style={{ flex: 1 }}>
                     <div>{m.user.name ?? m.user.username}</div>
-                    <div style={{ fontSize: 11, color: "var(--muted)" }}>@{m.user.username} · {m.user.email}</div>
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                      @{m.user.username} · {m.user.email}
+                    </div>
                   </div>
                   {isAdmin && m.user.id !== space.owner_id ? (
                     <>
-                      <select value={m.role} onChange={e => changeRole(m, e.target.value as api.SpaceRole)} style={{ marginRight: 8 }}>
+                      <select
+                        value={m.role}
+                        onChange={e => changeRole(m, e.target.value as api.SpaceRole)}
+                        style={{ marginRight: 8 }}
+                      >
                         <option value="viewer">Viewer</option>
                         <option value="editor">Editor</option>
                         <option value="admin">Admin</option>
                       </select>
-                      <button onClick={() => removeMember(m)} style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}>
+                      <button
+                        type="button"
+                        onClick={() => removeMember(m)}
+                        style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}
+                      >
                         <X size={14} strokeWidth={1.75} />
                       </button>
                     </>
                   ) : (
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>{m.user.id === space.owner_id ? "owner" : m.role}</span>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                      {m.user.id === space.owner_id ? "owner" : m.role}
+                    </span>
                   )}
                 </div>
               ))}
@@ -4635,7 +5808,11 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
 const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, route }) => {
   const [userSnapshot, setUserSnapshot] = useState(api.getUser())
   const [collapsed, setCollapsed] = useState<boolean>(() => {
-    try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1" } catch { return false }
+    try {
+      return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"
+    } catch {
+      return false
+    }
   })
   const [helpOpen, setHelpOpen] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -4643,10 +5820,14 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
 
   // The off-canvas nav drawer closes on any route change (covers nav taps,
   // breadcrumb jumps, and browser back) and on Escape.
-  useEffect(() => { setMobileNavOpen(false) }, [route])
+  useEffect(() => {
+    setMobileNavOpen(false)
+  }, [route])
   useEffect(() => {
     if (!mobileNavOpen) return
-    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setMobileNavOpen(false) }
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileNavOpen(false)
+    }
     document.addEventListener("keydown", onEsc)
     return () => document.removeEventListener("keydown", onEsc)
   }, [mobileNavOpen])
@@ -4657,7 +5838,9 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
       if (!helpRef.current) return
       if (!helpRef.current.contains(e.target as Node)) setHelpOpen(false)
     }
-    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setHelpOpen(false) }
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setHelpOpen(false)
+    }
     document.addEventListener("mousedown", onDocClick)
     document.addEventListener("keydown", onEsc)
     return () => {
@@ -4669,12 +5852,24 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
   const toggleCollapsed = () => {
     setCollapsed(v => {
       const next = !v
-      try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0") } catch {}
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0")
+      } catch {}
       return next
     })
   }
 
-  const activeTab: "files" | "shared" | "links" | "actions" | "trash" | "notifications" | "messages" | "spaces" | "settings" | "admin" = (() => {
+  const activeTab:
+    | "files"
+    | "shared"
+    | "links"
+    | "actions"
+    | "trash"
+    | "notifications"
+    | "messages"
+    | "spaces"
+    | "settings"
+    | "admin" = (() => {
     if (route.kind === "shared") return "shared"
     if (route.kind === "links") return "links"
     if (route.kind === "actions" || route.kind === "actionEdit") return "actions"
@@ -4692,16 +5887,25 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
   useEffect(() => {
     let cancelled = false
     const refresh = () => {
-      api.unreadNotificationCount()
-        .then(r => { if (!cancelled) setUnreadNotif(r.unread) })
+      api
+        .unreadNotificationCount()
+        .then(r => {
+          if (!cancelled) setUnreadNotif(r.unread)
+        })
         .catch(() => {})
-      api.unreadMessageCount()
-        .then(r => { if (!cancelled) setUnreadMsg(r.unread) })
+      api
+        .unreadMessageCount()
+        .then(r => {
+          if (!cancelled) setUnreadMsg(r.unread)
+        })
         .catch(() => {})
     }
     refresh()
     const t = setInterval(refresh, 60_000)
-    return () => { cancelled = true; clearInterval(t) }
+    return () => {
+      cancelled = true
+      clearInterval(t)
+    }
   }, [activeTab])
 
   const initial = (userSnapshot?.name?.[0] ?? userSnapshot?.username?.[0] ?? "?").toUpperCase()
@@ -4716,14 +5920,12 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
       >
         <Menu size={20} strokeWidth={1.75} />
       </button>
-      <div
-        className="sidebar-backdrop"
-        onClick={() => setMobileNavOpen(false)}
-        aria-hidden="true"
-      />
+      <div className="sidebar-backdrop" onClick={() => setMobileNavOpen(false)} aria-hidden="true" />
       <aside className="sidebar">
         <div className="sidebar-head">
-          <div className="brand"><Logo /></div>
+          <div className="brand">
+            <Logo />
+          </div>
           <button
             type="button"
             className="sidebar-toggle"
@@ -4737,50 +5939,119 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
         <div className={`nav${activeTab === "files" ? " active" : ""}`} onClick={() => navigate("/")} title="My Files">
           <FolderOpen size={18} strokeWidth={1.75} /> <span className="nav-label">My Files</span>
         </div>
-        <div className={`nav${activeTab === "shared" ? " active" : ""}`} onClick={() => navigate("/app/shared")} title="Shared with me">
+        <div
+          className={`nav${activeTab === "shared" ? " active" : ""}`}
+          onClick={() => navigate("/app/shared")}
+          title="Shared with me"
+        >
           <Users size={18} strokeWidth={1.75} /> <span className="nav-label">Shared with me</span>
         </div>
-        <div className={`nav${activeTab === "spaces" ? " active" : ""}`} onClick={() => navigate("/app/spaces")} title="Spaces">
+        <div
+          className={`nav${activeTab === "spaces" ? " active" : ""}`}
+          onClick={() => navigate("/app/spaces")}
+          title="Spaces"
+        >
           <Briefcase size={18} strokeWidth={1.75} /> <span className="nav-label">Spaces</span>
         </div>
-        <div className={`nav${activeTab === "links" ? " active" : ""}`} onClick={() => navigate("/app/links")} title="Public links">
+        <div
+          className={`nav${activeTab === "links" ? " active" : ""}`}
+          onClick={() => navigate("/app/links")}
+          title="Public links"
+        >
           <Link2 size={18} strokeWidth={1.75} /> <span className="nav-label">Public links</span>
         </div>
-        <div className={`nav${activeTab === "actions" ? " active" : ""}`} onClick={() => navigate("/app/actions")} title="Actions">
+        <div
+          className={`nav${activeTab === "actions" ? " active" : ""}`}
+          onClick={() => navigate("/app/actions")}
+          title="Actions"
+        >
           <Zap size={18} strokeWidth={1.75} /> <span className="nav-label">Actions</span>
         </div>
-        <div className={`nav${activeTab === "trash" ? " active" : ""}`} onClick={() => navigate("/app/trash")} title="Trash">
+        <div
+          className={`nav${activeTab === "trash" ? " active" : ""}`}
+          onClick={() => navigate("/app/trash")}
+          title="Trash"
+        >
           <Trash2 size={18} strokeWidth={1.75} /> <span className="nav-label">Trash</span>
         </div>
-        <div className={`nav${activeTab === "notifications" ? " active" : ""}`} onClick={() => navigate("/app/notifications")} title="Notifications">
+        <div
+          className={`nav${activeTab === "notifications" ? " active" : ""}`}
+          onClick={() => navigate("/app/notifications")}
+          title="Notifications"
+        >
           <Bell size={18} strokeWidth={1.75} /> <span className="nav-label">Notifications</span>
           {unreadNotif > 0 && (
-            <span style={{ marginLeft: "auto", background: "var(--brand)", color: "white", borderRadius: 10, fontSize: 11, padding: "0 6px", minWidth: 18, textAlign: "center" }}>
+            <span
+              style={{
+                marginLeft: "auto",
+                background: "var(--brand)",
+                color: "white",
+                borderRadius: 10,
+                fontSize: 11,
+                padding: "0 6px",
+                minWidth: 18,
+                textAlign: "center",
+              }}
+            >
               {unreadNotif > 99 ? "99+" : unreadNotif}
             </span>
           )}
         </div>
-        <div className={`nav${activeTab === "messages" ? " active" : ""}`} onClick={() => navigate("/app/messages")} title="Messages">
+        <div
+          className={`nav${activeTab === "messages" ? " active" : ""}`}
+          onClick={() => navigate("/app/messages")}
+          title="Messages"
+        >
           <Mail size={18} strokeWidth={1.75} /> <span className="nav-label">Messages</span>
           {unreadMsg > 0 && (
-            <span style={{ marginLeft: "auto", background: "var(--brand)", color: "white", borderRadius: 10, fontSize: 11, padding: "0 6px", minWidth: 18, textAlign: "center" }}>
+            <span
+              style={{
+                marginLeft: "auto",
+                background: "var(--brand)",
+                color: "white",
+                borderRadius: 10,
+                fontSize: 11,
+                padding: "0 6px",
+                minWidth: 18,
+                textAlign: "center",
+              }}
+            >
               {unreadMsg > 99 ? "99+" : unreadMsg}
             </span>
           )}
         </div>
-        <div className={`nav${activeTab === "settings" ? " active" : ""}`} onClick={() => navigate("/app/settings")} title="Settings">
+        <div
+          className={`nav${activeTab === "settings" ? " active" : ""}`}
+          onClick={() => navigate("/app/settings")}
+          title="Settings"
+        >
           <SettingsIcon size={18} strokeWidth={1.75} /> <span className="nav-label">Settings</span>
         </div>
         {userSnapshot?.is_owner && (
-          <div className={`nav${activeTab === "admin" ? " active" : ""}`} onClick={() => navigate("/app/admin")} title="Admin">
+          <div
+            className={`nav${activeTab === "admin" ? " active" : ""}`}
+            onClick={() => navigate("/app/admin")}
+            title="Admin"
+          >
             <AlertTriangle size={18} strokeWidth={1.75} /> <span className="nav-label">Admin</span>
           </div>
         )}
         <div className="help-wrap" ref={helpRef}>
+          {/* A bare div can't carry aria-haspopup/aria-expanded and can't be
+              reached by keyboard. Kept as a div for styling, but given the
+              button role and key handling that role implies. */}
           <div
             className={`nav${helpOpen ? " active" : ""}`}
             onClick={() => setHelpOpen(v => !v)}
+            onKeyDown={e => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault()
+                setHelpOpen(v => !v)
+              }
+            }}
             title="Help & resources"
+            role="button"
+            tabIndex={0}
             aria-haspopup="menu"
             aria-expanded={helpOpen}
           >
@@ -4816,11 +6087,15 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
           )}
         </div>
         <div className="user-footer">
-          <div className="user-avatar" aria-hidden="true">{initial}</div>
+          <div className="user-avatar" aria-hidden="true">
+            {initial}
+          </div>
           <div className="user-meta">
             <div className="who">{userSnapshot?.name ?? ""}</div>
             <div className="who muted">@{userSnapshot?.username ?? ""}</div>
-            <div className="logout" onClick={onLogout}>Sign out</div>
+            <div className="logout" onClick={onLogout}>
+              Sign out
+            </div>
           </div>
         </div>
       </aside>
@@ -4835,16 +6110,41 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
       {activeTab === "actions" && route.kind === "actions" && <ActionsListView />}
       {activeTab === "actions" && route.kind === "actionEdit" && <ActionEditView id={route.id} />}
       {activeTab === "trash" && <TrashView />}
-      {activeTab === "notifications" && <NotificationsView onChange={() => api.unreadNotificationCount().then(r => setUnreadNotif(r.unread)).catch(() => {})} />}
+      {activeTab === "notifications" && (
+        <NotificationsView
+          onChange={() =>
+            api
+              .unreadNotificationCount()
+              .then(r => setUnreadNotif(r.unread))
+              .catch(() => {})
+          }
+        />
+      )}
       {activeTab === "spaces" && route.kind === "spaces" && <SpacesListView />}
       {activeTab === "spaces" && route.kind === "space" && <SpaceView id={route.id} />}
-      {activeTab === "messages" && route.kind === "messages" && <MessagesView onChange={() => api.unreadMessageCount().then(r => setUnreadMsg(r.unread)).catch(() => {})} />}
-      {activeTab === "messages" && route.kind === "messageThread" && <MessageThreadView threadId={route.threadId} onChange={() => api.unreadMessageCount().then(r => setUnreadMsg(r.unread)).catch(() => {})} />}
-      {activeTab === "settings" && (
-        <Settings
-          onProfileUpdate={() => setUserSnapshot(api.getUser())}
-          onAccountDeleted={onLogout}
+      {activeTab === "messages" && route.kind === "messages" && (
+        <MessagesView
+          onChange={() =>
+            api
+              .unreadMessageCount()
+              .then(r => setUnreadMsg(r.unread))
+              .catch(() => {})
+          }
         />
+      )}
+      {activeTab === "messages" && route.kind === "messageThread" && (
+        <MessageThreadView
+          threadId={route.threadId}
+          onChange={() =>
+            api
+              .unreadMessageCount()
+              .then(r => setUnreadMsg(r.unread))
+              .catch(() => {})
+          }
+        />
+      )}
+      {activeTab === "settings" && (
+        <Settings onProfileUpdate={() => setUserSnapshot(api.getUser())} onAccountDeleted={onLogout} />
       )}
       {activeTab === "admin" && <AdminView />}
     </div>
@@ -4866,7 +6166,9 @@ const UsagePanel: React.FC = () => {
     const data = await api.getMyUsage()
     if (!data.error) setUsage(data)
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   if (!usage) {
     return (
@@ -4888,9 +6190,7 @@ const UsagePanel: React.FC = () => {
           <div>
             <div className="sub-tier">{unlimited ? "No storage cap" : "Storage cap"}</div>
             <div className="sub-status">
-              {unlimited
-                ? "Bounded only by the server's disk."
-                : "Cap set by the instance owner."}
+              {unlimited ? "Bounded only by the server's disk." : "Cap set by the instance owner."}
             </div>
           </div>
           <div className="sub-usage-text">
@@ -4902,13 +6202,22 @@ const UsagePanel: React.FC = () => {
         </div>
         {!unlimited && (
           <div className="sub-bar">
-            <div className="sub-fill" style={{ width: `${pct}%`, background: pct > 90 ? "var(--danger)" : "var(--brand)" }} />
+            <div
+              className="sub-fill"
+              style={{ width: `${pct}%`, background: pct > 90 ? "var(--danger)" : "var(--brand)" }}
+            />
           </div>
         )}
         <div className="sub-breakdown">
-          <span>Active <strong>{formatBytes(usage.active_bytes)}</strong></span>
-          <span>Trash <strong>{formatBytes(usage.trash_bytes)}</strong></span>
-          <span>Versions <strong>{formatBytes(usage.version_bytes)}</strong></span>
+          <span>
+            Active <strong>{formatBytes(usage.active_bytes)}</strong>
+          </span>
+          <span>
+            Trash <strong>{formatBytes(usage.trash_bytes)}</strong>
+          </span>
+          <span>
+            Versions <strong>{formatBytes(usage.version_bytes)}</strong>
+          </span>
         </div>
       </div>
     </section>
@@ -4946,10 +6255,13 @@ const S3KeysSection: React.FC = () => {
     const data = await api.listS3Keys()
     setKeys(Array.isArray(data) ? data : [])
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const create = async () => {
-    setBusy(true); setError("")
+    setBusy(true)
+    setError("")
     const res = await api.createS3Key(newName.trim() || undefined)
     setBusy(false)
     if (res.error) return setError(res.error)
@@ -5002,33 +6314,60 @@ const S3KeysSection: React.FC = () => {
             <label>Access key</label>
             <div className="dev-secret-row">
               <code>{justCreated.access_key}</code>
-              <button onClick={() => navigator.clipboard.writeText(justCreated.access_key)}>Copy</button>
+              <button type="button" onClick={() => navigator.clipboard.writeText(justCreated.access_key)}>
+                Copy
+              </button>
             </div>
             <label>Secret key</label>
             <div className="dev-secret-row">
               <code>{justCreated.secret_key}</code>
-              <button onClick={() => navigator.clipboard.writeText(justCreated.secret_key ?? "")}>Copy</button>
+              <button type="button" onClick={() => navigator.clipboard.writeText(justCreated.secret_key ?? "")}>
+                Copy
+              </button>
             </div>
           </div>
-          <button onClick={() => setJustCreated(null)} style={{ marginTop: 8 }}>I've saved it</button>
+          <button type="button" onClick={() => setJustCreated(null)} style={{ marginTop: 8 }}>
+            I've saved it
+          </button>
         </div>
       )}
 
       {creating && !justCreated && (
         <div className="dev-create">
-          <label>Name <span className="lp-field-opt">(optional, e.g. "laptop")</span></label>
-          <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="What's this key for?" autoFocus />
-          {error && <div className="msg err" style={{ marginTop: 8 }}>{error}</div>}
+          <label>
+            Name <span className="lp-field-opt">(optional, e.g. "laptop")</span>
+          </label>
+          <input
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            placeholder="What's this key for?"
+            autoFocus
+          />
+          {error && (
+            <div className="msg err" style={{ marginTop: 8 }}>
+              {error}
+            </div>
+          )}
           <div className="settings-actions">
-            <button onClick={() => { setCreating(false); setNewName("") }}>Cancel</button>
-            <button className="primary" disabled={busy} onClick={create}>{busy ? "Creating…" : "Create key"}</button>
+            <button
+              type="button"
+              onClick={() => {
+                setCreating(false)
+                setNewName("")
+              }}
+            >
+              Cancel
+            </button>
+            <button type="button" className="primary" disabled={busy} onClick={create}>
+              {busy ? "Creating…" : "Create key"}
+            </button>
           </div>
         </div>
       )}
 
       {!creating && !justCreated && (
         <div className="settings-actions" style={{ justifyContent: "flex-start", marginTop: 12 }}>
-          <button className="primary" onClick={() => setCreating(true)}>
+          <button type="button" className="primary" onClick={() => setCreating(true)}>
             <UserPlus size={14} /> <span>New access key</span>
           </button>
         </div>
@@ -5047,12 +6386,12 @@ const S3KeysSection: React.FC = () => {
                 </div>
                 <div className="dev-row-meta">
                   Created {new Date(k.created_at).toLocaleDateString()}
-                  {k.last_used_at
-                    ? ` · last used ${new Date(k.last_used_at).toLocaleDateString()}`
-                    : " · never used"}
+                  {k.last_used_at ? ` · last used ${new Date(k.last_used_at).toLocaleDateString()}` : " · never used"}
                 </div>
               </div>
-              <button className="danger" onClick={() => revoke(k.id)}>Revoke</button>
+              <button type="button" className="danger" onClick={() => revoke(k.id)}>
+                Revoke
+              </button>
             </div>
           ))}
         </div>
@@ -5074,11 +6413,14 @@ const AppsSection: React.FC = () => {
     const data = await api.listApps()
     setApps(Array.isArray(data) ? data : [])
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const create = async () => {
     if (!newName.trim()) return setError("Name is required")
-    setBusy(true); setError("")
+    setBusy(true)
+    setError("")
     const res = await api.createApp(newName.trim(), newDesc.trim() || undefined)
     setBusy(false)
     if (res.error) return setError(res.error)
@@ -5100,42 +6442,68 @@ const AppsSection: React.FC = () => {
     <div className="devp-section">
       <h4>Apps</h4>
       <div className="devp-section-desc">
-        Personal access tokens for SDKs, mobile apps, and scripts. Use <code>Authorization: Bearer &lt;token&gt;</code> against any API endpoint.
+        Personal access tokens for SDKs, mobile apps, and scripts. Use <code>Authorization: Bearer &lt;token&gt;</code>{" "}
+        against any API endpoint.
       </div>
 
-      {justCreated && justCreated.token && (
+      {justCreated?.token && (
         <div className="msg ok" style={{ marginTop: 16 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>
-            New app token — save it now, it won't be shown again
-          </div>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>New app token — save it now, it won't be shown again</div>
           <div className="dev-secret">
             <label>{justCreated.name}</label>
             <div className="dev-secret-row">
               <code>{justCreated.token}</code>
-              <button onClick={() => navigator.clipboard.writeText(justCreated.token ?? "")}>Copy</button>
+              <button type="button" onClick={() => navigator.clipboard.writeText(justCreated.token ?? "")}>
+                Copy
+              </button>
             </div>
           </div>
-          <button onClick={() => setJustCreated(null)} style={{ marginTop: 8 }}>I've saved it</button>
+          <button type="button" onClick={() => setJustCreated(null)} style={{ marginTop: 8 }}>
+            I've saved it
+          </button>
         </div>
       )}
 
       {creating && !justCreated && (
         <div className="dev-create">
           <label>Name</label>
-          <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Flutter app, CI bot" autoFocus />
-          <label style={{ marginTop: 8 }}>Description <span className="lp-field-opt">(optional)</span></label>
+          <input
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            placeholder="e.g. Flutter app, CI bot"
+            autoFocus
+          />
+          <label style={{ marginTop: 8 }}>
+            Description <span className="lp-field-opt">(optional)</span>
+          </label>
           <input value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="What's this app for?" />
-          {error && <div className="msg err" style={{ marginTop: 8 }}>{error}</div>}
+          {error && (
+            <div className="msg err" style={{ marginTop: 8 }}>
+              {error}
+            </div>
+          )}
           <div className="settings-actions">
-            <button onClick={() => { setCreating(false); setNewName(""); setNewDesc(""); setError("") }}>Cancel</button>
-            <button className="primary" disabled={busy} onClick={create}>{busy ? "Creating…" : "Create app"}</button>
+            <button
+              type="button"
+              onClick={() => {
+                setCreating(false)
+                setNewName("")
+                setNewDesc("")
+                setError("")
+              }}
+            >
+              Cancel
+            </button>
+            <button type="button" className="primary" disabled={busy} onClick={create}>
+              {busy ? "Creating…" : "Create app"}
+            </button>
           </div>
         </div>
       )}
 
       {!creating && !justCreated && (
         <div className="settings-actions" style={{ justifyContent: "flex-start", marginTop: 12 }}>
-          <button className="primary" onClick={() => setCreating(true)}>
+          <button type="button" className="primary" onClick={() => setCreating(true)}>
             <Smartphone size={14} /> <span>Register new app</span>
           </button>
         </div>
@@ -5152,17 +6520,15 @@ const AppsSection: React.FC = () => {
                   <span className="dev-row-name">{a.name}</span>
                   <code>{a.token_prefix}…</code>
                 </div>
-                {a.description && (
-                  <div className="dev-row-desc">{a.description}</div>
-                )}
+                {a.description && <div className="dev-row-desc">{a.description}</div>}
                 <div className="dev-row-meta">
                   Created {new Date(a.created_at).toLocaleDateString()}
-                  {a.last_used_at
-                    ? ` · last used ${new Date(a.last_used_at).toLocaleDateString()}`
-                    : " · never used"}
+                  {a.last_used_at ? ` · last used ${new Date(a.last_used_at).toLocaleDateString()}` : " · never used"}
                 </div>
               </div>
-              <button className="danger" onClick={() => revoke(a.id)}>Revoke</button>
+              <button type="button" className="danger" onClick={() => revoke(a.id)}>
+                Revoke
+              </button>
             </div>
           ))}
         </div>
@@ -5206,11 +6572,18 @@ const WebdavSection: React.FC = () => {
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const mint = async () => {
-    if (status?.enabled && !confirm("Generate a new WebDAV password? Any client using the current one will stop working until reconfigured.")) return
-    setBusy(true); setError(null)
+    if (
+      status?.enabled &&
+      !confirm("Generate a new WebDAV password? Any client using the current one will stop working until reconfigured.")
+    )
+      return
+    setBusy(true)
+    setError(null)
     try {
       const res = await api.enableWebdav()
       if (res.password) setJustMinted(res.password)
@@ -5223,8 +6596,10 @@ const WebdavSection: React.FC = () => {
   }
 
   const disable = async () => {
-    if (!confirm("Disable WebDAV for your account? Clients using your current password will stop working immediately.")) return
-    setBusy(true); setError(null)
+    if (!confirm("Disable WebDAV for your account? Clients using your current password will stop working immediately."))
+      return
+    setBusy(true)
+    setError(null)
     try {
       await api.disableWebdav()
       setJustMinted(null)
@@ -5250,15 +6625,14 @@ const WebdavSection: React.FC = () => {
     <div className="devp-section">
       <h4>WebDAV</h4>
       <div className="devp-section-desc">
-        Mount your Stohr account as a network drive from macOS Finder, Windows
-        Explorer, GNOME Files, or <code>rclone</code>. The password below is
-        separate from your account password and can be revoked any time.
+        Mount your Stohr account as a network drive from macOS Finder, Windows Explorer, GNOME Files, or{" "}
+        <code>rclone</code>. The password below is separate from your account password and can be revoked any time.
       </div>
 
       {instanceDisabled && (
         <div className="msg err" style={{ marginTop: 12 }}>
-          The instance owner has WebDAV turned off on this server. Ask them to
-          enable it in <strong>Admin → Settings</strong>.
+          The instance owner has WebDAV turned off on this server. Ask them to enable it in{" "}
+          <strong>Admin → Settings</strong>.
         </div>
       )}
 
@@ -5271,10 +6645,14 @@ const WebdavSection: React.FC = () => {
             <label>Password</label>
             <div className="dev-secret-row">
               <code>{justMinted}</code>
-              <button onClick={() => navigator.clipboard.writeText(justMinted)}>Copy</button>
+              <button type="button" onClick={() => navigator.clipboard.writeText(justMinted)}>
+                Copy
+              </button>
             </div>
           </div>
-          <button onClick={() => setJustMinted(null)} style={{ marginTop: 8 }}>I've saved it</button>
+          <button type="button" onClick={() => setJustMinted(null)} style={{ marginTop: 8 }}>
+            I've saved it
+          </button>
         </div>
       )}
 
@@ -5301,14 +6679,20 @@ const WebdavSection: React.FC = () => {
             )}
           </div>
 
-          {error && <div className="msg err" style={{ marginTop: 12 }}>{error}</div>}
+          {error && (
+            <div className="msg err" style={{ marginTop: 12 }}>
+              {error}
+            </div>
+          )}
 
           <div className="settings-actions" style={{ justifyContent: "flex-start", marginTop: 12, gap: 8 }}>
-            <button className="primary" disabled={busy} onClick={mint}>
+            <button type="button" className="primary" disabled={busy} onClick={mint}>
               {status.enabled ? "Regenerate password" : "Enable WebDAV"}
             </button>
             {status.enabled && (
-              <button disabled={busy} onClick={disable}>Disable</button>
+              <button type="button" disabled={busy} onClick={disable}>
+                Disable
+              </button>
             )}
           </div>
 
@@ -5316,16 +6700,32 @@ const WebdavSection: React.FC = () => {
             <div className="webdav-howto">
               <div className="webdav-howto-title">Connect from macOS Finder</div>
               <ol>
-                <li>Open Finder, press <kbd>⌘K</kbd> (or <strong>Go → Connect to Server…</strong>).</li>
-                <li>Enter the server URL: <code>{mountUrl}</code></li>
-                <li>Click <strong>Connect</strong>. When prompted, choose <strong>Registered User</strong>.</li>
-                <li>Username: <code>{me?.username ?? "<your-username>"}</code></li>
-                <li>Password: the <code>stohr_dav_…</code> token above (use <strong>Regenerate password</strong> if you've lost it).</li>
-                <li>Optional: check <strong>Remember this password in my keychain</strong>.</li>
+                <li>
+                  Open Finder, press <kbd>⌘K</kbd> (or <strong>Go → Connect to Server…</strong>).
+                </li>
+                <li>
+                  Enter the server URL: <code>{mountUrl}</code>
+                </li>
+                <li>
+                  Click <strong>Connect</strong>. When prompted, choose <strong>Registered User</strong>.
+                </li>
+                <li>
+                  Username: <code>{me?.username ?? "<your-username>"}</code>
+                </li>
+                <li>
+                  Password: the <code>stohr_dav_…</code> token above (use <strong>Regenerate password</strong> if you've
+                  lost it).
+                </li>
+                <li>
+                  Optional: check <strong>Remember this password in my keychain</strong>.
+                </li>
               </ol>
               <div className="webdav-howto-foot">
-                Other clients (Windows Explorer, GNOME Files, <code>rclone</code>) are
-                covered in <a href="/docs/webdav" target="_blank" rel="noreferrer">the WebDAV docs</a>.
+                Other clients (Windows Explorer, GNOME Files, <code>rclone</code>) are covered in{" "}
+                <a href="/docs/webdav" target="_blank" rel="noreferrer">
+                  the WebDAV docs
+                </a>
+                .
               </div>
             </div>
           )}
@@ -5362,13 +6762,15 @@ const FederationPanel: React.FC = () => {
   // failure), and the tab should fall through to the disabled-state UI
   // rather than try to render keys/members we don't have.
   const isDisabledError = (payload: any): boolean =>
-    payload && typeof payload === "object" && typeof payload.error === "string" &&
+    payload &&
+    typeof payload === "object" &&
+    typeof payload.error === "string" &&
     /disabled on this instance/i.test(payload.error)
 
   const load = async () => {
     setError(null)
     try {
-      const list = await api.listFederations() as unknown
+      const list = (await api.listFederations()) as unknown
       if (Array.isArray(list)) {
         setFeds(list as api.FederationSummary[])
         setDisabled(false)
@@ -5377,26 +6779,34 @@ const FederationPanel: React.FC = () => {
         // calling it while disabled returns `{ error: "..." }` instead of
         // the real shape — which used to crash the render.
         try {
-          const keys = await api.getInstanceKeys() as unknown as Partial<api.InstanceKeys> & { error?: string }
+          const keys = (await api.getInstanceKeys()) as unknown as Partial<api.InstanceKeys> & { error?: string }
           if (keys && typeof keys === "object" && typeof keys.ed25519_pubkey === "string") {
             setInstance(keys as api.InstanceKeys)
           } else {
             setInstance(null)
           }
-        } catch { setInstance(null) }
+        } catch {
+          setInstance(null)
+        }
       } else if (isDisabledError(list)) {
-        setDisabled(true); setFeds(null); setInstance(null)
+        setDisabled(true)
+        setFeds(null)
+        setInstance(null)
       } else {
         setError((list as any)?.error ?? "Failed to load federations")
-        setFeds(null); setInstance(null)
+        setFeds(null)
+        setInstance(null)
       }
     } catch (e: any) {
       setError(e?.message ?? "Failed to load federations")
-      setFeds(null); setInstance(null)
+      setFeds(null)
+      setInstance(null)
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   if (disabled) {
     return (
@@ -5423,7 +6833,10 @@ const FederationPanel: React.FC = () => {
     return (
       <FederationDetailView
         id={selected}
-        onBack={() => { setSelected(null); load() }}
+        onBack={() => {
+          setSelected(null)
+          load()
+        }}
       />
     )
   }
@@ -5432,10 +6845,12 @@ const FederationPanel: React.FC = () => {
     <div className="settings-card">
       <h3>Federation</h3>
       <p style={{ color: "var(--muted)", fontSize: 13.5, margin: "0 0 14px", lineHeight: 1.55 }}>
-        Pair this Stohr instance with others in an invite-gated network. Members
-        pool storage and (in content-sharing mode) can browse each other's files.
-        See <a href="/docs/federation" target="_blank" rel="noreferrer">the docs</a> for
-        the full model.
+        Pair this Stohr instance with others in an invite-gated network. Members pool storage and (in content-sharing
+        mode) can browse each other's files. See{" "}
+        <a href="/docs/federation" target="_blank" rel="noreferrer">
+          the docs
+        </a>{" "}
+        for the full model.
       </p>
 
       {instance && (
@@ -5445,30 +6860,44 @@ const FederationPanel: React.FC = () => {
             <code>{instance.ed25519_pubkey.slice(0, 16)}…</code>
           </div>
           <div className="fed-instance-hint">
-            Share this fingerprint out-of-band with someone before they invite
-            you, so they can verify you're the right peer.
+            Share this fingerprint out-of-band with someone before they invite you, so they can verify you're the right
+            peer.
           </div>
         </div>
       )}
 
-      {error && <div className="msg err" style={{ marginBottom: 12 }}>{error}</div>}
+      {error && (
+        <div className="msg err" style={{ marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
 
       <div className="settings-actions" style={{ justifyContent: "flex-start", gap: 8, marginBottom: 16 }}>
-        <button className="primary" onClick={() => setShowCreate(true)}>Create federation</button>
-        <button onClick={() => setShowAccept(true)}>Accept invite</button>
+        <button type="button" className="primary" onClick={() => setShowCreate(true)}>
+          Create federation
+        </button>
+        <button type="button" onClick={() => setShowAccept(true)}>
+          Accept invite
+        </button>
       </div>
 
       {showCreate && (
         <CreateFederationForm
           onCancel={() => setShowCreate(false)}
-          onCreated={() => { setShowCreate(false); load() }}
+          onCreated={() => {
+            setShowCreate(false)
+            load()
+          }}
         />
       )}
 
       {showAccept && (
         <AcceptInviteForm
           onCancel={() => setShowAccept(false)}
-          onAccepted={() => { setShowAccept(false); load() }}
+          onAccepted={() => {
+            setShowAccept(false)
+            load()
+          }}
         />
       )}
 
@@ -5477,11 +6906,7 @@ const FederationPanel: React.FC = () => {
       ) : (
         <div className="fed-list">
           {feds.map(f => (
-            <button
-              key={f.id}
-              className="fed-row"
-              onClick={() => setSelected(f.id)}
-            >
+            <button type="button" key={f.id} className="fed-row" onClick={() => setSelected(f.id)}>
               <div className="fed-row-main">
                 <div className="fed-row-name">
                   {f.name}
@@ -5530,7 +6955,10 @@ const CreateFederationForm: React.FC<{ onCancel: () => void; onCreated: () => vo
         type,
         replication_factor: replication,
       })
-      if (res?.error) { setError(res.error); return }
+      if (res?.error) {
+        setError(res.error)
+        return
+      }
       onCreated()
     } catch (e: any) {
       setError(e?.message ?? "Failed to create federation")
@@ -5548,28 +6976,52 @@ const CreateFederationForm: React.FC<{ onCancel: () => void; onCreated: () => vo
         placeholder="my-friends"
         autoCapitalize="off"
       />
-      <div className="fed-form-hint">Lowercase letters, numbers, hyphens. Used internally to identify the federation across peers — can't change later.</div>
+      <div className="fed-form-hint">
+        Lowercase letters, numbers, hyphens. Used internally to identify the federation across peers — can't change
+        later.
+      </div>
 
       <label style={{ marginTop: 10 }}>Name</label>
       <input value={name} onChange={e => setName(e.target.value)} placeholder="My friends" />
 
-      <label style={{ marginTop: 10 }}>Description <span className="lp-field-opt">(optional)</span></label>
-      <input value={description} onChange={e => setDescription(e.target.value)} placeholder="What's this federation for?" />
+      <label style={{ marginTop: 10 }}>
+        Description <span className="lp-field-opt">(optional)</span>
+      </label>
+      <input
+        value={description}
+        onChange={e => setDescription(e.target.value)}
+        placeholder="What's this federation for?"
+      />
 
       <label style={{ marginTop: 10 }}>Type</label>
       <div className="fed-type-choice">
         <label className={type === "content-sharing" ? "active" : ""}>
-          <input type="radio" name="fedtype" checked={type === "content-sharing"} onChange={() => setType("content-sharing")} />
+          <input
+            type="radio"
+            name="fedtype"
+            checked={type === "content-sharing"}
+            onChange={() => setType("content-sharing")}
+          />
           <div>
             <div className="fed-type-name">Content-sharing</div>
-            <div className="fed-type-desc">Members can browse and copy each other's files. Encrypted at rest with a shared group key; full replication on N peers.</div>
+            <div className="fed-type-desc">
+              Members can browse and copy each other's files. Encrypted at rest with a shared group key; full
+              replication on N peers.
+            </div>
           </div>
         </label>
         <label className={type === "space-offering" ? "active" : ""}>
-          <input type="radio" name="fedtype" checked={type === "space-offering"} onChange={() => setType("space-offering")} />
+          <input
+            type="radio"
+            name="fedtype"
+            checked={type === "space-offering"}
+            onChange={() => setType("space-offering")}
+          />
           <div>
             <div className="fed-type-name">Space-offering</div>
-            <div className="fed-type-desc">Pure capacity pooling. Peers host encrypted shards they can't read; only you can decrypt your own files.</div>
+            <div className="fed-type-desc">
+              Pure capacity pooling. Peers host encrypted shards they can't read; only you can decrypt your own files.
+            </div>
           </div>
         </label>
       </div>
@@ -5582,13 +7034,21 @@ const CreateFederationForm: React.FC<{ onCancel: () => void; onCreated: () => vo
         value={replication}
         onChange={e => setReplication(Math.max(1, Math.min(16, Number(e.target.value) || 1)))}
       />
-      <div className="fed-form-hint">How many peers hold each blob/shard. Higher = more durable, more storage cost. Default 3.</div>
+      <div className="fed-form-hint">
+        How many peers hold each blob/shard. Higher = more durable, more storage cost. Default 3.
+      </div>
 
-      {error && <div className="msg err" style={{ marginTop: 10 }}>{error}</div>}
+      {error && (
+        <div className="msg err" style={{ marginTop: 10 }}>
+          {error}
+        </div>
+      )}
 
       <div className="settings-actions">
-        <button onClick={onCancel} disabled={busy}>Cancel</button>
-        <button className="primary" onClick={submit} disabled={busy || !slug || !name}>
+        <button type="button" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <button type="button" className="primary" onClick={submit} disabled={busy || !slug || !name}>
           {busy ? "Creating…" : "Create federation"}
         </button>
       </div>
@@ -5603,10 +7063,14 @@ const AcceptInviteForm: React.FC<{ onCancel: () => void; onAccepted: () => void 
   const [busy, setBusy] = useState(false)
 
   const submit = async () => {
-    setError(null); setBusy(true)
+    setError(null)
+    setBusy(true)
     try {
       const res: any = await api.acceptFederationInvite(token.trim(), displayName.trim() || undefined)
-      if (res?.error) { setError(res.error); return }
+      if (res?.error) {
+        setError(res.error)
+        return
+      }
       onAccepted()
     } catch (e: any) {
       setError(e?.message ?? "Failed to accept invite")
@@ -5624,20 +7088,28 @@ const AcceptInviteForm: React.FC<{ onCancel: () => void; onAccepted: () => void 
         placeholder="Paste the invite token someone sent you (starts with eyJ…)"
         rows={4}
       />
-      <label style={{ marginTop: 10 }}>Display name <span className="lp-field-opt">(optional)</span></label>
+      <label style={{ marginTop: 10 }}>
+        Display name <span className="lp-field-opt">(optional)</span>
+      </label>
       <input
         value={displayName}
         onChange={e => setDisplayName(e.target.value)}
         placeholder="How other members see you (e.g. wess@home)"
       />
       <div className="fed-form-hint">
-        Accepting reaches out to the introducer (the URL embedded in the token), exchanges keys,
-        and registers this instance as a member.
+        Accepting reaches out to the introducer (the URL embedded in the token), exchanges keys, and registers this
+        instance as a member.
       </div>
-      {error && <div className="msg err" style={{ marginTop: 10 }}>{error}</div>}
+      {error && (
+        <div className="msg err" style={{ marginTop: 10 }}>
+          {error}
+        </div>
+      )}
       <div className="settings-actions">
-        <button onClick={onCancel} disabled={busy}>Cancel</button>
-        <button className="primary" onClick={submit} disabled={busy || !token.trim()}>
+        <button type="button" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <button type="button" className="primary" onClick={submit} disabled={busy || !token.trim()}>
           {busy ? "Pairing…" : "Accept invite"}
         </button>
       </div>
@@ -5662,22 +7134,34 @@ const FederationDetailView: React.FC<{ id: number; onBack: () => void }> = ({ id
         api.listFederationMembers(id),
         api.getFederationUsage(id),
       ])
-      setFed(d); setMembers(m); setUsage(u)
+      setFed(d)
+      setMembers(m)
+      setUsage(u)
       if (d.is_admin) {
-        try { setInvites(await api.listFederationInvites(id)) } catch { setInvites(null) }
+        try {
+          setInvites(await api.listFederationInvites(id))
+        } catch {
+          setInvites(null)
+        }
       }
     } catch (e: any) {
       setError(e?.message ?? "Failed to load federation")
     }
   }
 
-  useEffect(() => { load() }, [id])
+  useEffect(() => {
+    load()
+  }, [id])
 
   const mintInvite = async () => {
-    setBusy(true); setError(null)
+    setBusy(true)
+    setError(null)
     try {
       const res: any = await api.mintFederationInvite(id, 168)
-      if (res?.error) { setError(res.error); return }
+      if (res?.error) {
+        setError(res.error)
+        return
+      }
       setJustMintedInvite(res.token)
       const list = await api.listFederationInvites(id).catch(() => null)
       if (list) setInvites(list)
@@ -5689,7 +7173,12 @@ const FederationDetailView: React.FC<{ id: number; onBack: () => void }> = ({ id
   }
 
   const leave = async () => {
-    if (!confirm(`Leave ${fed?.name ?? "this federation"}? You'll enter drain mode — your hosted blobs are re-replicated off this instance before disconnect.`)) return
+    if (
+      !confirm(
+        `Leave ${fed?.name ?? "this federation"}? You'll enter drain mode — your hosted blobs are re-replicated off this instance before disconnect.`,
+      )
+    )
+      return
     setBusy(true)
     try {
       await api.leaveFederation(id)
@@ -5703,7 +7192,9 @@ const FederationDetailView: React.FC<{ id: number; onBack: () => void }> = ({ id
   if (!fed || !members || !usage) {
     return (
       <div className="settings-card">
-        <button className="fed-back" onClick={onBack}>← Federations</button>
+        <button type="button" className="fed-back" onClick={onBack}>
+          ← Federations
+        </button>
         <div style={{ color: "var(--muted)", fontSize: 14 }}>{error ?? "Loading…"}</div>
       </div>
     )
@@ -5711,7 +7202,9 @@ const FederationDetailView: React.FC<{ id: number; onBack: () => void }> = ({ id
 
   return (
     <div className="settings-card">
-      <button className="fed-back" onClick={onBack}>← Federations</button>
+      <button type="button" className="fed-back" onClick={onBack}>
+        ← Federations
+      </button>
       <h3 style={{ marginTop: 12 }}>
         {fed.name}
         {fed.is_admin && <span className="fed-pill fed-pill-admin">Admin</span>}
@@ -5727,23 +7220,33 @@ const FederationDetailView: React.FC<{ id: number; onBack: () => void }> = ({ id
         {fed.erasure_k && fed.erasure_m && (
           <>
             <span>·</span>
-            <span>Erasure {fed.erasure_k}-of-{fed.erasure_m}</span>
+            <span>
+              Erasure {fed.erasure_k}-of-{fed.erasure_m}
+            </span>
           </>
         )}
       </div>
       {fed.description && (
-        <p style={{ color: "var(--text-soft)", fontSize: 13.5, margin: "12px 0 0", lineHeight: 1.55 }}>{fed.description}</p>
+        <p style={{ color: "var(--text-soft)", fontSize: 13.5, margin: "12px 0 0", lineHeight: 1.55 }}>
+          {fed.description}
+        </p>
       )}
 
-      {error && <div className="msg err" style={{ marginTop: 12 }}>{error}</div>}
+      {error && (
+        <div className="msg err" style={{ marginTop: 12 }}>
+          {error}
+        </div>
+      )}
 
       {/* Usage */}
       <div className="fed-usage">
         <div className="fed-usage-row">
-          <span>Your contribution</span><strong>{formatGB(usage.contributed_bytes)}</strong>
+          <span>Your contribution</span>
+          <strong>{formatGB(usage.contributed_bytes)}</strong>
         </div>
         <div className="fed-usage-row">
-          <span>Used</span><strong>{formatGB(usage.used_bytes)}</strong>
+          <span>Used</span>
+          <strong>{formatGB(usage.used_bytes)}</strong>
         </div>
         <div className="fed-usage-row">
           <span>Your allowance</span>
@@ -5753,7 +7256,8 @@ const FederationDetailView: React.FC<{ id: number; onBack: () => void }> = ({ id
           </strong>
         </div>
         <div className="fed-usage-row">
-          <span>Available</span><strong>{formatGB(usage.available_bytes)}</strong>
+          <span>Available</span>
+          <strong>{formatGB(usage.available_bytes)}</strong>
         </div>
       </div>
 
@@ -5763,23 +7267,35 @@ const FederationDetailView: React.FC<{ id: number; onBack: () => void }> = ({ id
         {usage.contributed_bytes > 0 ? (
           <div className="fed-block-body" style={{ color: "var(--text-soft)", fontSize: 13 }}>
             You're contributing {formatGB(usage.contributed_bytes)}. Adjust or release from{" "}
-            <a href="/app" onClick={(e) => { e.preventDefault(); alert("Find your federation folder in the files view; the row picker is shipping next.") }}>the files view</a>.
+            <a
+              href="/app"
+              onClick={e => {
+                e.preventDefault()
+                alert("Find your federation folder in the files view; the row picker is shipping next.")
+              }}
+            >
+              the files view
+            </a>
+            .
           </div>
         ) : (
           <>
             <div className="fed-block-body" style={{ color: "var(--text-soft)", fontSize: 13 }}>
-              You haven't designated a folder yet. Pick an existing folder and a quota cap —
-              that folder becomes the local mount-point for federation data.
+              You haven't designated a folder yet. Pick an existing folder and a quota cap — that folder becomes the
+              local mount-point for federation data.
             </div>
             {!showContrib && (
-              <button className="primary" style={{ marginTop: 10 }} onClick={() => setShowContrib(true)}>
+              <button type="button" className="primary" style={{ marginTop: 10 }} onClick={() => setShowContrib(true)}>
                 Designate folder
               </button>
             )}
             {showContrib && (
               <ContributeForm
                 federationId={id}
-                onDone={() => { setShowContrib(false); load() }}
+                onDone={() => {
+                  setShowContrib(false)
+                  load()
+                }}
                 onCancel={() => setShowContrib(false)}
               />
             )}
@@ -5823,13 +7339,17 @@ const FederationDetailView: React.FC<{ id: number; onBack: () => void }> = ({ id
               <div className="dev-secret">
                 <div className="dev-secret-row">
                   <code style={{ wordBreak: "break-all", whiteSpace: "pre-wrap" }}>{justMintedInvite}</code>
-                  <button onClick={() => navigator.clipboard.writeText(justMintedInvite)}>Copy</button>
+                  <button type="button" onClick={() => navigator.clipboard.writeText(justMintedInvite)}>
+                    Copy
+                  </button>
                 </div>
               </div>
-              <button onClick={() => setJustMintedInvite(null)} style={{ marginTop: 8 }}>I've sent it</button>
+              <button type="button" onClick={() => setJustMintedInvite(null)} style={{ marginTop: 8 }}>
+                I've sent it
+              </button>
             </div>
           )}
-          <button className="primary" disabled={busy} onClick={mintInvite}>
+          <button type="button" className="primary" disabled={busy} onClick={mintInvite}>
             {busy ? "Minting…" : "Mint new invite (7 days)"}
           </button>
           {invites && invites.length > 0 && (
@@ -5844,7 +7364,10 @@ const FederationDetailView: React.FC<{ id: number; onBack: () => void }> = ({ id
                     </span>
                     <span> · expires {new Date(inv.expires_at).toLocaleString()}</span>
                     {used && inv.used_by_pubkey && (
-                      <> · used by <code>{inv.used_by_pubkey.slice(0, 16)}…</code></>
+                      <>
+                        {" "}
+                        · used by <code>{inv.used_by_pubkey.slice(0, 16)}…</code>
+                      </>
                     )}
                   </li>
                 )
@@ -5858,9 +7381,10 @@ const FederationDetailView: React.FC<{ id: number; onBack: () => void }> = ({ id
       <div className="fed-block">
         <div className="fed-block-title">Leave federation</div>
         <div className="fed-block-body" style={{ color: "var(--muted)", fontSize: 13, marginBottom: 10 }}>
-          Marks this instance as draining. The background sweep re-replicates blobs/shards you host onto other peers, then removes the membership.
+          Marks this instance as draining. The background sweep re-replicates blobs/shards you host onto other peers,
+          then removes the membership.
         </div>
-        <button onClick={leave} disabled={busy || fed.status !== "active"}>
+        <button type="button" onClick={leave} disabled={busy || fed.status !== "active"}>
           {fed.status === "draining" ? "Already draining…" : fed.status === "left" ? "Left" : "Leave federation"}
         </button>
       </div>
@@ -5870,7 +7394,11 @@ const FederationDetailView: React.FC<{ id: number; onBack: () => void }> = ({ id
 
 type RootFolderRow = { id: number; name: string; federation_id: number | null; federation_role: string | null }
 
-const ContributeForm: React.FC<{ federationId: number; onDone: () => void; onCancel: () => void }> = ({ federationId, onDone, onCancel }) => {
+const ContributeForm: React.FC<{ federationId: number; onDone: () => void; onCancel: () => void }> = ({
+  federationId,
+  onDone,
+  onCancel,
+}) => {
   const [folders, setFolders] = useState<RootFolderRow[] | null>(null)
   const [folderId, setFolderId] = useState<number | null>(null)
   const [quotaGB, setQuotaGB] = useState(50)
@@ -5879,7 +7407,8 @@ const ContributeForm: React.FC<{ federationId: number; onDone: () => void; onCan
   const [newFolderName, setNewFolderName] = useState("")
 
   useEffect(() => {
-    api.listFolders(null)
+    api
+      .listFolders(null)
       .then((rs: any) => {
         const eligible = (rs as RootFolderRow[]).filter(f => !f.federation_role)
         setFolders(eligible)
@@ -5888,18 +7417,28 @@ const ContributeForm: React.FC<{ federationId: number; onDone: () => void; onCan
   }, [])
 
   const submit = async () => {
-    setBusy(true); setError(null)
+    setBusy(true)
+    setError(null)
     try {
       let targetId = folderId
       if (!targetId && newFolderName.trim()) {
         const created: any = await api.createFolder(newFolderName.trim(), null)
-        if (created?.error) { setError(created.error); return }
+        if (created?.error) {
+          setError(created.error)
+          return
+        }
         targetId = created.id
       }
-      if (!targetId) { setError("Pick an existing folder or create a new one"); return }
+      if (!targetId) {
+        setError("Pick an existing folder or create a new one")
+        return
+      }
       const quotaBytes = Math.floor(quotaGB * GB_TO_BYTES)
       const res: any = await api.setFederationContribution(federationId, targetId, quotaBytes)
-      if (res?.error) { setError(res.error); return }
+      if (res?.error) {
+        setError(res.error)
+        return
+      }
       onDone()
     } catch (e: any) {
       setError(e?.message ?? "Failed to designate folder")
@@ -5917,19 +7456,22 @@ const ContributeForm: React.FC<{ federationId: number; onDone: () => void; onCan
         value={quotaGB}
         onChange={e => setQuotaGB(Math.max(1, Number(e.target.value) || 1))}
       />
-      <div className="fed-form-hint">How much disk space this instance is offering to the federation. Floor is 0.1 GB.</div>
+      <div className="fed-form-hint">
+        How much disk space this instance is offering to the federation. Floor is 0.1 GB.
+      </div>
 
       <label style={{ marginTop: 10 }}>Existing folder</label>
-      <select
-        value={folderId ?? ""}
-        onChange={e => setFolderId(e.target.value ? Number(e.target.value) : null)}
-      >
+      <select value={folderId ?? ""} onChange={e => setFolderId(e.target.value ? Number(e.target.value) : null)}>
         <option value="">— pick a folder —</option>
         {(folders ?? []).map(f => (
-          <option key={f.id} value={f.id}>{f.name}</option>
+          <option key={f.id} value={f.id}>
+            {f.name}
+          </option>
         ))}
       </select>
-      <div className="fed-form-hint">Only root-level folders that aren't already tied to a federation are eligible.</div>
+      <div className="fed-form-hint">
+        Only root-level folders that aren't already tied to a federation are eligible.
+      </div>
 
       <label style={{ marginTop: 10 }}>Or create a new dedicated folder</label>
       <input
@@ -5938,11 +7480,22 @@ const ContributeForm: React.FC<{ federationId: number; onDone: () => void; onCan
         placeholder="e.g. Federation: friends"
       />
 
-      {error && <div className="msg err" style={{ marginTop: 10 }}>{error}</div>}
+      {error && (
+        <div className="msg err" style={{ marginTop: 10 }}>
+          {error}
+        </div>
+      )}
 
       <div className="settings-actions">
-        <button onClick={onCancel} disabled={busy}>Cancel</button>
-        <button className="primary" onClick={submit} disabled={busy || (!folderId && !newFolderName.trim())}>
+        <button type="button" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="primary"
+          onClick={submit}
+          disabled={busy || (!folderId && !newFolderName.trim())}
+        >
           {busy ? "Saving…" : "Designate folder"}
         </button>
       </div>
@@ -5984,17 +7537,28 @@ const OAuthClientsSection: React.FC = () => {
     const data = await api.adminListOAuthClients()
     setClients(Array.isArray(data) ? data : [])
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const reset = () => {
-    setName(""); setDescription(""); setRedirectsRaw("")
-    setScopeRead(true); setScopeWrite(true); setScopeShare(true)
-    setIsOfficial(false); setConfidential(false); setError("")
+    setName("")
+    setDescription("")
+    setRedirectsRaw("")
+    setScopeRead(true)
+    setScopeWrite(true)
+    setScopeShare(true)
+    setIsOfficial(false)
+    setConfidential(false)
+    setError("")
   }
 
   const create = async () => {
     if (!name.trim()) return setError("Name is required")
-    const redirect_uris = redirectsRaw.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
+    const redirect_uris = redirectsRaw
+      .split(/[\s,]+/)
+      .map(s => s.trim())
+      .filter(Boolean)
     if (redirect_uris.length === 0) return setError("At least one redirect URI is required")
     const allowed_scopes = [
       ...(scopeRead ? ["read"] : []),
@@ -6003,7 +7567,8 @@ const OAuthClientsSection: React.FC = () => {
     ]
     if (allowed_scopes.length === 0) return setError("At least one scope is required")
 
-    setBusy(true); setError("")
+    setBusy(true)
+    setError("")
     const res = await api.adminCreateOAuthClient({
       name: name.trim(),
       description: description.trim() || undefined,
@@ -6021,15 +7586,29 @@ const OAuthClientsSection: React.FC = () => {
   }
 
   const revoke = async (id: number) => {
-    if (!confirm("Revoke this OAuth client? Existing access tokens will continue to work until they expire (1h), but no new tokens can be issued.")) return
+    if (
+      !confirm(
+        "Revoke this OAuth client? Existing access tokens will continue to work until they expire (1h), but no new tokens can be issued.",
+      )
+    )
+      return
     const res = await api.adminRevokeOAuthClient(id)
     if (res.error) return alert(res.error)
     await load()
   }
 
   const rotateSecret = async (id: number, name: string) => {
-    if (!confirm(`Rotate the client_secret for "${name}"? Every existing refresh token for this client will be invalidated and connected apps will need to re-authenticate.`)) return
-    const res = await api.adminRotateOAuthClientSecret(id) as { client_id?: string; client_secret?: string; error?: string }
+    if (
+      !confirm(
+        `Rotate the client_secret for "${name}"? Every existing refresh token for this client will be invalidated and connected apps will need to re-authenticate.`,
+      )
+    )
+      return
+    const res = (await api.adminRotateOAuthClientSecret(id)) as {
+      client_id?: string
+      client_secret?: string
+      error?: string
+    }
     if (res.error) return alert(res.error)
     if (!res.client_secret) return alert("Rotation succeeded but no secret was returned")
     setJustCreated({
@@ -6043,7 +7622,8 @@ const OAuthClientsSection: React.FC = () => {
     <div className="devp-section">
       <h4>OAuth applications</h4>
       <div className="devp-section-desc">
-        Register apps that authenticate users via OAuth 2.0 + PKCE. Use for native/desktop/mobile clients (Butter, etc.) or third-party integrations.
+        Register apps that authenticate users via OAuth 2.0 + PKCE. Use for native/desktop/mobile clients (Butter, etc.)
+        or third-party integrations.
       </div>
 
       {justCreated && (
@@ -6053,19 +7633,27 @@ const OAuthClientsSection: React.FC = () => {
             <label>Client ID</label>
             <div className="dev-secret-row">
               <code>{justCreated.client_id}</code>
-              <button onClick={() => navigator.clipboard.writeText(justCreated.client_id)}>Copy</button>
+              <button type="button" onClick={() => navigator.clipboard.writeText(justCreated.client_id)}>
+                Copy
+              </button>
             </div>
             {justCreated.client_secret && (
               <>
-                <label>Client secret <span style={{ color: "var(--muted)", fontWeight: 400 }}>(only shown once)</span></label>
+                <label>
+                  Client secret <span style={{ color: "var(--muted)", fontWeight: 400 }}>(only shown once)</span>
+                </label>
                 <div className="dev-secret-row">
                   <code>{justCreated.client_secret}</code>
-                  <button onClick={() => navigator.clipboard.writeText(justCreated.client_secret ?? "")}>Copy</button>
+                  <button type="button" onClick={() => navigator.clipboard.writeText(justCreated.client_secret ?? "")}>
+                    Copy
+                  </button>
                 </div>
               </>
             )}
           </div>
-          <button onClick={() => setJustCreated(null)} style={{ marginTop: 8 }}>I've saved it</button>
+          <button type="button" onClick={() => setJustCreated(null)} style={{ marginTop: 8 }}>
+            I've saved it
+          </button>
         </div>
       )}
 
@@ -6073,9 +7661,17 @@ const OAuthClientsSection: React.FC = () => {
         <div className="dev-create">
           <label>Name</label>
           <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Butter" autoFocus />
-          <label style={{ marginTop: 10 }}>Description <span className="lp-field-opt">(optional)</span></label>
-          <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Desktop screenshot uploader" />
-          <label style={{ marginTop: 10 }}>Redirect URIs <span className="lp-field-opt">(one per line, exact match)</span></label>
+          <label style={{ marginTop: 10 }}>
+            Description <span className="lp-field-opt">(optional)</span>
+          </label>
+          <input
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            placeholder="Desktop screenshot uploader"
+          />
+          <label style={{ marginTop: 10 }}>
+            Redirect URIs <span className="lp-field-opt">(one per line, exact match)</span>
+          </label>
           <textarea
             value={redirectsRaw}
             onChange={e => setRedirectsRaw(e.target.value)}
@@ -6087,14 +7683,16 @@ const OAuthClientsSection: React.FC = () => {
             <strong>Common values:</strong>
             <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
               <li>
-                Stohrshot desktop app: <code>stohrshot://oauth/callback</code>
-                {" "}
+                Stohrshot desktop app: <code>stohrshot://oauth/callback</code>{" "}
                 <button
                   type="button"
                   onClick={() => {
                     const uri = "stohrshot://oauth/callback"
                     setRedirectsRaw(prev => {
-                      const lines = prev.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+                      const lines = prev
+                        .split(/\r?\n/)
+                        .map(s => s.trim())
+                        .filter(Boolean)
                       return lines.includes(uri) ? prev : [...lines, uri].join("\n")
                     })
                   }}
@@ -6103,8 +7701,12 @@ const OAuthClientsSection: React.FC = () => {
                   Use this
                 </button>
               </li>
-              <li>iOS/Android mobile app: a custom scheme like <code>stohrapp://oauth/callback</code></li>
-              <li>SPA / web app: <code>https://yourapp.example.com/callback</code></li>
+              <li>
+                iOS/Android mobile app: a custom scheme like <code>stohrapp://oauth/callback</code>
+              </li>
+              <li>
+                SPA / web app: <code>https://yourapp.example.com/callback</code>
+              </li>
             </ul>
           </div>
           <label style={{ marginTop: 14 }}>Scopes</label>
@@ -6128,19 +7730,37 @@ const OAuthClientsSection: React.FC = () => {
           </label>
           <label className="scope-check" style={{ marginTop: 4 }}>
             <input type="checkbox" checked={confidential} onChange={e => setConfidential(e.target.checked)} />
-            <span>Confidential client (issues a client_secret — for server-side apps only; native apps must stay public)</span>
+            <span>
+              Confidential client (issues a client_secret — for server-side apps only; native apps must stay public)
+            </span>
           </label>
-          {error && <div className="msg err" style={{ marginTop: 8 }}>{error}</div>}
+          {error && (
+            <div className="msg err" style={{ marginTop: 8 }}>
+              {error}
+            </div>
+          )}
           <div className="settings-actions">
-            <button onClick={() => { setCreating(false); reset() }}>Cancel</button>
-            <button className="primary" disabled={busy} onClick={create}>{busy ? "Creating…" : "Create client"}</button>
+            <button
+              type="button"
+              onClick={() => {
+                setCreating(false)
+                reset()
+              }}
+            >
+              Cancel
+            </button>
+            <button type="button" className="primary" disabled={busy} onClick={create}>
+              {busy ? "Creating…" : "Create client"}
+            </button>
           </div>
         </div>
       )}
 
       {!creating && !justCreated && (
         <div className="settings-actions" style={{ justifyContent: "flex-start", marginTop: 12 }}>
-          <button className="primary" onClick={() => setCreating(true)}>Register new OAuth client</button>
+          <button type="button" className="primary" onClick={() => setCreating(true)}>
+            Register new OAuth client
+          </button>
         </div>
       )}
 
@@ -6153,20 +7773,46 @@ const OAuthClientsSection: React.FC = () => {
               <div className="dev-row-main">
                 <div className="dev-row-line">
                   <span className="dev-row-name">{c.name}</span>
-                  {c.is_official && <span className="badge" style={{ background: "var(--brand)", color: "white" }}>official</span>}
-                  {c.revoked_at && <span className="badge" style={{ background: "var(--muted)" }}>revoked</span>}
+                  {c.is_official && (
+                    <span className="badge" style={{ background: "var(--brand)", color: "white" }}>
+                      official
+                    </span>
+                  )}
+                  {c.revoked_at && (
+                    <span className="badge" style={{ background: "var(--muted)" }}>
+                      revoked
+                    </span>
+                  )}
                 </div>
                 {c.description && <div className="dev-row-desc">{c.description}</div>}
-                <div className="dev-row-meta" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                <div
+                  className="dev-row-meta"
+                  style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 6 }}
+                >
                   <span style={{ color: "var(--muted)" }}>client_id</span>
-                  <code style={{ background: "var(--bg)", padding: "2px 6px", borderRadius: 4, border: "1px solid var(--border)", fontSize: 11 }}>{c.client_id}</code>
+                  <code
+                    style={{
+                      background: "var(--bg)",
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                      border: "1px solid var(--border)",
+                      fontSize: 11,
+                    }}
+                  >
+                    {c.client_id}
+                  </code>
                   <button
+                    type="button"
                     onClick={() => navigator.clipboard.writeText(c.client_id)}
                     style={{ padding: "2px 8px", fontSize: 11 }}
                   >
                     Copy
                   </button>
-                  {!c.is_public_client && <span className="badge" style={{ background: "var(--muted)", marginLeft: 4 }}>has secret</span>}
+                  {!c.is_public_client && (
+                    <span className="badge" style={{ background: "var(--muted)", marginLeft: 4 }}>
+                      has secret
+                    </span>
+                  )}
                 </div>
                 <div className="dev-row-meta">
                   Scopes: {c.allowed_scopes.join(", ")} · Redirects: {c.redirect_uris.length}
@@ -6176,9 +7822,13 @@ const OAuthClientsSection: React.FC = () => {
               {!c.revoked_at && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   {!c.is_public_client && (
-                    <button onClick={() => rotateSecret(c.id, c.name)}>Rotate secret</button>
+                    <button type="button" onClick={() => rotateSecret(c.id, c.name)}>
+                      Rotate secret
+                    </button>
                   )}
-                  <button className="danger" onClick={() => revoke(c.id)}>Revoke</button>
+                  <button type="button" className="danger" onClick={() => revoke(c.id)}>
+                    Revoke
+                  </button>
                 </div>
               )}
             </div>
@@ -6205,16 +7855,22 @@ const SecurityPanel: React.FC = () => {
   const [error, setError] = useState("")
 
   const reload = async () => {
-    const s = await api.getMfaStatus() as MfaStatus
+    const s = (await api.getMfaStatus()) as MfaStatus
     setStatus(s)
   }
-  useEffect(() => { reload() }, [])
+  useEffect(() => {
+    reload()
+  }, [])
 
   const start = async () => {
-    setBusy(true); setError("")
+    setBusy(true)
+    setError("")
     try {
-      const res = await api.startMfaSetup() as { secret: string; otpauth_url: string; error?: string }
-      if (res.error) { setError(res.error); return }
+      const res = (await api.startMfaSetup()) as { secret: string; otpauth_url: string; error?: string }
+      if (res.error) {
+        setError(res.error)
+        return
+      }
       const QR: typeof import("qrcode") = await import("qrcode")
       const qr = await QR.toDataURL(res.otpauth_url, { margin: 1, width: 200 })
       setSetup({ secret: res.secret, otpauth_url: res.otpauth_url, qr })
@@ -6224,10 +7880,14 @@ const SecurityPanel: React.FC = () => {
   }
 
   const enable = async () => {
-    setBusy(true); setError("")
+    setBusy(true)
+    setError("")
     try {
-      const res = await api.enableMfa(enableCode.trim()) as { ok?: boolean; backup_codes?: string[]; error?: string }
-      if (res.error) { setError(res.error); return }
+      const res = (await api.enableMfa(enableCode.trim())) as { ok?: boolean; backup_codes?: string[]; error?: string }
+      if (res.error) {
+        setError(res.error)
+        return
+      }
       setBackupCodes(res.backup_codes ?? [])
       setSetup(null)
       setEnableCode("")
@@ -6238,12 +7898,17 @@ const SecurityPanel: React.FC = () => {
   }
 
   const disable = async () => {
-    setBusy(true); setError("")
+    setBusy(true)
+    setError("")
     try {
-      const res = await api.disableMfa(disablePw, disableCode.trim()) as { ok?: boolean; error?: string }
-      if (res.error) { setError(res.error); return }
+      const res = (await api.disableMfa(disablePw, disableCode.trim())) as { ok?: boolean; error?: string }
+      if (res.error) {
+        setError(res.error)
+        return
+      }
       setShowDisable(false)
-      setDisablePw(""); setDisableCode("")
+      setDisablePw("")
+      setDisableCode("")
       setBackupCodes(null)
       await reload()
     } finally {
@@ -6252,10 +7917,14 @@ const SecurityPanel: React.FC = () => {
   }
 
   const regen = async () => {
-    setBusy(true); setError("")
+    setBusy(true)
+    setError("")
     try {
-      const res = await api.regenerateBackupCodes(regenPw) as { backup_codes?: string[]; error?: string }
-      if (res.error) { setError(res.error); return }
+      const res = (await api.regenerateBackupCodes(regenPw)) as { backup_codes?: string[]; error?: string }
+      if (res.error) {
+        setError(res.error)
+        return
+      }
       setBackupCodes(res.backup_codes ?? [])
       setShowRegen(false)
       setRegenPw("")
@@ -6277,7 +7946,9 @@ const SecurityPanel: React.FC = () => {
 
       {!status.enabled && !setup && (
         <div className="settings-actions" style={{ justifyContent: "flex-start" }}>
-          <button className="primary" disabled={busy} onClick={start}>Set up authenticator</button>
+          <button type="button" className="primary" disabled={busy} onClick={start}>
+            Set up authenticator
+          </button>
         </div>
       )}
 
@@ -6286,9 +7957,23 @@ const SecurityPanel: React.FC = () => {
           <div style={{ fontSize: 13, marginBottom: 8 }}>
             Scan with Google Authenticator, 1Password, Authy, or any TOTP app — then enter the 6-digit code below.
           </div>
-          <img src={setup.qr} alt="QR code" style={{ width: 180, height: 180, background: "#fff", padding: 8, borderRadius: 8 }} />
+          <img
+            src={setup.qr}
+            alt="QR code"
+            style={{ width: 180, height: 180, background: "#fff", padding: 8, borderRadius: 8 }}
+          />
           <div style={{ marginTop: 10, fontSize: 11, color: "var(--muted)" }}>Or enter this secret manually:</div>
-          <code style={{ display: "block", marginTop: 4, padding: 6, background: "var(--panel)", borderRadius: 4, fontSize: 12, wordBreak: "break-all" }}>
+          <code
+            style={{
+              display: "block",
+              marginTop: 4,
+              padding: 6,
+              background: "var(--panel)",
+              borderRadius: 4,
+              fontSize: 12,
+              wordBreak: "break-all",
+            }}
+          >
             {setup.secret}
           </code>
           <label style={{ marginTop: 14 }}>6-digit code from your app</label>
@@ -6298,10 +7983,25 @@ const SecurityPanel: React.FC = () => {
             value={enableCode}
             onChange={e => setEnableCode(e.target.value.replace(/\D/g, ""))}
           />
-          {error && <div className="msg err" style={{ marginTop: 8 }}>{error}</div>}
+          {error && (
+            <div className="msg err" style={{ marginTop: 8 }}>
+              {error}
+            </div>
+          )}
           <div className="settings-actions">
-            <button onClick={() => { setSetup(null); setEnableCode(""); setError("") }}>Cancel</button>
-            <button className="primary" disabled={busy || enableCode.length !== 6} onClick={enable}>Enable MFA</button>
+            <button
+              type="button"
+              onClick={() => {
+                setSetup(null)
+                setEnableCode("")
+                setError("")
+              }}
+            >
+              Cancel
+            </button>
+            <button type="button" className="primary" disabled={busy || enableCode.length !== 6} onClick={enable}>
+              Enable MFA
+            </button>
           </div>
         </div>
       )}
@@ -6309,12 +8009,27 @@ const SecurityPanel: React.FC = () => {
       {backupCodes && (
         <div className="msg ok" style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Save your backup codes — these won't be shown again</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 13, marginBottom: 8 }}>
-            {backupCodes.map(c => <div key={c}>{c}</div>)}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 4,
+              fontFamily: "ui-monospace, Menlo, monospace",
+              fontSize: 13,
+              marginBottom: 8,
+            }}
+          >
+            {backupCodes.map(c => (
+              <div key={c}>{c}</div>
+            ))}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => navigator.clipboard.writeText(backupCodes.join("\n"))}>Copy all</button>
-            <button onClick={() => setBackupCodes(null)}>I've saved them</button>
+            <button type="button" onClick={() => navigator.clipboard.writeText(backupCodes.join("\n"))}>
+              Copy all
+            </button>
+            <button type="button" onClick={() => setBackupCodes(null)}>
+              I've saved them
+            </button>
           </div>
         </div>
       )}
@@ -6322,9 +8037,13 @@ const SecurityPanel: React.FC = () => {
       {status.enabled && !setup && !backupCodes && (
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <span className="badge" style={{ background: "var(--brand)", color: "white" }}>Enabled</span>
+            <span className="badge" style={{ background: "var(--brand)", color: "white" }}>
+              Enabled
+            </span>
             {status.enabled_at && (
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>since {new Date(status.enabled_at).toLocaleDateString()}</span>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                since {new Date(status.enabled_at).toLocaleDateString()}
+              </span>
             )}
           </div>
           <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>
@@ -6333,8 +8052,25 @@ const SecurityPanel: React.FC = () => {
 
           {!showDisable && !showRegen && (
             <div className="settings-actions" style={{ justifyContent: "flex-start" }}>
-              <button onClick={() => { setShowRegen(true); setError("") }}>Regenerate backup codes</button>
-              <button className="danger" onClick={() => { setShowDisable(true); setError("") }}>Disable MFA</button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRegen(true)
+                  setError("")
+                }}
+              >
+                Regenerate backup codes
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => {
+                  setShowDisable(true)
+                  setError("")
+                }}
+              >
+                Disable MFA
+              </button>
             </div>
           )}
 
@@ -6342,10 +8078,25 @@ const SecurityPanel: React.FC = () => {
             <div className="dev-create">
               <label>Confirm with your password</label>
               <input type="password" value={regenPw} onChange={e => setRegenPw(e.target.value)} />
-              {error && <div className="msg err" style={{ marginTop: 8 }}>{error}</div>}
+              {error && (
+                <div className="msg err" style={{ marginTop: 8 }}>
+                  {error}
+                </div>
+              )}
               <div className="settings-actions">
-                <button onClick={() => { setShowRegen(false); setRegenPw(""); setError("") }}>Cancel</button>
-                <button className="primary" disabled={busy || !regenPw} onClick={regen}>Regenerate</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRegen(false)
+                    setRegenPw("")
+                    setError("")
+                  }}
+                >
+                  Cancel
+                </button>
+                <button type="button" className="primary" disabled={busy || !regenPw} onClick={regen}>
+                  Regenerate
+                </button>
               </div>
             </div>
           )}
@@ -6361,10 +8112,31 @@ const SecurityPanel: React.FC = () => {
                 value={disableCode}
                 onChange={e => setDisableCode(e.target.value.replace(/\D/g, ""))}
               />
-              {error && <div className="msg err" style={{ marginTop: 8 }}>{error}</div>}
+              {error && (
+                <div className="msg err" style={{ marginTop: 8 }}>
+                  {error}
+                </div>
+              )}
               <div className="settings-actions">
-                <button onClick={() => { setShowDisable(false); setDisablePw(""); setDisableCode(""); setError("") }}>Cancel</button>
-                <button className="danger" disabled={busy || !disablePw || disableCode.length !== 6} onClick={disable}>Disable MFA</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDisable(false)
+                    setDisablePw("")
+                    setDisableCode("")
+                    setError("")
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={busy || !disablePw || disableCode.length !== 6}
+                  onClick={disable}
+                >
+                  Disable MFA
+                </button>
               </div>
             </div>
           )}
@@ -6391,7 +8163,9 @@ const PasskeysSection: React.FC = () => {
     const list = await api.listPasskeys()
     setRows(Array.isArray(list) ? list : [])
   }
-  useEffect(() => { void load() }, [])
+  useEffect(() => {
+    void load()
+  }, [])
 
   const beginAdd = () => {
     setDraftName("")
@@ -6400,11 +8174,15 @@ const PasskeysSection: React.FC = () => {
   }
 
   const addPasskey = async () => {
-    setBusy(true); setError("")
+    setBusy(true)
+    setError("")
     try {
       const SWB: typeof import("@simplewebauthn/browser") = await import("@simplewebauthn/browser")
       const options = await api.beginPasskeyRegistration()
-      if (options?.error) { setError(options.error); return }
+      if (options?.error) {
+        setError(options.error)
+        return
+      }
       let regResponse: any
       try {
         regResponse = await SWB.startRegistration({ optionsJSON: options })
@@ -6421,7 +8199,10 @@ const PasskeysSection: React.FC = () => {
       }
       const finalName = draftName.trim() || null
       const finishRes = await api.finishPasskeyRegistration({ name: finalName ?? undefined, response: regResponse })
-      if ((finishRes as any).error) { setError((finishRes as any).error); return }
+      if ((finishRes as any).error) {
+        setError((finishRes as any).error)
+        return
+      }
       setNaming(false)
       setDraftName("")
       await load()
@@ -6459,12 +8240,14 @@ const PasskeysSection: React.FC = () => {
         Use your phone, laptop, or hardware key to sign in. Works with Apple Face ID/Touch ID and Android biometrics.
       </div>
 
-      {error && <div className="msg err" style={{ marginBottom: 8 }}>{error}</div>}
+      {error && (
+        <div className="msg err" style={{ marginBottom: 8 }}>
+          {error}
+        </div>
+      )}
 
       {rows.length === 0 ? (
-        <div style={{ fontSize: 13, color: "var(--muted)", padding: "10px 0" }}>
-          No passkeys yet.
-        </div>
+        <div style={{ fontSize: 13, color: "var(--muted)", padding: "10px 0" }}>No passkeys yet.</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
           {rows.map(p => (
@@ -6487,13 +8270,27 @@ const PasskeysSection: React.FC = () => {
               </div>
               {renamingId === p.id ? (
                 <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={() => { setRenamingId(null); setRenameValue("") }}>Cancel</button>
-                  <button className="primary" onClick={saveRename} disabled={busy}>Save</button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRenamingId(null)
+                      setRenameValue("")
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button type="button" className="primary" onClick={saveRename} disabled={busy}>
+                    Save
+                  </button>
                 </div>
               ) : (
                 <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={() => startRename(p)} disabled={busy}>Rename</button>
-                  <button className="danger" onClick={() => remove(p)} disabled={busy}>Remove</button>
+                  <button type="button" onClick={() => startRename(p)} disabled={busy}>
+                    Rename
+                  </button>
+                  <button type="button" className="danger" onClick={() => remove(p)} disabled={busy}>
+                    Remove
+                  </button>
                 </div>
               )}
             </div>
@@ -6514,14 +8311,23 @@ const PasskeysSection: React.FC = () => {
             onKeyDown={e => e.key === "Enter" && addPasskey()}
           />
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 10 }}>
-            <button onClick={() => { setNaming(false); setDraftName("") }} disabled={busy}>Cancel</button>
-            <button className="primary" onClick={addPasskey} disabled={busy}>
+            <button
+              type="button"
+              onClick={() => {
+                setNaming(false)
+                setDraftName("")
+              }}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+            <button type="button" className="primary" onClick={addPasskey} disabled={busy}>
               {busy ? "Waiting…" : "Continue"}
             </button>
           </div>
         </div>
       ) : (
-        <button onClick={beginAdd} disabled={busy}>
+        <button type="button" onClick={beginAdd} disabled={busy}>
           <Plus size={14} /> <span>Add a passkey</span>
         </button>
       )}
@@ -6547,7 +8353,9 @@ const SessionsSection: React.FC = () => {
     const data = await api.listSessions()
     setRows(Array.isArray(data) ? data : [])
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const revoke = async (id: string) => {
     if (!confirm("Sign this session out?")) return
@@ -6592,21 +8400,29 @@ const SessionsSection: React.FC = () => {
                 <div className="dev-row-main">
                   <div className="dev-row-line">
                     <span className="dev-row-name">{summarize(s.user_agent)}</span>
-                    {s.current && <span className="badge" style={{ background: "var(--brand)", color: "white" }}>this session</span>}
+                    {s.current && (
+                      <span className="badge" style={{ background: "var(--brand)", color: "white" }}>
+                        this session
+                      </span>
+                    )}
                   </div>
                   <div className="dev-row-meta">
                     {s.ip ?? "Unknown IP"} · last used {new Date(s.last_used_at).toLocaleString()}
                   </div>
                 </div>
                 {!s.current && (
-                  <button className="danger" disabled={busy} onClick={() => revoke(s.id)}>Sign out</button>
+                  <button type="button" className="danger" disabled={busy} onClick={() => revoke(s.id)}>
+                    Sign out
+                  </button>
                 )}
               </div>
             ))}
           </div>
           {rows.some(s => !s.current) && (
             <div className="settings-actions" style={{ justifyContent: "flex-start", marginTop: 12 }}>
-              <button className="danger" disabled={busy} onClick={revokeOthers}>Sign out all other sessions</button>
+              <button type="button" className="danger" disabled={busy} onClick={revokeOthers}>
+                Sign out all other sessions
+              </button>
             </div>
           )}
         </>
@@ -6630,7 +8446,9 @@ const InvitesPanel: React.FC = () => {
     const list = await api.listInvites()
     setInvites(Array.isArray(list) ? list : [])
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const create = async () => {
     setError("")
@@ -6663,7 +8481,7 @@ const InvitesPanel: React.FC = () => {
       <input type="email" placeholder="alice@example.com" value={email} onChange={e => setEmail(e.target.value)} />
       {error && <div className="msg err">{error}</div>}
       <div className="settings-actions">
-        <button className="primary" onClick={create}>
+        <button type="button" className="primary" onClick={create}>
           <Mail size={14} /> <span>Create invite</span>
         </button>
       </div>
@@ -6674,7 +8492,9 @@ const InvitesPanel: React.FC = () => {
             {`${window.location.origin}/signup?invite=${justCreated.token}`}
           </div>
           <div style={{ marginTop: 6 }}>
-            <button onClick={() => copyLink(justCreated.token)}>Copy link</button>
+            <button type="button" onClick={() => copyLink(justCreated.token)}>
+              Copy link
+            </button>
           </div>
         </div>
       )}
@@ -6685,7 +8505,11 @@ const InvitesPanel: React.FC = () => {
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
               <div style={{ flex: 1, fontWeight: 500 }}>
                 {inv.email ?? "Open invite"}
-                {inv.used_at && <span className="badge" style={{ marginLeft: 8, background: "var(--muted)" }}>used</span>}
+                {inv.used_at && (
+                  <span className="badge" style={{ marginLeft: 8, background: "var(--muted)" }}>
+                    used
+                  </span>
+                )}
               </div>
               <span style={{ fontSize: 12, color: "var(--muted)" }}>
                 {new Date(inv.created_at).toLocaleDateString()}
@@ -6693,7 +8517,9 @@ const InvitesPanel: React.FC = () => {
             </div>
             <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
               {!inv.used_at && (
-                <button className="danger" onClick={() => revoke(inv.id)} style={{ marginLeft: "auto" }}>Revoke</button>
+                <button type="button" className="danger" onClick={() => revoke(inv.id)} style={{ marginLeft: "auto" }}>
+                  Revoke
+                </button>
               )}
             </div>
           </div>
@@ -6705,7 +8531,10 @@ const InvitesPanel: React.FC = () => {
 
 type SettingsTab = "profile" | "storage" | "security" | "developer" | "federation" | "invites" | "account"
 
-const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => void }> = ({ onProfileUpdate, onAccountDeleted }) => {
+const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => void }> = ({
+  onProfileUpdate,
+  onAccountDeleted,
+}) => {
   const current = api.getUser()
   const [tab, setTab] = useState<SettingsTab>("profile")
   const [name, setName] = useState(current?.name ?? "")
@@ -6735,7 +8564,10 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
   // disabled tab would only show the same "ask the owner" copy anyway.
   const [federationOn, setFederationOn] = useState<boolean>(false)
   useEffect(() => {
-    api.federationAvailable().then(setFederationOn).catch(() => setFederationOn(false))
+    api
+      .federationAvailable()
+      .then(setFederationOn)
+      .catch(() => setFederationOn(false))
   }, [])
 
   // If a user lands on Federation but the owner has since disabled it,
@@ -6768,7 +8600,9 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
     const res = await api.changePassword(currentPw, newPw)
     if (res.error) return setPwMsg({ kind: "err", text: res.error })
     setPwMsg({ kind: "ok", text: "Password changed" })
-    setCurrentPw(""); setNewPw(""); setConfirmPw("")
+    setCurrentPw("")
+    setNewPw("")
+    setConfirmPw("")
   }
 
   const deleteAccount = async () => {
@@ -6792,14 +8626,19 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
   return (
     <div className="main">
       <div className="toolbar">
-        <div className="crumbs"><span className="current">Settings</span></div>
+        <div className="crumbs">
+          <span className="current">Settings</span>
+        </div>
       </div>
       <div className="content">
         <div className="settings">
-          <nav className="settings-tabs" role="tablist">
+          {/* A tablist is not a navigation landmark — <nav role="tablist">
+              announces the region twice and conflictingly to screen readers. */}
+          <div className="settings-tabs" role="tablist">
             {tabs.map(t => (
               <button
                 key={t.id}
+                type="button"
                 role="tab"
                 aria-selected={tab === t.id}
                 className={tab === t.id ? "active" : ""}
@@ -6808,7 +8647,7 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
                 {t.label}
               </button>
             ))}
-          </nav>
+          </div>
 
           {tab === "profile" && (
             <>
@@ -6827,7 +8666,9 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
                 <input type="email" value={email} onChange={e => setEmail(e.target.value)} />
                 {profileMsg && <div className={`msg ${profileMsg.kind}`}>{profileMsg.text}</div>}
                 <div className="settings-actions">
-                  <button className="primary" onClick={saveProfile}>Save changes</button>
+                  <button type="button" className="primary" onClick={saveProfile}>
+                    Save changes
+                  </button>
                 </div>
               </section>
 
@@ -6835,13 +8676,25 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
                 <h3>Appearance</h3>
                 <label>Theme</label>
                 <div className="theme-group">
-                  <button className={theme === "light" ? "active" : ""} onClick={() => chooseTheme("light")}>
+                  <button
+                    type="button"
+                    className={theme === "light" ? "active" : ""}
+                    onClick={() => chooseTheme("light")}
+                  >
                     <Sun size={14} /> <span>Light</span>
                   </button>
-                  <button className={theme === "dark" ? "active" : ""} onClick={() => chooseTheme("dark")}>
+                  <button
+                    type="button"
+                    className={theme === "dark" ? "active" : ""}
+                    onClick={() => chooseTheme("dark")}
+                  >
                     <Moon size={14} /> <span>Dark</span>
                   </button>
-                  <button className={theme === "system" ? "active" : ""} onClick={() => chooseTheme("system")}>
+                  <button
+                    type="button"
+                    className={theme === "system" ? "active" : ""}
+                    onClick={() => chooseTheme("system")}
+                  >
                     <Monitor size={14} /> <span>System</span>
                   </button>
                 </div>
@@ -6864,7 +8717,9 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
                 <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} />
                 {pwMsg && <div className={`msg ${pwMsg.kind}`}>{pwMsg.text}</div>}
                 <div className="settings-actions">
-                  <button className="primary" onClick={savePassword}>Update password</button>
+                  <button type="button" className="primary" onClick={savePassword}>
+                    Update password
+                  </button>
                 </div>
               </section>
             </>
@@ -6882,7 +8737,9 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
               <div className="danger-desc">Permanently delete your account and all files. This cannot be undone.</div>
               {!confirmingDelete ? (
                 <div className="settings-actions">
-                  <button className="danger" onClick={() => setConfirmingDelete(true)}>Delete account</button>
+                  <button type="button" className="danger" onClick={() => setConfirmingDelete(true)}>
+                    Delete account
+                  </button>
                 </div>
               ) : (
                 <>
@@ -6890,8 +8747,19 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
                   <input type="password" value={deletePw} onChange={e => setDeletePw(e.target.value)} />
                   {deleteErr && <div className="msg err">{deleteErr}</div>}
                   <div className="settings-actions">
-                    <button onClick={() => { setConfirmingDelete(false); setDeletePw(""); setDeleteErr("") }}>Cancel</button>
-                    <button className="danger" onClick={deleteAccount}>Permanently delete</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirmingDelete(false)
+                        setDeletePw("")
+                        setDeleteErr("")
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button type="button" className="danger" onClick={deleteAccount}>
+                      Permanently delete
+                    </button>
                   </div>
                 </>
               )}
@@ -6912,8 +8780,16 @@ const AdminView: React.FC = () => {
   if (!me?.is_owner) {
     return (
       <div className="main">
-        <div className="toolbar"><div className="crumbs"><span className="current">Admin</span></div></div>
-        <div className="content"><div className="empty"><div>Owner access required</div></div></div>
+        <div className="toolbar">
+          <div className="crumbs">
+            <span className="current">Admin</span>
+          </div>
+        </div>
+        <div className="content">
+          <div className="empty">
+            <div>Owner access required</div>
+          </div>
+        </div>
       </div>
     )
   }
@@ -6921,17 +8797,37 @@ const AdminView: React.FC = () => {
   return (
     <div className="main">
       <div className="toolbar">
-        <div className="crumbs"><span className="current">Admin</span></div>
+        <div className="crumbs">
+          <span className="current">Admin</span>
+        </div>
       </div>
       <div className="content">
         <div className="admin-sections">
-          <button className={section === "users" ? "active" : ""} onClick={() => setSection("users")}>Users</button>
-          <button className={section === "invites" ? "active" : ""} onClick={() => setSection("invites")}>Invites</button>
-          <button className={section === "settings" ? "active" : ""} onClick={() => setSection("settings")}>Settings</button>
-          <button className={section === "mcp" ? "active" : ""} onClick={() => setSection("mcp")}>MCP</button>
-          <button className={section === "contact" ? "active" : ""} onClick={() => setSection("contact")}>Contact</button>
-          <button className={section === "stats" ? "active" : ""} onClick={() => setSection("stats")}>Stats</button>
-          <button className={section === "audit" ? "active" : ""} onClick={() => setSection("audit")}>Audit</button>
+          <button type="button" className={section === "users" ? "active" : ""} onClick={() => setSection("users")}>
+            Users
+          </button>
+          <button type="button" className={section === "invites" ? "active" : ""} onClick={() => setSection("invites")}>
+            Invites
+          </button>
+          <button
+            type="button"
+            className={section === "settings" ? "active" : ""}
+            onClick={() => setSection("settings")}
+          >
+            Settings
+          </button>
+          <button type="button" className={section === "mcp" ? "active" : ""} onClick={() => setSection("mcp")}>
+            MCP
+          </button>
+          <button type="button" className={section === "contact" ? "active" : ""} onClick={() => setSection("contact")}>
+            Contact
+          </button>
+          <button type="button" className={section === "stats" ? "active" : ""} onClick={() => setSection("stats")}>
+            Stats
+          </button>
+          <button type="button" className={section === "audit" ? "active" : ""} onClick={() => setSection("audit")}>
+            Audit
+          </button>
         </div>
         {section === "users" && <AdminUsers meId={me.id} />}
         {section === "invites" && <AdminInvites />}
@@ -6961,12 +8857,15 @@ const AdminSettings: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
 
   const load = () => {
-    api.adminGetSettings()
+    api
+      .adminGetSettings()
       .then(setRows)
       .catch(e => setError(e?.message ?? "Failed to load settings"))
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const toggle = async (key: string, next: boolean) => {
     setBusy(key)
@@ -6994,14 +8893,11 @@ const AdminSettings: React.FC = () => {
     <section className="settings-card">
       <h3>Instance settings</h3>
       <p style={{ color: "var(--muted)", fontSize: 13.5, margin: "0 0 16px", lineHeight: 1.55 }}>
-        Owner-controlled feature toggles. Changes take effect immediately — no
-        restart needed. Disabling a feature blocks its routes for everyone;
-        existing data (federation memberships, WebDAV credentials) is preserved
-        and resumes when you turn it back on.
+        Owner-controlled feature toggles. Changes take effect immediately — no restart needed. Disabling a feature
+        blocks its routes for everyone; existing data (federation memberships, WebDAV credentials) is preserved and
+        resumes when you turn it back on.
       </p>
-      {error && (
-        <div style={{ color: "var(--danger, #c0392b)", fontSize: 13, marginBottom: 12 }}>{error}</div>
-      )}
+      {error && <div style={{ color: "var(--danger, #c0392b)", fontSize: 13, marginBottom: 12 }}>{error}</div>}
       <div className="admin-settings-list">
         {rows.map(row => {
           const label = SETTING_LABELS[row.key] ?? row.key
@@ -7013,9 +8909,7 @@ const AdminSettings: React.FC = () => {
                 <div className="admin-setting-key">{row.key}</div>
                 <div className="admin-setting-desc">{row.description}</div>
                 {row.updated_at && (
-                  <div className="admin-setting-updated">
-                    Last changed {new Date(row.updated_at).toLocaleString()}
-                  </div>
+                  <div className="admin-setting-updated">Last changed {new Date(row.updated_at).toLocaleString()}</div>
                 )}
               </div>
               <div className="admin-setting-control">
@@ -7024,7 +8918,7 @@ const AdminSettings: React.FC = () => {
                     type="checkbox"
                     checked={current}
                     disabled={busy === row.key}
-                    onChange={(e) => toggle(row.key, e.target.checked)}
+                    onChange={e => toggle(row.key, e.target.checked)}
                   />
                   <span className="admin-setting-track" aria-hidden="true">
                     <span className="admin-setting-thumb" />
@@ -7040,13 +8934,7 @@ const AdminSettings: React.FC = () => {
   )
 }
 
-const MCP_TOGGLE_KEYS = [
-  "mcp_enabled",
-  "mcp_tool_read",
-  "mcp_tool_write",
-  "mcp_tool_delete",
-  "mcp_tool_share",
-] as const
+const MCP_TOGGLE_KEYS = ["mcp_enabled", "mcp_tool_read", "mcp_tool_write", "mcp_tool_delete", "mcp_tool_share"] as const
 
 const AdminMcp: React.FC = () => {
   const [settings, setSettings] = useState<api.AdminSetting[] | null>(null)
@@ -7061,14 +8949,18 @@ const AdminMcp: React.FC = () => {
       api.adminGetSettings(),
       api.adminGetMcpPreview().catch(() => null),
       api.adminListMcpServers().catch(() => []),
-    ]).then(([s, p, srv]) => {
-      setSettings(s)
-      setPreview(p)
-      setServers(srv ?? [])
-    }).catch(e => setError(e?.message ?? "Failed to load MCP settings"))
+    ])
+      .then(([s, p, srv]) => {
+        setSettings(s)
+        setPreview(p)
+        setServers(srv ?? [])
+      })
+      .catch(e => setError(e?.message ?? "Failed to load MCP settings"))
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const toggle = async (key: string, next: boolean) => {
     setBusyKey(key)
@@ -7083,7 +8975,7 @@ const AdminMcp: React.FC = () => {
     }
   }
 
-  const mcpSettings = (settings ?? []).filter(s => MCP_TOGGLE_KEYS.includes(s.key as typeof MCP_TOGGLE_KEYS[number]))
+  const mcpSettings = (settings ?? []).filter(s => MCP_TOGGLE_KEYS.includes(s.key as (typeof MCP_TOGGLE_KEYS)[number]))
   const mainToggle = mcpSettings.find(s => s.key === "mcp_enabled")
   const toolToggles = mcpSettings.filter(s => s.key !== "mcp_enabled")
 
@@ -7101,11 +8993,10 @@ const AdminMcp: React.FC = () => {
       <section className="settings-card">
         <h3>Model Context Protocol</h3>
         <p style={{ color: "var(--muted)", fontSize: 13.5, margin: "0 0 16px", lineHeight: 1.55 }}>
-          Stohr ships a Model Context Protocol (MCP) endpoint at <code>{preview?.endpoint ?? "(loading)"}</code>.
-          AI clients (Claude Desktop, IDE extensions, custom agents) authenticate with a
-          personal access token or an OAuth access token and call tools to browse and
-          manage the caller's files. Each capability group has its own switch — turn on
-          only what you trust the AI to do.
+          Stohr ships a Model Context Protocol (MCP) endpoint at <code>{preview?.endpoint ?? "(loading)"}</code>. AI
+          clients (Claude Desktop, IDE extensions, custom agents) authenticate with a personal access token or an OAuth
+          access token and call tools to browse and manage the caller's files. Each capability group has its own switch
+          — turn on only what you trust the AI to do.
         </p>
         {error && <div style={{ color: "var(--danger, #c0392b)", fontSize: 13, marginBottom: 12 }}>{error}</div>}
 
@@ -7122,7 +9013,7 @@ const AdminMcp: React.FC = () => {
                   type="checkbox"
                   checked={mainToggle.value === true}
                   disabled={busyKey === mainToggle.key}
-                  onChange={(e) => toggle(mainToggle.key, e.target.checked)}
+                  onChange={e => toggle(mainToggle.key, e.target.checked)}
                 />
                 <span className="admin-setting-track" aria-hidden="true">
                   <span className="admin-setting-thumb" />
@@ -7150,7 +9041,7 @@ const AdminMcp: React.FC = () => {
                       type="checkbox"
                       checked={current}
                       disabled={busyKey === row.key || mainToggle?.value !== true}
-                      onChange={(e) => toggle(row.key, e.target.checked)}
+                      onChange={e => toggle(row.key, e.target.checked)}
                     />
                     <span className="admin-setting-track" aria-hidden="true">
                       <span className="admin-setting-thumb" />
@@ -7166,14 +9057,18 @@ const AdminMcp: React.FC = () => {
 
       {preview && (
         <section className="settings-card">
-          <h3>Tools exposed to AI clients <span className="admin-count">({preview.advertised_tools.length})</span></h3>
+          <h3>
+            Tools exposed to AI clients <span className="admin-count">({preview.advertised_tools.length})</span>
+          </h3>
           {!preview.enabled && (
             <p style={{ color: "var(--muted)", fontSize: 13.5 }}>
               MCP is currently <strong>off</strong> — the endpoint returns 503 regardless of these toggles.
             </p>
           )}
           {preview.advertised_tools.length === 0 && (
-            <div style={{ color: "var(--muted)", fontSize: 14 }}>No tools advertised. Turn on at least one capability group above.</div>
+            <div style={{ color: "var(--muted)", fontSize: 14 }}>
+              No tools advertised. Turn on at least one capability group above.
+            </div>
           )}
           <div className="admin-list">
             {preview.advertised_tools.map(t => (
@@ -7181,7 +9076,9 @@ const AdminMcp: React.FC = () => {
                 <div className="admin-row-main">
                   <div className="admin-row-line">
                     <strong>{t.name}</strong>
-                    <span className="admin-count" style={{ marginLeft: 8 }}>{t.category}</span>
+                    <span className="admin-count" style={{ marginLeft: 8 }}>
+                      {t.category}
+                    </span>
                   </div>
                   <div className="admin-row-sub">{t.description}</div>
                 </div>
@@ -7190,8 +9087,7 @@ const AdminMcp: React.FC = () => {
           </div>
           {preview.hidden_tools.length > 0 && (
             <div style={{ marginTop: 12, fontSize: 13, color: "var(--muted)" }}>
-              <strong>Hidden:</strong>{" "}
-              {preview.hidden_tools.map(t => `${t.name} (${t.category})`).join(", ")}
+              <strong>Hidden:</strong> {preview.hidden_tools.map(t => `${t.name} (${t.category})`).join(", ")}
             </div>
           )}
         </section>
@@ -7199,15 +9095,25 @@ const AdminMcp: React.FC = () => {
 
       <section className="settings-card">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <h3 style={{ margin: 0 }}>External MCP servers <span className="admin-count">({servers?.length ?? 0})</span></h3>
-          <button className="btn btn-primary" onClick={() => setShowAdd(s => !s)}>{showAdd ? "Cancel" : "Add server"}</button>
+          <h3 style={{ margin: 0 }}>
+            External MCP servers <span className="admin-count">({servers?.length ?? 0})</span>
+          </h3>
+          <button type="button" className="btn btn-primary" onClick={() => setShowAdd(s => !s)}>
+            {showAdd ? "Cancel" : "Add server"}
+          </button>
         </div>
         <p style={{ color: "var(--muted)", fontSize: 13.5, marginTop: 8, lineHeight: 1.55 }}>
-          Outbound MCP servers Stohr can call. Once added, their tools become available
-          to AI integrations (the built-in /ai/chat surface that consumes them is being
-          built — for now this is the configuration surface).
+          Outbound MCP servers Stohr can call. Once added, their tools become available to AI integrations (the built-in
+          /ai/chat surface that consumes them is being built — for now this is the configuration surface).
         </p>
-        {showAdd && <AdminMcpServerForm onSaved={() => { setShowAdd(false); load() }} />}
+        {showAdd && (
+          <AdminMcpServerForm
+            onSaved={() => {
+              setShowAdd(false)
+              load()
+            }}
+          />
+        )}
         <div className="admin-list" style={{ marginTop: 12 }}>
           {(servers ?? []).map(srv => (
             <AdminMcpServerRow key={srv.id} server={srv} onChanged={load} />
@@ -7230,7 +9136,8 @@ const AdminMcpServerForm: React.FC<{ onSaved: () => void }> = ({ onSaved }) => {
   const [err, setErr] = useState<string | null>(null)
 
   const submit = async () => {
-    setBusy(true); setErr(null)
+    setBusy(true)
+    setErr(null)
     try {
       await api.adminCreateMcpServer({
         name: name.trim(),
@@ -7250,12 +9157,33 @@ const AdminMcpServerForm: React.FC<{ onSaved: () => void }> = ({ onSaved }) => {
   return (
     <div className="admin-form" style={{ marginTop: 12, display: "grid", gap: 8 }}>
       <input className="input" placeholder="Name" value={name} onChange={e => setName(e.target.value)} />
-      <input className="input" placeholder="https://example.com/mcp" value={url} onChange={e => setUrl(e.target.value)} />
-      <input className="input" placeholder="Description (optional)" value={desc} onChange={e => setDesc(e.target.value)} />
-      <input className="input" placeholder="Bearer token (optional)" value={token} onChange={e => setToken(e.target.value)} type="password" />
+      <input
+        className="input"
+        placeholder="https://example.com/mcp"
+        value={url}
+        onChange={e => setUrl(e.target.value)}
+      />
+      <input
+        className="input"
+        placeholder="Description (optional)"
+        value={desc}
+        onChange={e => setDesc(e.target.value)}
+      />
+      <input
+        className="input"
+        placeholder="Bearer token (optional)"
+        value={token}
+        onChange={e => setToken(e.target.value)}
+        type="password"
+      />
       {err && <div style={{ color: "var(--danger, #c0392b)", fontSize: 13 }}>{err}</div>}
       <div>
-        <button className="btn btn-primary" onClick={submit} disabled={busy || !name.trim() || !url.trim()}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={submit}
+          disabled={busy || !name.trim() || !url.trim()}
+        >
           {busy ? "Adding…" : "Add"}
         </button>
       </div>
@@ -7269,21 +9197,33 @@ const AdminMcpServerRow: React.FC<{ server: api.McpServer; onChanged: () => void
 
   const toggleEnabled = async () => {
     setBusy(true)
-    try { await api.adminUpdateMcpServer(server.id, { enabled: !server.enabled }); onChanged() }
-    finally { setBusy(false) }
+    try {
+      await api.adminUpdateMcpServer(server.id, { enabled: !server.enabled })
+      onChanged()
+    } finally {
+      setBusy(false)
+    }
   }
 
   const remove = async () => {
     if (!confirm(`Delete external MCP server "${server.name}"?`)) return
     setBusy(true)
-    try { await api.adminDeleteMcpServer(server.id); onChanged() }
-    finally { setBusy(false) }
+    try {
+      await api.adminDeleteMcpServer(server.id)
+      onChanged()
+    } finally {
+      setBusy(false)
+    }
   }
 
   const runProbe = async () => {
-    setBusy(true); setProbe(null)
-    try { setProbe(await api.adminProbeMcpServer(server.id)) }
-    finally { setBusy(false) }
+    setBusy(true)
+    setProbe(null)
+    try {
+      setProbe(await api.adminProbeMcpServer(server.id))
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -7291,12 +9231,21 @@ const AdminMcpServerRow: React.FC<{ server: api.McpServer; onChanged: () => void
       <div className="admin-row-main">
         <div className="admin-row-line">
           <strong>{server.name}</strong>
-          {!server.enabled && <span className="admin-count" style={{ marginLeft: 8 }}>disabled</span>}
+          {!server.enabled && (
+            <span className="admin-count" style={{ marginLeft: 8 }}>
+              disabled
+            </span>
+          )}
         </div>
-        <div className="admin-row-sub" style={{ wordBreak: "break-all" }}>{server.url}</div>
+        <div className="admin-row-sub" style={{ wordBreak: "break-all" }}>
+          {server.url}
+        </div>
         {server.description && <div className="admin-row-sub">{server.description}</div>}
         {probe && (
-          <div className="admin-row-sub" style={{ marginTop: 6, color: probe.ok ? "var(--muted)" : "var(--danger, #c0392b)" }}>
+          <div
+            className="admin-row-sub"
+            style={{ marginTop: 6, color: probe.ok ? "var(--muted)" : "var(--danger, #c0392b)" }}
+          >
             {probe.ok
               ? `OK — ${probe.tools?.length ?? 0} tool(s): ${(probe.tools ?? []).map((t: any) => t.name).join(", ")}`
               : `Probe failed: ${probe.error}`}
@@ -7304,9 +9253,15 @@ const AdminMcpServerRow: React.FC<{ server: api.McpServer; onChanged: () => void
         )}
       </div>
       <div className="admin-row-actions" style={{ display: "flex", gap: 6 }}>
-        <button className="btn" onClick={runProbe} disabled={busy}>Probe</button>
-        <button className="btn" onClick={toggleEnabled} disabled={busy}>{server.enabled ? "Disable" : "Enable"}</button>
-        <button className="btn btn-danger" onClick={remove} disabled={busy}>Delete</button>
+        <button type="button" className="btn" onClick={runProbe} disabled={busy}>
+          Probe
+        </button>
+        <button type="button" className="btn" onClick={toggleEnabled} disabled={busy}>
+          {server.enabled ? "Disable" : "Enable"}
+        </button>
+        <button type="button" className="btn btn-danger" onClick={remove} disabled={busy}>
+          Delete
+        </button>
       </div>
     </div>
   )
@@ -7337,7 +9292,9 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
     const data = await api.adminListUsers()
     setUsers(Array.isArray(data) ? data : [])
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const suspend = async (u: AdminUser) => {
     const reason = prompt(`Suspend @${u.username}? Optional reason (sent to the user):`, "")
@@ -7390,9 +9347,8 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
   }
 
   const setQuota = async (u: AdminUser) => {
-    const currentGb = u.storage_quota_bytes > 0
-      ? String(Math.round((u.storage_quota_bytes / 1024 ** 3) * 100) / 100)
-      : "0"
+    const currentGb =
+      u.storage_quota_bytes > 0 ? String(Math.round((u.storage_quota_bytes / 1024 ** 3) * 100) / 100) : "0"
     const input = prompt(`Storage cap for @${u.username}, in GB (0 = unlimited):`, currentGb)
     if (input === null) return
     const gb = Number(input.trim())
@@ -7407,8 +9363,12 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
   return (
     <section className="settings-card">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h3 style={{ margin: 0 }}>Users <span className="admin-count">({users.length})</span></h3>
-        <button onClick={() => setBroadcasting(true)}><Mail size={14} strokeWidth={1.75} /> Broadcast</button>
+        <h3 style={{ margin: 0 }}>
+          Users <span className="admin-count">({users.length})</span>
+        </h3>
+        <button type="button" onClick={() => setBroadcasting(true)}>
+          <Mail size={14} strokeWidth={1.75} /> Broadcast
+        </button>
       </div>
       {users.length === 0 && <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 14 }}>No users yet.</div>}
       <div className="admin-list">
@@ -7420,7 +9380,14 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
                 <span className="admin-row-name">{u.name}</span>
                 <span className="admin-row-name">· {u.email}</span>
                 {u.is_owner && <span className="admin-pill admin-pill-owner">owner</span>}
-                {u.suspended_at && <span className="admin-pill" style={{ background: "var(--danger-bg, #fee)", color: "var(--danger, #c00)" }}>suspended</span>}
+                {u.suspended_at && (
+                  <span
+                    className="admin-pill"
+                    style={{ background: "var(--danger-bg, #fee)", color: "var(--danger, #c00)" }}
+                  >
+                    suspended
+                  </span>
+                )}
                 {u.id === meId && <span className="admin-pill">you</span>}
                 <span className="admin-row-when">{new Date(u.created_at).toLocaleDateString()}</span>
               </div>
@@ -7432,20 +9399,36 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
               </div>
             </div>
             <div className="admin-row-actions">
-              <button disabled={busy === u.id} onClick={() => setEditing(u)}>Edit</button>
-              <button disabled={busy === u.id} onClick={() => setQuota(u)}>Quota</button>
-              <button disabled={busy === u.id} onClick={() => setMessaging(u)}>Message</button>
-              <button disabled={busy === u.id || u.id === meId} onClick={() => toggleOwner(u)}>
+              <button type="button" disabled={busy === u.id} onClick={() => setEditing(u)}>
+                Edit
+              </button>
+              <button type="button" disabled={busy === u.id} onClick={() => setQuota(u)}>
+                Quota
+              </button>
+              <button type="button" disabled={busy === u.id} onClick={() => setMessaging(u)}>
+                Message
+              </button>
+              <button type="button" disabled={busy === u.id || u.id === meId} onClick={() => toggleOwner(u)}>
                 {u.is_owner ? "Revoke owner" : "Make owner"}
               </button>
-              <button disabled={busy === u.id} onClick={() => resetPassword(u)}>Reset password</button>
-              {u.id !== meId && !u.is_owner && (
-                u.suspended_at
-                  ? <button disabled={busy === u.id} onClick={() => unsuspend(u)}>Unsuspend</button>
-                  : <button disabled={busy === u.id} onClick={() => suspend(u)}>Suspend</button>
-              )}
+              <button type="button" disabled={busy === u.id} onClick={() => resetPassword(u)}>
+                Reset password
+              </button>
+              {u.id !== meId &&
+                !u.is_owner &&
+                (u.suspended_at ? (
+                  <button type="button" disabled={busy === u.id} onClick={() => unsuspend(u)}>
+                    Unsuspend
+                  </button>
+                ) : (
+                  <button type="button" disabled={busy === u.id} onClick={() => suspend(u)}>
+                    Suspend
+                  </button>
+                ))}
               {u.id !== meId && (
-                <button className="danger" disabled={busy === u.id} onClick={() => remove(u)}>Delete</button>
+                <button type="button" className="danger" disabled={busy === u.id} onClick={() => remove(u)}>
+                  Delete
+                </button>
               )}
             </div>
           </div>
@@ -7455,25 +9438,23 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
         <AdminUserEditModal
           user={editing}
           onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); load() }}
+          onSaved={() => {
+            setEditing(null)
+            load()
+          }}
         />
       )}
-      {messaging && (
-        <AdminMessageModal
-          target={messaging}
-          onClose={() => setMessaging(null)}
-        />
-      )}
-      {broadcasting && (
-        <AdminBroadcastModal
-          onClose={() => setBroadcasting(false)}
-        />
-      )}
+      {messaging && <AdminMessageModal target={messaging} onClose={() => setMessaging(null)} />}
+      {broadcasting && <AdminBroadcastModal onClose={() => setBroadcasting(false)} />}
     </section>
   )
 }
 
-const AdminUserEditModal: React.FC<{ user: AdminUser; onClose: () => void; onSaved: () => void }> = ({ user, onClose, onSaved }) => {
+const AdminUserEditModal: React.FC<{ user: AdminUser; onClose: () => void; onSaved: () => void }> = ({
+  user,
+  onClose,
+  onSaved,
+}) => {
   const [name, setName] = useState(user.name)
   const [email, setEmail] = useState(user.email)
   const [username, setUsername] = useState(user.username)
@@ -7486,11 +9467,17 @@ const AdminUserEditModal: React.FC<{ user: AdminUser; onClose: () => void; onSav
     if (name.trim() !== user.name) patch.name = name.trim()
     if (email.trim().toLowerCase() !== user.email) patch.email = email.trim().toLowerCase()
     if (username.trim().toLowerCase() !== user.username) patch.username = username.trim().toLowerCase()
-    if (Object.keys(patch).length === 0) { onClose(); return }
+    if (Object.keys(patch).length === 0) {
+      onClose()
+      return
+    }
     setSaving(true)
     const res = await api.adminEditUser(user.id, patch)
     setSaving(false)
-    if ((res as any).error) { setErr((res as any).error); return }
+    if ((res as any).error) {
+      setErr((res as any).error)
+      return
+    }
     onSaved()
   }
 
@@ -7504,8 +9491,12 @@ const AdminUserEditModal: React.FC<{ user: AdminUser; onClose: () => void; onSav
       <label style={{ fontSize: 13, color: "var(--muted)" }}>Username</label>
       <input value={username} onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))} />
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        <button onClick={onClose}>Cancel</button>
-        <button className="primary" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save"}</button>
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="button" className="primary" disabled={saving} onClick={save}>
+          {saving ? "Saving…" : "Save"}
+        </button>
       </div>
     </Modal>
   )
@@ -7519,11 +9510,17 @@ const AdminMessageModal: React.FC<{ target: AdminUser; onClose: () => void }> = 
 
   const send = async () => {
     setErr("")
-    if (!subject.trim() || !body.trim()) { setErr("Subject and body are required."); return }
+    if (!subject.trim() || !body.trim()) {
+      setErr("Subject and body are required.")
+      return
+    }
     setSending(true)
     const res = await api.adminMessageUser(target.id, subject.trim(), body.trim())
     setSending(false)
-    if ((res as any).error) { setErr((res as any).error); return }
+    if ((res as any).error) {
+      setErr((res as any).error)
+      return
+    }
     onClose()
   }
 
@@ -7531,10 +9528,20 @@ const AdminMessageModal: React.FC<{ target: AdminUser; onClose: () => void }> = 
     <Modal title={`Message @${target.username}`} onClose={onClose}>
       {err && <div className="msg err">{err}</div>}
       <input placeholder="Subject" value={subject} onChange={e => setSubject(e.target.value)} autoFocus />
-      <textarea placeholder="Message" rows={8} value={body} onChange={e => setBody(e.target.value)} style={{ width: "100%", boxSizing: "border-box" }} />
+      <textarea
+        placeholder="Message"
+        rows={8}
+        value={body}
+        onChange={e => setBody(e.target.value)}
+        style={{ width: "100%", boxSizing: "border-box" }}
+      />
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        <button onClick={onClose}>Cancel</button>
-        <button className="primary" disabled={sending} onClick={send}>{sending ? "Sending…" : "Send"}</button>
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="button" className="primary" disabled={sending} onClick={send}>
+          {sending ? "Sending…" : "Send"}
+        </button>
       </div>
     </Modal>
   )
@@ -7548,12 +9555,18 @@ const AdminBroadcastModal: React.FC<{ onClose: () => void }> = ({ onClose }) => 
 
   const send = async () => {
     setErr("")
-    if (!subject.trim() || !body.trim()) { setErr("Subject and body are required."); return }
+    if (!subject.trim() || !body.trim()) {
+      setErr("Subject and body are required.")
+      return
+    }
     if (!confirm("Send this message to every active user on this instance?")) return
     setSending(true)
     const res = await api.adminBroadcast(subject.trim(), body.trim())
     setSending(false)
-    if (res.error) { setErr(res.error); return }
+    if (res.error) {
+      setErr(res.error)
+      return
+    }
     alert(`Delivered to ${res.delivered} user${res.delivered === 1 ? "" : "s"}.`)
     onClose()
   }
@@ -7562,10 +9575,20 @@ const AdminBroadcastModal: React.FC<{ onClose: () => void }> = ({ onClose }) => 
     <Modal title="Broadcast to all users" onClose={onClose}>
       {err && <div className="msg err">{err}</div>}
       <input placeholder="Subject" value={subject} onChange={e => setSubject(e.target.value)} autoFocus />
-      <textarea placeholder="Message" rows={8} value={body} onChange={e => setBody(e.target.value)} style={{ width: "100%", boxSizing: "border-box" }} />
+      <textarea
+        placeholder="Message"
+        rows={8}
+        value={body}
+        onChange={e => setBody(e.target.value)}
+        style={{ width: "100%", boxSizing: "border-box" }}
+      />
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        <button onClick={onClose}>Cancel</button>
-        <button className="primary" disabled={sending} onClick={send}>{sending ? "Sending…" : "Send to all"}</button>
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="button" className="primary" disabled={sending} onClick={send}>
+          {sending ? "Sending…" : "Send to all"}
+        </button>
       </div>
     </Modal>
   )
@@ -7591,7 +9614,9 @@ const AdminInvites: React.FC = () => {
     const data = await api.adminListAllInvites(filter)
     setInvites(Array.isArray(data) ? data : [])
   }
-  useEffect(() => { load() }, [filter])
+  useEffect(() => {
+    load()
+  }, [filter])
 
   const remove = async (id: number) => {
     if (!confirm("Delete this invite?")) return
@@ -7604,13 +9629,25 @@ const AdminInvites: React.FC = () => {
 
   return (
     <section className="settings-card">
-      <h3>All invites <span className="admin-count">({invites.length})</span></h3>
+      <h3>
+        All invites <span className="admin-count">({invites.length})</span>
+      </h3>
       <div className="admin-tabs">
-        <button className={filter === "unused" ? "active" : ""} onClick={() => setFilter("unused")}>Unused</button>
-        <button className={filter === "used" ? "active" : ""} onClick={() => setFilter("used")}>Used</button>
-        <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>All</button>
+        <button type="button" className={filter === "unused" ? "active" : ""} onClick={() => setFilter("unused")}>
+          Unused
+        </button>
+        <button type="button" className={filter === "used" ? "active" : ""} onClick={() => setFilter("used")}>
+          Used
+        </button>
+        <button type="button" className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>
+          All
+        </button>
       </div>
-      {invites.length === 0 && <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 14 }}>No {filter === "all" ? "" : filter} invites.</div>}
+      {invites.length === 0 && (
+        <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 14 }}>
+          No {filter === "all" ? "" : filter} invites.
+        </div>
+      )}
       <div className="admin-list">
         {invites.map(inv => (
           <div key={inv.id} className="admin-row">
@@ -7618,13 +9655,17 @@ const AdminInvites: React.FC = () => {
               <div className="admin-row-line">
                 <strong>{inv.email ?? "Open invite"}</strong>
                 {inv.invited_by_username && <span className="admin-row-name">from @{inv.invited_by_username}</span>}
-                {inv.used_by_username && <span className="admin-pill admin-pill-used">used by @{inv.used_by_username}</span>}
+                {inv.used_by_username && (
+                  <span className="admin-pill admin-pill-used">used by @{inv.used_by_username}</span>
+                )}
                 <span className="admin-row-when">{new Date(inv.created_at).toLocaleDateString()}</span>
               </div>
             </div>
             <div className="admin-row-actions">
               {!inv.used_at && (
-                <button className="danger" disabled={busy === inv.id} onClick={() => remove(inv.id)}>Delete</button>
+                <button type="button" className="danger" disabled={busy === inv.id} onClick={() => remove(inv.id)}>
+                  Delete
+                </button>
               )}
             </div>
           </div>
@@ -7660,7 +9701,12 @@ type AuditEvent = {
 const AdminContact: React.FC = () => {
   const [filter, setFilter] = useState<"new" | "read" | "handled" | "spam" | "all">("new")
   const [items, setItems] = useState<api.ContactMessage[]>([])
-  const [counts, setCounts] = useState<Record<api.ContactMessageStatus, number>>({ new: 0, read: 0, handled: 0, spam: 0 })
+  const [counts, setCounts] = useState<Record<api.ContactMessageStatus, number>>({
+    new: 0,
+    read: 0,
+    handled: 0,
+    spam: 0,
+  })
   const [busy, setBusy] = useState<number | null>(null)
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
 
@@ -7669,7 +9715,9 @@ const AdminContact: React.FC = () => {
     setItems(Array.isArray(res?.items) ? res.items : [])
     setCounts(res?.counts ?? { new: 0, read: 0, handled: 0, spam: 0 })
   }
-  useEffect(() => { load() }, [filter])
+  useEffect(() => {
+    load()
+  }, [filter])
 
   const setStatus = async (id: number, status: api.ContactMessageStatus) => {
     setBusy(id)
@@ -7713,18 +9761,19 @@ const AdminContact: React.FC = () => {
 
   return (
     <section className="settings-card">
-      <h3>Contact submissions <span className="admin-count">({items.length})</span></h3>
+      <h3>
+        Contact submissions <span className="admin-count">({items.length})</span>
+      </h3>
       <div className="admin-tabs">
         {tabs.map(t => (
           <button
+            type="button"
             key={t.key}
             className={filter === t.key ? "active" : ""}
             onClick={() => setFilter(t.key)}
           >
             {t.label}
-            {typeof t.count === "number" && t.count > 0 && (
-              <span className="admin-tab-count">{t.count}</span>
-            )}
+            {typeof t.count === "number" && t.count > 0 && <span className="admin-tab-count">{t.count}</span>}
           </button>
         ))}
       </div>
@@ -7737,10 +9786,7 @@ const AdminContact: React.FC = () => {
         {items.map(m => {
           const isOpen = expanded.has(m.id)
           return (
-            <article
-              key={m.id}
-              className={`contact-card status-${m.status}${isOpen ? " open" : ""}`}
-            >
+            <article key={m.id} className={`contact-card status-${m.status}${isOpen ? " open" : ""}`}>
               <header className="contact-card-head" onClick={() => open(m)}>
                 <div className="contact-card-meta">
                   <span className={`contact-status-pill status-${m.status}`}>{m.status}</span>
@@ -7776,6 +9822,7 @@ const AdminContact: React.FC = () => {
                     <div className="contact-card-actions">
                       {m.status !== "handled" && (
                         <button
+                          type="button"
                           className="primary"
                           onClick={() => setStatus(m.id, "handled")}
                           disabled={busy === m.id}
@@ -7784,16 +9831,17 @@ const AdminContact: React.FC = () => {
                         </button>
                       )}
                       {m.status === "handled" && (
-                        <button onClick={() => setStatus(m.id, "new")} disabled={busy === m.id}>
+                        <button type="button" onClick={() => setStatus(m.id, "new")} disabled={busy === m.id}>
                           Reopen
                         </button>
                       )}
                       {m.status !== "spam" && (
-                        <button onClick={() => setStatus(m.id, "spam")} disabled={busy === m.id}>
+                        <button type="button" onClick={() => setStatus(m.id, "spam")} disabled={busy === m.id}>
                           Mark spam
                         </button>
                       )}
                       <button
+                        type="button"
                         className="danger"
                         onClick={() => remove(m.id)}
                         disabled={busy === m.id}
@@ -7824,15 +9872,38 @@ const AdminAudit: React.FC = () => {
     setEvents(Array.isArray(data) ? data : [])
     setLoading(false)
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const tone = (event: string): string => {
-    if (event.includes("fail") || event.includes("rate_limited") || event.includes("locked") || event.includes("disabled")) return "warn"
-    if (event.startsWith("login.ok") || event.includes("enabled") || event.endsWith(".created") || event === "signup.ok") return "ok"
+    if (
+      event.includes("fail") ||
+      event.includes("rate_limited") ||
+      event.includes("locked") ||
+      event.includes("disabled")
+    )
+      return "warn"
+    if (
+      event.startsWith("login.ok") ||
+      event.includes("enabled") ||
+      event.endsWith(".created") ||
+      event === "signup.ok"
+    )
+      return "ok"
     return "info"
   }
 
-  const presets = ["", "login.ok", "login.fail", "login.rate_limited", "login.mfa_required", "mfa.enabled", "mfa.disabled", "signup.ok"]
+  const presets = [
+    "",
+    "login.ok",
+    "login.fail",
+    "login.rate_limited",
+    "login.mfa_required",
+    "mfa.enabled",
+    "mfa.disabled",
+    "signup.ok",
+  ]
 
   return (
     <section className="settings-card">
@@ -7842,7 +9913,11 @@ const AdminAudit: React.FC = () => {
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
         <select value={eventFilter} onChange={e => setEventFilter(e.target.value)} style={{ minWidth: 220 }}>
-          {presets.map(p => <option key={p} value={p}>{p === "" ? "All events" : p}</option>)}
+          {presets.map(p => (
+            <option key={p} value={p}>
+              {p === "" ? "All events" : p}
+            </option>
+          ))}
         </select>
         <input
           placeholder="Or type a custom event…"
@@ -7850,7 +9925,9 @@ const AdminAudit: React.FC = () => {
           onChange={e => setEventFilter(e.target.value)}
           style={{ flex: 1, minWidth: 180 }}
         />
-        <button onClick={load}>Refresh</button>
+        <button type="button" onClick={load}>
+          Refresh
+        </button>
       </div>
       {loading && <div style={{ color: "var(--muted)" }}>Loading…</div>}
       {!loading && events.length === 0 && <div style={{ color: "var(--muted)" }}>No events</div>}
@@ -7860,11 +9937,11 @@ const AdminAudit: React.FC = () => {
             <div key={ev.id} className={`audit-row audit-${tone(ev.event)}`}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
                 <code style={{ fontSize: 12, fontWeight: 600 }}>{ev.event}</code>
-                <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                  {new Date(ev.created_at).toLocaleString()}
-                </span>
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>{new Date(ev.created_at).toLocaleString()}</span>
               </div>
-              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div
+                style={{ fontSize: 11, color: "var(--muted)", marginTop: 2, display: "flex", gap: 8, flexWrap: "wrap" }}
+              >
                 {ev.username && <span>@{ev.username}</span>}
                 {!ev.username && ev.user_email && <span>{ev.user_email}</span>}
                 {!ev.username && !ev.user_email && ev.user_id === null && <span>anonymous</span>}
@@ -7883,10 +9960,19 @@ const AdminStats: React.FC = () => {
   const [s, setS] = useState<AdminStatsData | null>(null)
 
   useEffect(() => {
-    api.adminGetStats().then(setS).catch(() => setS(null))
+    api
+      .adminGetStats()
+      .then(setS)
+      .catch(() => setS(null))
   }, [])
 
-  if (!s) return <section className="settings-card"><h3>Stats</h3><div style={{ color: "var(--muted)", fontSize: 14 }}>Loading…</div></section>
+  if (!s)
+    return (
+      <section className="settings-card">
+        <h3>Stats</h3>
+        <div style={{ color: "var(--muted)", fontSize: 14 }}>Loading…</div>
+      </section>
+    )
 
   const stats: Array<{ label: string; value: string }> = [
     { label: "Users", value: String(s.users) },
@@ -7930,7 +10016,9 @@ const App: React.FC = () => {
     const t = decodeURIComponent(hash.slice("#token=".length))
     if (!t) return
     history.replaceState(null, "", window.location.pathname + window.location.search)
-    api.adoptToken(t).then(u => { if (u) setLoggedIn(true) })
+    api.adoptToken(t).then(u => {
+      if (u) setLoggedIn(true)
+    })
   }, [loggedIn])
 
   useEffect(() => {
@@ -7940,8 +10028,14 @@ const App: React.FC = () => {
   }, [])
 
   useEffect(() => {
-    if (loggedIn) { setNeedsSetup(false); return }
-    api.getSetupStatus().then(s => setNeedsSetup(!!s?.needsSetup)).catch(() => setNeedsSetup(false))
+    if (loggedIn) {
+      setNeedsSetup(false)
+      return
+    }
+    api
+      .getSetupStatus()
+      .then(s => setNeedsSetup(!!s?.needsSetup))
+      .catch(() => setNeedsSetup(false))
   }, [loggedIn])
 
   const initialInvite = useMemo(() => {
@@ -7957,13 +10051,29 @@ const App: React.FC = () => {
   if (route.kind === "contact") return <ContactPage />
   if (route.kind === "oauthAuthorize") {
     if (!loggedIn) {
-      return <Auth onLogin={() => setLoggedIn(true)} initialInvite={null} needsSetup={false} initialMode="login" oauthNext={`/oauth/authorize${route.query}`} />
+      return (
+        <Auth
+          onLogin={() => setLoggedIn(true)}
+          initialInvite={null}
+          needsSetup={false}
+          initialMode="login"
+          oauthNext={`/oauth/authorize${route.query}`}
+        />
+      )
     }
     return <OAuthConsent query={route.query} />
   }
   if (route.kind === "pair") {
     if (!loggedIn) {
-      return <Auth onLogin={() => setLoggedIn(true)} initialInvite={null} needsSetup={false} initialMode="login" oauthNext={`/pair${route.query}`} />
+      return (
+        <Auth
+          onLogin={() => setLoggedIn(true)}
+          initialInvite={null}
+          needsSetup={false}
+          initialMode="login"
+          oauthNext={`/pair${route.query}`}
+        />
+      )
     }
     return <DevicePair query={route.query} />
   }
@@ -7983,7 +10093,9 @@ const App: React.FC = () => {
     return <Auth onLogin={() => setLoggedIn(true)} initialInvite={null} needsSetup={true} />
   }
   if (path === "/signup") {
-    return <Auth onLogin={() => setLoggedIn(true)} initialInvite={initialInvite} needsSetup={false} initialMode="signup" />
+    return (
+      <Auth onLogin={() => setLoggedIn(true)} initialInvite={initialInvite} needsSetup={false} initialMode="signup" />
+    )
   }
   return <Auth onLogin={() => setLoggedIn(true)} initialInvite={null} needsSetup={false} initialMode="login" />
 }

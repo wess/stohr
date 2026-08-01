@@ -8,12 +8,15 @@ import { dropFederationBlob, fetchFederationBytes, isFederationKey } from "../fe
 import type { FileRow, FolderRow } from "../permissions/index.ts"
 import { canWrite, fileAccess, folderAccess } from "../permissions/index.ts"
 import { clamdConfig } from "../scanning/index.ts"
+import { escapeLike } from "../search/parse.ts"
 import { decideInline } from "../security/inline.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { drop, fetchObject, makeKey, put } from "../storage/index.ts"
 import { generateImageThumb, isThumbable, THUMB_MAX_BYTES, thumbKeyFor } from "../storage/thumb.ts"
 import { checkQuota, computeUsage } from "../usage/index.ts"
+import { pagingHeaders, parsePaging } from "../util/paging.ts"
 import { dispatchWebhook } from "../webhooks/dispatch.ts"
+import { parseRange } from "./range.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -43,45 +46,55 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         const folderRaw = url.searchParams.get("folder_id") ?? url.searchParams.get("folderId")
         const q = url.searchParams.get("q")
         const folderId = folderRaw === null || folderRaw === "" || folderRaw === "null" ? null : Number(folderRaw)
+        // The 200-row cap used to be a hard ceiling with no way past it, so a
+        // folder holding more than that simply hid the rest. It's now the
+        // default page size, and `offset` walks the remainder.
+        const paging = parsePaging(url)
+
+        // `created_at` alone is not a total order — files uploaded in the same
+        // batch share a timestamp, so rows could repeat or vanish across page
+        // boundaries. `id` breaks the tie.
+        const page = <T>(qb: T): T =>
+          (qb as any).orderBy("created_at", "DESC").orderBy("id", "DESC").limit(paging.limit).offset(paging.offset)
 
         if (q) {
           const rows = await db.all(
-            from("files")
-              .where(p => p("user_id").equals(userId))
-              .where(p => p("deleted_at").isNull())
-              .where(p => p("name").ilike(`%${q}%`))
-              .select("id", "name", "mime", "size", "folder_id", "version", "created_at")
-              .orderBy("created_at", "DESC")
-              .limit(200),
+            page(
+              from("files")
+                .where(p => p("user_id").equals(userId))
+                .where(p => p("deleted_at").isNull())
+                .where(p => p("name").ilike(`%${escapeLike(q)}%`))
+                .select("id", "name", "mime", "size", "folder_id", "version", "created_at"),
+            ),
           )
-          return json(c, 200, rows)
+          return json(pagingHeaders(c, putHeader, paging, rows.length), 200, rows)
         }
 
         if (folderId === null) {
           const rows = await db.all(
-            from("files")
-              .where(p => p("user_id").equals(userId))
-              .where(p => p("deleted_at").isNull())
-              .where(p => p("folder_id").isNull())
-              .select("id", "name", "mime", "size", "folder_id", "version", "created_at")
-              .orderBy("created_at", "DESC")
-              .limit(200),
+            page(
+              from("files")
+                .where(p => p("user_id").equals(userId))
+                .where(p => p("deleted_at").isNull())
+                .where(p => p("folder_id").isNull())
+                .select("id", "name", "mime", "size", "folder_id", "version", "created_at"),
+            ),
           )
-          return json(c, 200, rows)
+          return json(pagingHeaders(c, putHeader, paging, rows.length), 200, rows)
         }
 
         const access = await folderAccess(db, userId, folderId)
         if (!access) return json(c, 404, { error: "Folder not found" })
 
         const rows = await db.all(
-          from("files")
-            .where(p => p("folder_id").equals(folderId))
-            .where(p => p("deleted_at").isNull())
-            .select("id", "name", "mime", "size", "folder_id", "version", "created_at")
-            .orderBy("created_at", "DESC")
-            .limit(200),
+          page(
+            from("files")
+              .where(p => p("folder_id").equals(folderId))
+              .where(p => p("deleted_at").isNull())
+              .select("id", "name", "mime", "size", "folder_id", "version", "created_at"),
+          ),
         )
-        return json(c, 200, rows)
+        return json(pagingHeaders(c, putHeader, paging, rows.length), 200, rows)
       }),
     ),
 
@@ -136,15 +149,40 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
           return stream(headered, 200, rs)
         }
 
-        const res = await fetchObject(store, row.storage_key)
+        // Media elements need ranged reads to seek. Advertise support on every
+        // response so the browser knows scrubbing is available, and answer a
+        // Range request with 206 + Content-Range.
+        const size = Number(row.size)
+        const ranged = parseRange(c.request.headers.get("range"), size)
+
+        if (ranged.kind === "unsatisfiable") {
+          return json(putHeader(c, "content-range", `bytes */${size}`), 416, {
+            error: "Requested range not satisfiable",
+          })
+        }
+
+        const range = ranged.kind === "satisfiable" ? ranged.range : undefined
+        const res = await fetchObject(store, row.storage_key, range)
         if (!res.body) return json(c, 500, { error: "Storage returned empty body" })
 
-        const withHeaders = putHeader(
+        // Prefer the length the backend reports. `files.size` is what the row
+        // claimed at upload time; if the two ever disagree, announcing the DB
+        // value leaves the client waiting for bytes that never arrive.
+        const upstreamLength = res.headers.get("content-length")
+        const bodyLength = range ? range.end - range.start + 1 : Number(upstreamLength) || size
+
+        let headered = putHeader(
           putHeader(putHeader(c, "content-type", contentType), "content-disposition", disposition),
           "content-length",
-          String(row.size),
+          String(bodyLength),
         )
-        return stream(withHeaders, 200, res.body)
+        headered = putHeader(headered, "accept-ranges", "bytes")
+
+        if (range) {
+          headered = putHeader(headered, "content-range", `bytes ${range.start}-${range.end}/${size}`)
+          return stream(headered, 206, res.body)
+        }
+        return stream(headered, 200, res.body)
       }),
     ),
 

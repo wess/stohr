@@ -11,7 +11,6 @@ export const APP_TOKEN_PREFIX = "stohr_pat_"
 
 export const hashToken = (raw: string): string => createHash("sha256").update(raw).digest("hex")
 
-type AppRow = { id: number; user_id: number }
 type UserRow = {
   id: number
   email: string
@@ -52,44 +51,49 @@ export const requireAuth =
 
     if (t.startsWith(APP_TOKEN_PREFIX)) {
       const tokenHash = hashToken(t)
-      const app = (await opts.db.one(
-        from("apps")
-          .where(q => q("token_hash").equals(tokenHash))
-          .select("id", "user_id"),
-      )) as AppRow | null
-      if (!app) {
+      // One round-trip instead of two. The join is LEFT so a token whose user
+      // row vanished still returns the app row, letting us keep the distinct
+      // "references a missing user" error rather than reporting it as an
+      // invalid token.
+      const row = (await opts.db.one({
+        text: `
+          SELECT a.id AS app_id,
+                 u.id, u.email, u.username, u.name, u.is_owner, u.deleted_at, u.suspended_at
+            FROM apps a
+            LEFT JOIN users u ON u.id = a.user_id
+           WHERE a.token_hash = $1
+           LIMIT 1
+        `,
+        values: [tokenHash],
+      })) as (UserRow & { app_id: number; id: number | null }) | null
+      if (!row) {
         return halt(conn, 401, { error: "Invalid or revoked app token" })
       }
-      const user = (await opts.db.one(
-        from("users")
-          .where(q => q("id").equals(app.user_id))
-          .select("id", "email", "username", "name", "is_owner", "deleted_at", "suspended_at"),
-      )) as UserRow | null
-      if (!user) {
+      if (row.id === null) {
         return halt(conn, 401, { error: "App token references a missing user" })
       }
-      if (user.deleted_at) {
+      if (row.deleted_at) {
         return halt(conn, 403, { error: ACCOUNT_DELETED_ERROR })
       }
-      if (user.suspended_at) {
+      if (row.suspended_at) {
         return halt(conn, 403, { error: ACCOUNT_SUSPENDED_ERROR })
       }
       void opts.db
         .execute(
           from("apps")
-            .where(q => q("id").equals(app.id))
+            .where(q => q("id").equals(row.app_id))
             .update({ last_used_at: raw("NOW()") }),
         )
         .catch(() => {})
       return assign(conn, {
         auth: {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          name: user.name,
-          is_owner: user.is_owner,
+          id: row.id,
+          email: row.email,
+          username: row.username,
+          name: row.name,
+          is_owner: row.is_owner,
           via: "app",
-          app_id: app.id,
+          app_id: row.app_id,
         },
       })
     }
@@ -142,10 +146,23 @@ export const requireAuth =
     }
 
     // Regular user JWT — must match an active session row when a jti is present.
+    // The session check and the account-status check are independent, so they
+    // go out together rather than one after the other. This is the hottest
+    // path in the API; every authenticated request pays for it.
     const jti = typeof payload?.jti === "string" ? payload.jti : null
+    const [sess, account] = await Promise.all([
+      jti ? isSessionActive(opts.db, jti) : Promise.resolve(null),
+      typeof payload?.id === "number"
+        ? (opts.db.one(
+            from("users")
+              .where(q => q("id").equals(payload.id))
+              .select("deleted_at", "suspended_at"),
+          ) as Promise<{ deleted_at: string | null; suspended_at: string | null } | null>)
+        : Promise.resolve(null),
+    ])
+
     if (jti) {
-      const sess = await isSessionActive(opts.db, jti)
-      if (!sess.active) {
+      if (!sess?.active) {
         return halt(conn, 401, { error: "Session revoked. Sign in again." })
       }
       touchSession(opts.db, jti)
@@ -153,18 +170,11 @@ export const requireAuth =
     // Defense in depth — sessions are revoked when scheduleDeletion runs, so
     // an active session for a deleted user shouldn't exist, but if it does
     // (race or session-less PAT-style call) we still reject it.
-    if (typeof payload?.id === "number") {
-      const u = (await opts.db.one(
-        from("users")
-          .where(q => q("id").equals(payload.id))
-          .select("deleted_at", "suspended_at"),
-      )) as { deleted_at: string | null; suspended_at: string | null } | null
-      if (u?.deleted_at) {
-        return halt(conn, 403, { error: ACCOUNT_DELETED_ERROR })
-      }
-      if (u?.suspended_at) {
-        return halt(conn, 403, { error: ACCOUNT_SUSPENDED_ERROR })
-      }
+    if (account?.deleted_at) {
+      return halt(conn, 403, { error: ACCOUNT_DELETED_ERROR })
+    }
+    if (account?.suspended_at) {
+      return halt(conn, 403, { error: ACCOUNT_SUSPENDED_ERROR })
     }
 
     return assign(conn, { auth: { ...payload, jti } })

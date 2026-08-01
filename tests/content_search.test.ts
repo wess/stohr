@@ -65,7 +65,41 @@ describe("content search", () => {
     expect(r.status).toBe(200)
     expect(r.body.files.length).toBeGreaterThan(0)
     expect(r.body.files[0].name).toBe("rollout.txt")
-    expect(r.body.files[0].snippet).toContain("<b>")
+    expect(r.body.files[0].snippet).toContain("<mark>migration</mark>")
+  })
+
+  test("snippet markup in file contents is escaped, not rendered", async () => {
+    const alice = await signupOwner()
+    // The snippet is injected into the page with dangerouslySetInnerHTML, and
+    // file contents are attacker-controlled — anyone who can put a file in
+    // front of a collaborator could otherwise inject into their session.
+    await db.execute(
+      from("files").insert({
+        user_id: alice.id,
+        folder_id: null,
+        name: "payload.txt",
+        mime: "text/plain",
+        size: 64,
+        storage_key: "manual-key-xss",
+        version: 1,
+        // Unquoted attributes on purpose: Postgres' text-search parser
+        // tokenizes (and so discards) a well-formed quoted tag, but markup
+        // like this is not recognized as a tag and reaches the response with
+        // its angle brackets intact. Escaping is what makes it inert.
+        text_content: "Budget notes <img src=x onerror=alert(1)> and more budget detail",
+        text_indexed_version: 1,
+        text_indexed_at: raw("NOW()"),
+      }),
+    )
+    const r = await callJson(app, "/search/content?q=budget", { token: alice.token })
+    expect(r.status).toBe(200)
+    const snippet = r.body.files[0].snippet as string
+    // Highlighting still works...
+    expect(snippet).toContain("<mark>")
+    // ...but nothing from the file body survives as live markup.
+    expect(snippet).not.toContain("<img")
+    expect(snippet).toContain("&lt;img")
+    expect(snippet).toContain("&gt;")
   })
 
   test("content search only returns files the caller can see", async () => {

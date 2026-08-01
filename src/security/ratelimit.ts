@@ -46,6 +46,21 @@ export const checkRate = async (
   return { ok: false, count, retryAfterSeconds: retryAfter }
 }
 
+// Buckets are keyed on caller-supplied values — `login:id:<whatever>`,
+// `contact:email:<whatever>` — so an unauthenticated caller can mint an
+// unbounded number of rows just by varying the identity it submits. Nothing
+// in the UPSERT above ever deletes, so the table only grows. Drop buckets
+// whose window closed long ago; the longest window in use is an hour, and a
+// day of slack keeps this well clear of any in-flight limit.
+const RATE_LIMIT_RETENTION_HOURS = 24
+
+export const sweepRateLimits = async (db: Connection): Promise<void> => {
+  await db.execute({
+    text: `DELETE FROM rate_limits WHERE window_started_at < NOW() - ($1 || ' hours')::interval`,
+    values: [String(RATE_LIMIT_RETENTION_HOURS)],
+  })
+}
+
 // Parse a "1.2.3.4,5.6.7.0/24,10.0.0.0/8" env var into a list of matchers.
 // Single addresses match exactly; CIDRs match by prefix length. IPv4 only —
 // good enough for the common reverse-proxy / load-balancer case.

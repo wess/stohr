@@ -9,6 +9,25 @@ const authId = (c: any) => (c.assigns.auth as { id: number }).id
 // quotes, OR, and negation in a search-engine-like syntax, so the caller
 // can write `"exact phrase" OR -excluded keyword` and have it Just Work.
 
+// ts_headline defaults to wrapping matches in <b>…</b>, and it does NOT
+// escape the surrounding document text — so a file whose *contents* contain
+// markup produced a snippet with that markup live, which the SPA then
+// rendered as HTML. Any user who could put a file in front of a collaborator
+// could inject into that collaborator's page.
+//
+// Instead: mark hits with sentinels, escape the whole snippet, then convert
+// only the sentinels into <mark>. The single-byte control characters below
+// don't survive text extraction from any real document, and if one somehow
+// did, the worst it produces is a spuriously highlighted word.
+const HL_START = "\u0011"
+const HL_STOP = "\u0012"
+
+const escapeHtml = (s: string): string =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+
+const renderSnippet = (raw: string): string =>
+  escapeHtml(raw).split(HL_START).join("<mark>").split(HL_STOP).join("</mark>")
+
 export const contentSearchRoutes = (db: Connection, secret: string) => {
   const guard = pipeline(requireAuth({ secret, db }))
 
@@ -57,7 +76,8 @@ export const contentSearchRoutes = (db: Connection, secret: string) => {
                  f.created_at,
                  ts_rank(f.text_tsv, q.tsq) AS rank,
                  ts_headline('english', coalesce(f.text_content, ''), q.tsq,
-                   'MaxWords=20, MinWords=8, ShortWord=2, MaxFragments=1, FragmentDelimiter=" … "'
+                   'StartSel=' || $4 || ', StopSel=' || $5 ||
+                   ', MaxWords=20, MinWords=8, ShortWord=2, MaxFragments=1, FragmentDelimiter=" … "'
                  ) AS snippet
             FROM files f, q
            WHERE f.deleted_at IS NULL
@@ -75,7 +95,7 @@ export const contentSearchRoutes = (db: Connection, secret: string) => {
            ORDER BY rank DESC, f.created_at DESC
            LIMIT $3
         `,
-          values: [q, userId, limit],
+          values: [q, userId, limit, HL_START, HL_STOP],
         })) as Array<{
           id: number
           name: string
@@ -101,7 +121,7 @@ export const contentSearchRoutes = (db: Connection, secret: string) => {
             version: r.version,
             created_at: r.created_at,
             rank: r.rank,
-            snippet: r.snippet,
+            snippet: renderSnippet(r.snippet ?? ""),
           })),
         })
       }),

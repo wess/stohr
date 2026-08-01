@@ -299,7 +299,7 @@ export const federationRoutes = (db: Connection, secret: string, publicBaseUrl: 
         const instanceKeys = await getInstanceKeys(db)
 
         // Reach out to the introducer. They verify the invite + sign us up.
-        let pairResponse
+        let pairResponse: Awaited<ReturnType<typeof callPair>>
         try {
           pairResponse = await callPair(
             parsed.body.introducer,

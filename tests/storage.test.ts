@@ -55,6 +55,74 @@ describe("local storage driver", () => {
     expect([...new Uint8Array(await res.arrayBuffer())]).toEqual([...bytes])
   })
 
+  // Ranged reads are drained through res.body — the same way the download
+  // handler streams them — rather than via res.text(). Those two disagree:
+  // handing a BunFile slice to `new Response(...)` produces a body stream
+  // that honors the slice's start offset but runs to EOF, so a range read
+  // returned every byte from `start` onward while the headers still claimed
+  // the requested length. Asserting on .text() hides that entirely.
+  const drainBody = async (res: Response): Promise<Uint8Array> => {
+    const reader = res.body!.getReader()
+    const chunks: Uint8Array[] = []
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+    }
+    const total = chunks.reduce((n, c) => n + c.length, 0)
+    const out = new Uint8Array(total)
+    let at = 0
+    for (const c of chunks) {
+      out.set(c, at)
+      at += c.length
+    }
+    return out
+  }
+
+  const RANGE_BODY = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+  test("ranged get streams only the requested window", async () => {
+    const h = store()
+    const key = makeKey(1, "ranged.txt")
+    await put(h, key, RANGE_BODY, "text/plain")
+
+    const res = await fetchObject(h, key, { start: 5, end: 14 })
+    const bytes = await drainBody(res)
+    expect(new TextDecoder().decode(bytes)).toBe("56789abcde")
+    expect(bytes.length).toBe(10)
+  })
+
+  test("ranged get to the final byte", async () => {
+    const h = store()
+    const key = makeKey(1, "ranged-tail.txt")
+    await put(h, key, RANGE_BODY, "text/plain")
+
+    const res = await fetchObject(h, key, { start: 26, end: RANGE_BODY.length - 1 })
+    const bytes = await drainBody(res)
+    expect(new TextDecoder().decode(bytes)).toBe("qrstuvwxyz")
+  })
+
+  test("a single-byte range yields exactly one byte", async () => {
+    const h = store()
+    const key = makeKey(1, "ranged-one.txt")
+    await put(h, key, RANGE_BODY, "text/plain")
+
+    const res = await fetchObject(h, key, { start: 0, end: 0 })
+    const bytes = await drainBody(res)
+    expect(bytes.length).toBe(1)
+    expect(new TextDecoder().decode(bytes)).toBe("0")
+  })
+
+  test("an unranged get still returns the whole object", async () => {
+    const h = store()
+    const key = makeKey(1, "ranged-full.txt")
+    await put(h, key, RANGE_BODY, "text/plain")
+
+    const res = await fetchObject(h, key)
+    const bytes = await drainBody(res)
+    expect(new TextDecoder().decode(bytes)).toBe(RANGE_BODY)
+  })
+
   test("get on a missing key throws", async () => {
     const h = store()
     await expect(fetchObject(h, makeKey(9, "nope.txt"))).rejects.toThrow()

@@ -29,7 +29,8 @@
         "noLabelWithoutControl": "warn",
         "useMediaCaption": "warn",
         "useSemanticElements": "warn",
-        "useAriaPropsSupportedByRole": "warn"
+        "useAriaPropsSupportedByRole": "warn",
+        "noAutofocus": "off"
       }
     }
   },

@@ -1,6 +1,6 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
+import { del, get, json, parseJson, patch, pipeline, post, putHeader } from "@atlas/server"
 import type { RunSummary } from "../actions/dispatch.ts"
 import { fireEvent } from "../actions/dispatch.ts"
 import { requireAuth } from "../auth/guard.ts"
@@ -8,6 +8,7 @@ import type { FolderRow } from "../permissions/index.ts"
 import { canWrite, folderAccess, isOwner } from "../permissions/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { drop } from "../storage/index.ts"
+import { pagingHeaders, parsePaging } from "../util/paging.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -28,34 +29,53 @@ const collectSubtreeAll = async (db: Connection, rootId: number): Promise<number
   return rows.map(r => r.id)
 }
 
+// Breadcrumbs for a folder. This walked the ancestry one level at a time,
+// costing up to two round-trips per level on every folder open; the whole
+// chain plus each node's grant flag now comes back in one query and the
+// truncation happens in memory.
+//
+// Visibility rule (unchanged): an owner sees the full path to the root. A
+// collaborator sees only as far up as the folder they were granted — the
+// share root is the top of their world, and names above it aren't theirs
+// to see.
 const buildTrail = async (
   db: Connection,
   userId: number,
   folder: FolderRow,
 ): Promise<Array<{ id: number; name: string }>> => {
-  const trail: Array<{ id: number; name: string }> = [{ id: folder.id, name: folder.name }]
-  const isOwn = folder.user_id === userId
-  let cursor: { id: number; parent_id: number | null; name: string } = folder
-  while (cursor.parent_id) {
-    if (!isOwn) {
-      const directGrant = await db.one(
-        from("collaborations")
-          .where(q => q("resource_type").equals("folder"))
-          .where(q => q("resource_id").equals(cursor.id))
-          .where(q => q("user_id").equals(userId))
-          .select("id"),
+  const rows = (await db.execute({
+    text: `
+      WITH RECURSIVE chain AS (
+        SELECT id, parent_id, name, 0 AS depth
+          FROM folders
+         WHERE id = $1
+        UNION ALL
+        SELECT f.id, f.parent_id, f.name, c.depth + 1
+          FROM folders f
+          JOIN chain c ON f.id = c.parent_id
+         WHERE f.deleted_at IS NULL
+           AND c.depth < 64
       )
-      if (directGrant) break
-    }
-    const parent = (await db.one(
-      from("folders")
-        .where(q => q("id").equals(cursor.parent_id!))
-        .where(q => q("deleted_at").isNull())
-        .select("id", "parent_id", "name"),
-    )) as { id: number; parent_id: number | null; name: string } | null
-    if (!parent) break
-    trail.unshift({ id: parent.id, name: parent.name })
-    cursor = parent
+      SELECT c.id,
+             c.name,
+             EXISTS (
+               SELECT 1 FROM collaborations col
+                WHERE col.resource_type = 'folder'
+                  AND col.resource_id = c.id
+                  AND col.user_id = $2
+             ) AS granted
+        FROM chain c
+       ORDER BY c.depth ASC
+    `,
+    values: [folder.id, userId],
+  })) as Array<{ id: number; name: string; granted: boolean }>
+
+  const isOwn = folder.user_id === userId
+  const trail: Array<{ id: number; name: string }> = []
+  for (const row of rows) {
+    trail.unshift({ id: row.id, name: row.name })
+    // Stop once we reach the node this user was granted directly.
+    if (!isOwn && row.granted) break
   }
   return trail
 }
@@ -73,28 +93,36 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
         const parentRaw = url.searchParams.get("parent_id") ?? url.searchParams.get("parentId")
         const parentId = parentRaw === null || parentRaw === "" || parentRaw === "null" ? null : Number(parentRaw)
 
+        // This listing had no limit at all — an account with a large number of
+        // sibling folders serialized every one of them into a single response.
+        const paging = parsePaging(url)
+        const page = <T>(qb: T): T =>
+          (qb as any).orderBy("name", "ASC").orderBy("id", "ASC").limit(paging.limit).offset(paging.offset)
+
         if (parentId === null) {
           const rows = await db.all(
-            from("folders")
-              .where(q => q("user_id").equals(userId))
-              .where(q => q("deleted_at").isNull())
-              .where(q => q("parent_id").isNull())
-              .orderBy("name", "ASC"),
+            page(
+              from("folders")
+                .where(q => q("user_id").equals(userId))
+                .where(q => q("deleted_at").isNull())
+                .where(q => q("parent_id").isNull()),
+            ),
           )
-          return json(c, 200, rows)
+          return json(pagingHeaders(c, putHeader, paging, rows.length), 200, rows)
         }
 
         const access = await folderAccess(db, userId, parentId)
         if (!access) return json(c, 404, { error: "Folder not found" })
 
         const rows = await db.all(
-          from("folders")
-            .where(q => q("parent_id").equals(parentId))
-            .where(q => q("deleted_at").isNull())
-            .orderBy("name", "ASC"),
+          page(
+            from("folders")
+              .where(q => q("parent_id").equals(parentId))
+              .where(q => q("deleted_at").isNull()),
+          ),
         )
 
-        return json(c, 200, rows)
+        return json(pagingHeaders(c, putHeader, paging, rows.length), 200, rows)
       }),
     ),
 

@@ -102,7 +102,7 @@ const indexOne = async (db: Connection, store: StorageHandle, row: Pending): Pro
     return
   }
 
-  let result
+  let result: Awaited<ReturnType<typeof extractText>>
   try {
     result = await extractText(bytes, { mime: row.mime, name: row.name })
   } catch (err) {

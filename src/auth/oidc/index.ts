@@ -77,7 +77,7 @@ export const oidcRoutes = (db: Connection, secret: string, appUrl: string) => {
           return halt(c, 503, { error: "OIDC is not configured on this instance" })
         }
 
-        let disco
+        let disco: Awaited<ReturnType<typeof fetchDiscovery>>
         try {
           disco = await fetchDiscovery(cfg.issuer_url!)
         } catch (err) {
@@ -154,7 +154,7 @@ export const oidcRoutes = (db: Connection, secret: string, appUrl: string) => {
         const cfg = await loadOidcConfig(db)
         if (!isOidcReady(cfg)) return renderError(c, "OIDC is not configured")
 
-        let disco
+        let disco: Awaited<ReturnType<typeof fetchDiscovery>>
         try {
           disco = await fetchDiscovery(cfg.issuer_url!)
         } catch (err) {
@@ -184,7 +184,7 @@ export const oidcRoutes = (db: Connection, secret: string, appUrl: string) => {
         const tokenBody = (await tokenRes.json()) as { id_token?: string; access_token?: string }
         if (!tokenBody.id_token) return renderError(c, "Identity provider did not return an ID token")
 
-        let verified
+        let verified: Awaited<ReturnType<typeof verifyIdToken>>
         try {
           verified = await verifyIdToken(tokenBody.id_token, {
             jwksUri: disco.jwks_uri,
@@ -202,7 +202,7 @@ export const oidcRoutes = (db: Connection, secret: string, appUrl: string) => {
         const nameClaim = claims[cfg.name_claim] as string | undefined
         const usernameClaim = claims[cfg.username_claim] as string | undefined
 
-        let user
+        let user: Awaited<ReturnType<typeof upsertFromExternal>>["user"]
         try {
           const result = await upsertFromExternal(
             db,

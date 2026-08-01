@@ -1,5 +1,6 @@
 import { from } from "@atlas/db"
 import { fileAccess, folderAccess } from "../../permissions/index.ts"
+import { escapeLike } from "../../search/parse.ts"
 import { fetchObject } from "../../storage/index.ts"
 import { asError, asText, type Tool, type ToolContext } from "./index.ts"
 
@@ -88,24 +89,28 @@ const readFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
 const search = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const q = typeof args.query === "string" ? args.query.trim() : ""
   if (!q) return asError("query is required")
-  const files = await ctx.db.all(
-    from("files")
-      .where(p => p("user_id").equals(ctx.userId))
-      .where(p => p("deleted_at").isNull())
-      .where(p => p("name").ilike(`%${q}%`))
-      .select("id", "name", "mime", "size", "folder_id", "version", "created_at")
-      .orderBy("created_at", "DESC")
-      .limit(50),
-  )
-  const folders = await ctx.db.all(
-    from("folders")
-      .where(p => p("user_id").equals(ctx.userId))
-      .where(p => p("deleted_at").isNull())
-      .where(p => p("name").ilike(`%${q}%`))
-      .select("id", "name", "parent_id", "created_at")
-      .orderBy("created_at", "DESC")
-      .limit(50),
-  )
+  const pattern = `%${escapeLike(q)}%`
+  // Independent queries — no reason to make the second wait on the first.
+  const [files, folders] = await Promise.all([
+    ctx.db.all(
+      from("files")
+        .where(p => p("user_id").equals(ctx.userId))
+        .where(p => p("deleted_at").isNull())
+        .where(p => p("name").ilike(pattern))
+        .select("id", "name", "mime", "size", "folder_id", "version", "created_at")
+        .orderBy("created_at", "DESC")
+        .limit(50),
+    ),
+    ctx.db.all(
+      from("folders")
+        .where(p => p("user_id").equals(ctx.userId))
+        .where(p => p("deleted_at").isNull())
+        .where(p => p("name").ilike(pattern))
+        .select("id", "name", "parent_id", "created_at")
+        .orderBy("created_at", "DESC")
+        .limit(50),
+    ),
+  ])
   return asText({ files, folders })
 }
 

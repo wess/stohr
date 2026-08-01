@@ -24,6 +24,11 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/stohr
       SECRET: ${SECRET}
+      # Connection pool. Keep DB_POOL * (api replicas) under the Postgres
+      # server's max_connections (100 by default on the postgres:16 image).
+      DB_POOL: ${DB_POOL:-20}
+      IDLE_TIMEOUT: ${IDLE_TIMEOUT:-120}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       STORAGE_DRIVER: ${STORAGE_DRIVER:-s3}
       # Used when STORAGE_DRIVER=local. The named `blobs` volume below is
       # mounted at /data/blobs unconditionally — empty / unused if you stay
@@ -56,6 +61,20 @@ services:
       # blank to disable scanning entirely (uploads are marked 'skipped').
       CLAMD_HOST: ${CLAMD_HOST:-}
       CLAMD_PORT: ${CLAMD_PORT:-3310}
+      # OIDC single sign-on. All three are required together; leave them unset
+      # and Stohr runs with local auth only. Without these passed through, the
+      # SSO button can't be enabled from a compose deployment at all.
+      SSO_ISSUER: ${SSO_ISSUER:-}
+      SSO_CLIENT_ID: ${SSO_CLIENT_ID:-}
+      SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET:-}
+      # Machine-to-machine user provisioning. Blank keeps /castle/* unmounted.
+      CASTLE_ADMIN_TOKEN: ${CASTLE_ADMIN_TOKEN:-}
+      # Social sign-in (each provider needs both halves to activate).
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      SOCIAL_AUTO_PROVISION: ${SOCIAL_AUTO_PROVISION:-true}
     volumes:
       - blobs:/data/blobs
     depends_on:
@@ -71,6 +90,7 @@ services:
     environment:
       WEB_PORT: "3001"
       API_URL: http://api:3000
+      IDLE_TIMEOUT: ${IDLE_TIMEOUT:-120}
     depends_on:
       - api
     restart: unless-stopped

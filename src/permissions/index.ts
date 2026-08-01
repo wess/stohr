@@ -131,28 +131,32 @@ export const fileAccess = async (
   userId: number,
   fileId: number,
 ): Promise<{ role: Role; file: FileRow } | null> => {
-  const file = (await db.one(
-    from("files")
-      .where(q => q("id").equals(fileId))
-      .where(q => q("deleted_at").isNull()),
-  )) as FileRow | null
-  if (!file) return null
+  // The parent folder's space_id comes back with the file rather than in a
+  // follow-up query. Every download and thumbnail request lands here, and the
+  // space check has to happen before the owner fast path, so the second
+  // round-trip was unconditional.
+  const row = (await db.one({
+    text: `
+      SELECT f.*, fo.space_id AS parent_space_id
+        FROM files f
+        LEFT JOIN folders fo ON fo.id = f.folder_id
+       WHERE f.id = $1
+         AND f.deleted_at IS NULL
+       LIMIT 1
+    `,
+    values: [fileId],
+  })) as (FileRow & { parent_space_id: number | null }) | null
+  if (!row) return null
+  const { parent_space_id: parentSpaceId, ...file } = row as FileRow & { parent_space_id: number | null }
 
   // If the file lives inside a Space, the space membership is the
   // authoritative source of access. We don't fall back to file.user_id
   // because in a Space "the user who uploaded it" is not the same as
   // "the file's owner" — the space is.
-  if (file.folder_id != null) {
-    const folder = (await db.one(
-      from("folders")
-        .where(q => q("id").equals(file.folder_id))
-        .select("space_id"),
-    )) as { space_id: number | null } | null
-    if (folder?.space_id != null) {
-      const role = await spaceRoleForFolder(db, userId, folder.space_id)
-      if (role) return { role, file }
-      return null
-    }
+  if (parentSpaceId != null) {
+    const role = await spaceRoleForFolder(db, userId, parentSpaceId)
+    if (role) return { role, file }
+    return null
   }
 
   if (file.user_id === userId) return { role: "owner", file }

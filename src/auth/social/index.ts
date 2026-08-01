@@ -94,7 +94,7 @@ const finishLogin = async (
   profile: { subject: string; email: string | null; display_name: string | null; preferred_username: string | null },
   redirectTo: string,
 ): Promise<Conn> => {
-  let user
+  let user: Awaited<ReturnType<typeof upsertFromExternal>>["user"]
   try {
     const result = await upsertFromExternal(
       db,
@@ -139,7 +139,7 @@ const googleStart =
     const cfg = configFor("google")
     if (!cfg) return halt(c, 404, { error: "Google sign-in is not enabled on this instance" })
 
-    let disco
+    let disco: Awaited<ReturnType<typeof fetchDiscovery>>
     try {
       disco = await fetchDiscovery(GOOGLE_ISSUER)
     } catch (err) {
@@ -184,7 +184,7 @@ const googleCallback =
       return renderError(c, "Sign-in state has expired — start over")
     }
 
-    let disco
+    let disco: Awaited<ReturnType<typeof fetchDiscovery>>
     try {
       disco = await fetchDiscovery(GOOGLE_ISSUER)
     } catch (err) {
@@ -214,7 +214,7 @@ const googleCallback =
     const tokenBody = (await tokenRes.json()) as { id_token?: string }
     if (!tokenBody.id_token) return renderError(c, "Google did not return an ID token")
 
-    let verified
+    let verified: Awaited<ReturnType<typeof verifyIdToken>>
     try {
       verified = await verifyIdToken(tokenBody.id_token, {
         jwksUri: disco.jwks_uri,
@@ -295,7 +295,7 @@ const githubCallback =
       return renderError(c, (err as Error).message)
     }
 
-    let profile
+    let profile: Awaited<ReturnType<typeof fetchGithubProfile>>
     try {
       profile = await fetchGithubProfile(accessToken)
     } catch (err) {

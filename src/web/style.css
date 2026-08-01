@@ -950,6 +950,12 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
 }
 .card .row button { padding: 4px 8px; font-size: 12px; }
 
+.load-more {
+  display: flex;
+  justify-content: center;
+  padding: 20px 0 8px;
+}
+
 .empty {
   text-align: center;
   padding: 80px 20px;
