@@ -13,7 +13,7 @@ Bun + React + Postgres + S3-compatible blob store.
 - **WebDAV** — RFC 4918 endpoint at `/webdav`. Mount your account from macOS Finder, Windows Explorer, GNOME Files, or `rclone`. Per-user HTTP-Basic credentials, separate from the account password. See [`docs/WEBDAV.md`](docs/WEBDAV.md).
 - **Auth** — email + password, TOTP 2FA, WebAuthn passkeys, password reset, full session list with per-device revoke.
 - **OAuth provider** — third-party apps integrate via authorization-code with PKCE, refresh-token rotation, device flow.
-- **S3-compatible API** — point any S3 SDK or `s3cmd`/`rclone` at Stohr; reuses your account quota.
+- **S3-compatible API** — point any S3 SDK or `s3cmd`/`rclone` at Stohr; reuses your account quota. `bun run connect` prints a one-paste token that points another service — such as [Inkling](https://github.com/wess/inkling) — at your storage.
 - **Storage quotas** — optional per-user storage caps the owner sets from the admin panel.
 - **Admin** — invite issuance, audit log, user/owner management, OAuth client registry, per-user storage caps, **owner-toggleable feature flags** (federation, WebDAV) — no restart needed.
 

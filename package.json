@@ -15,7 +15,8 @@
     "lint:fix": "biome lint --write src/ scripts/",
     "format:fix": "biome format --write src/ scripts/",
     "check:fix": "biome check --write src/ scripts/",
-    "tidy": "bun run format:fix && bun run lint:fix"
+    "tidy": "bun run format:fix && bun run lint:fix",
+    "connect": "bun scripts/connect.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.10",
