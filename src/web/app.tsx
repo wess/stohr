@@ -9318,7 +9318,7 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
     setBusy(null)
     if (res.error) return alert(res.error)
     if (res.reset_url) {
-      prompt("Email isn't configured. Copy this reset URL and send it manually:", res.reset_url)
+      prompt("The email wasn't sent. Copy this reset URL and send it manually:", res.reset_url)
     } else {
       alert("Reset link emailed to the user.")
     }

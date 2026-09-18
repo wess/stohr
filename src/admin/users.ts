@@ -255,15 +255,23 @@ export const adminUserRoutes = (db: Connection, secret: string, emailer: Emailer
           text: tpl.text,
         })
 
-        logEvent(db, { userId, event: "admin.password_reset_issued", metadata: { target: id, emailed: !!sent } })
+        // `sent` is always an object, so it has to be read, not truth-tested:
+        // a failed send is { ok: false }, and with email off the message is
+        // only logged ({ ok: true, logged: true }). Neither reached the user.
+        const delivered = sent.ok && !sent.logged
+        logEvent(db, {
+          userId,
+          event: "admin.password_reset_issued",
+          metadata: { target: id, emailed: delivered, error: sent.ok ? null : sent.error },
+        })
 
         return json(c, 200, {
           id,
-          emailed: !!sent,
+          emailed: delivered,
           // The owner sees the URL only when delivery wasn't possible —
           // this avoids handing the token to a different admin tab unless
           // it's actually needed.
-          reset_url: sent ? null : resetUrl,
+          reset_url: delivered ? null : resetUrl,
         })
       }),
     ),

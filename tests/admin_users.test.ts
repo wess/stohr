@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import { db, truncateAll, TEST_SECRET } from "./setup.ts"
-import { buildApp, callJson } from "./helpers/http.ts"
+import { buildApp, callJson, setFakeEmailResult } from "./helpers/http.ts"
 
 let app: ReturnType<typeof buildApp>
 
@@ -99,7 +99,29 @@ describe("admin user management", () => {
     })
     expect(res.status).toBe(200)
     expect(res.body.emailed).toBe(true) // fakeEmailer returns ok
+    expect(res.body.reset_url).toBeNull()
   })
+
+  for (const [label, result] of [
+    ["the send fails", { ok: false as const, error: "wess.email 403: domain not verified" }],
+    ["email is off and the message is only logged", { ok: true as const, logged: true }],
+  ] as const) {
+    test(`reset-password hands the owner the URL when ${label}`, async () => {
+      const alice = await signup("Alice", "alice", "alice@x.test")
+      const bob = await signup("Bob", "bob", "bob@x.test", await inviteToken(alice))
+      setFakeEmailResult(result)
+      try {
+        const res = await callJson(app, `/admin/users/${bob.id}/reset-password`, {
+          method: "POST", token: alice.token, body: {},
+        })
+        expect(res.status).toBe(200)
+        expect(res.body.emailed).toBe(false)
+        expect(res.body.reset_url).toContain("/password/reset?token=")
+      } finally {
+        setFakeEmailResult(null)
+      }
+    })
+  }
 
   test("admin message delivers to recipient inbox", async () => {
     const alice = await signup("Alice", "alice", "alice@x.test")

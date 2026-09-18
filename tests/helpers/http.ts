@@ -40,7 +40,7 @@ import { adminUserRoutes } from "../../src/admin/users.ts"
 import { webdavRoutes } from "../../src/webdav/index.ts"
 import { webdavSettingsRoutes } from "../../src/webdav/settings.ts"
 import type { StorageHandle } from "../../src/storage/index.ts"
-import type { Emailer, EmailMessage } from "../../src/email/index.ts"
+import type { EmailResult, Emailer, EmailMessage } from "../../src/email/index.ts"
 
 // In-memory storage stub implementing the full StorageDriver interface
 // (put / get / drop) so handlers that read objects back — e.g. share
@@ -81,11 +81,17 @@ export const sentEmails: EmailMessage[] = []
 export const resetSentEmails = () => {
   sentEmails.length = 0
 }
+// A test that needs a failed or log-only send sets the next result here and
+// clears it with null when done; by default every send is delivered.
+let fakeResult: EmailResult | null = null
+export const setFakeEmailResult = (result: EmailResult | null) => {
+  fakeResult = result
+}
 export const fakeEmailer: Emailer = {
   enabled: true,
   send: async (msg) => {
     sentEmails.push(msg)
-    return { ok: true, id: `test-${sentEmails.length}` }
+    return fakeResult ?? { ok: true, id: `test-${sentEmails.length}` }
   },
 }
 
