@@ -1,19 +1,10 @@
-import { randomBytes } from "node:crypto"
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
+import { generateAccessKey, generateSecretKey } from "./generate.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
-
-const generateAccessKey = (): string => {
-  const buf = randomBytes(15)
-  return `AKIA${buf.toString("base64").replace(/[+/=]/g, "").toUpperCase().slice(0, 16)}`
-}
-
-const generateSecretKey = (): string => {
-  return randomBytes(30).toString("base64").replace(/[+/=]/g, "").slice(0, 40)
-}
 
 export const s3KeyRoutes = (db: Connection, secret: string) => {
   const guard = pipeline(requireAuth({ secret, db, noOAuth: true }))
