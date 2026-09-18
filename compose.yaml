@@ -44,6 +44,7 @@ services:
       APP_URL: ${APP_URL:-http://localhost:3001}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM: ${RESEND_FROM:-Stohr <onboarding@resend.dev>}
+      RESEND_API_URL: ${RESEND_API_URL:-https://api.resend.com}
       RP_ID: ${RP_ID:-localhost}
       RP_NAME: ${RP_NAME:-Stohr}
       RP_ORIGIN: ${RP_ORIGIN:-http://localhost:3001}

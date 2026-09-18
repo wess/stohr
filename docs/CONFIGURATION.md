@@ -51,6 +51,7 @@ Stohr ships two storage drivers. All file CRUD always goes through the API regar
 | --- | --- | --- |
 | `RESEND_API_KEY` | (empty) | API key. **Leave empty in dev** — emails print to the API console. **Required in prod**: invites, password reset, and collaboration emails silently fail without it |
 | `RESEND_FROM` | `Stohr <onboarding@resend.dev>` | From-address. Must be a verified sender on your Resend account, or use the test sender |
+| `RESEND_API_URL` | `https://api.resend.com` | Base URL of the email API; Stohr posts to `<base>/emails`. Point it at any Resend-compatible server — for [Corsair](https://github.com/wess/corsair), `https://<host>/api` with a *Sending only* `cs_` key as `RESEND_API_KEY` |
 
 ### WebAuthn / passkeys
 

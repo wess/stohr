@@ -114,6 +114,7 @@ const config = defineConfig({
   webdavEnabledLegacy: env("WEBDAV_ENABLED", { default: "" }),
   resendApiKey: env("RESEND_API_KEY", { default: "" }),
   resendFrom: env("RESEND_FROM", { default: "Stohr <onboarding@resend.dev>" }),
+  resendApiUrl: env("RESEND_API_URL", { default: "https://api.resend.com" }),
   rpId: env("RP_ID", { default: "localhost" }),
   rpName: env("RP_NAME", { default: "Stohr" }),
   rpOrigin: env("RP_ORIGIN", { default: "http://localhost:3001" }),
@@ -172,6 +173,7 @@ const store =
 const emailer = createEmailer({
   apiKey: config.resendApiKey,
   from: config.resendFrom,
+  apiUrl: config.resendApiUrl,
 })
 
 await migrate.up(db, "./migrations")

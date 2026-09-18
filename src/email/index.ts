@@ -1,6 +1,7 @@
-/* Tiny email layer over Resend (REST). One file = one provider; swap by
- * replacing this module. If RESEND_API_KEY is unset, emails fall through
- * to console.log so dev still works without configuring a sending domain. */
+/* Tiny email layer over Resend's REST API. `apiUrl` points it at any server
+ * that speaks that API instead of api.resend.com, e.g. a Corsair install at
+ * https://<host>/api. If RESEND_API_KEY is unset, emails fall through to
+ * console.log so dev still works without configuring a sending domain. */
 
 export type EmailMessage = {
   to: string | string[]
@@ -17,12 +18,13 @@ export type Emailer = {
   send: (msg: EmailMessage) => Promise<EmailResult>
 }
 
-const RESEND_ENDPOINT = "https://api.resend.com/emails"
+export const RESEND_API_URL = "https://api.resend.com"
 
-export const createEmailer = (config: { apiKey: string; from: string }): Emailer => {
+export const createEmailer = (config: { apiKey: string; from: string; apiUrl?: string }): Emailer => {
   const apiKey = (config.apiKey ?? "").trim()
   const from = (config.from ?? "").trim()
   const enabled = apiKey.length > 0 && from.length > 0
+  const endpoint = `${((config.apiUrl ?? "").trim() || RESEND_API_URL).replace(/\/+$/, "")}/emails`
 
   return {
     enabled,
@@ -37,7 +39,7 @@ export const createEmailer = (config: { apiKey: string; from: string }): Emailer
         return { ok: true, logged: true }
       }
       try {
-        const res = await fetch(RESEND_ENDPOINT, {
+        const res = await fetch(endpoint, {
           method: "POST",
           headers: {
             authorization: `Bearer ${apiKey}`,
@@ -54,7 +56,7 @@ export const createEmailer = (config: { apiKey: string; from: string }): Emailer
         })
         if (!res.ok) {
           const body = await res.text().catch(() => "")
-          return { ok: false, error: `Resend ${res.status}: ${body.slice(0, 240)}` }
+          return { ok: false, error: `${new URL(endpoint).host} ${res.status}: ${body.slice(0, 240)}` }
         }
         const data = (await res.json().catch(() => ({}))) as { id?: string }
         return { ok: true, id: data.id }
