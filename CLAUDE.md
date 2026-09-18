@@ -29,7 +29,7 @@ TypeScript + Bun server + React 19 (client) + Postgres + pluggable blob storage 
 
 ### Monorepo shape
 
-Root `package.json` depends on `atlas` (installed via `github:wess/atlas#main`); the single git package vendors every `@atlas/<name>` subpackage under `node_modules/atlas/packages/`. `@atlas/<name>` imports in `src/` resolve through `tsconfig.json` `paths` entries — bun reads tsconfig at runtime. To bump atlas, run `bun update atlas`. Atlas's per-package reference docs live at `node_modules/atlas/packages/<name>/AGENTS.md`; `node_modules/atlas/SOUL.md` and `node_modules/atlas/llms.txt` are the AI-session entry points (or read them on GitHub at wess/atlas).
+Root `package.json` depends on `atlas`, pinned to a release tag (`github:wess/atlas#v0.3.0`); the git package (`@wess/atlas`) vendors every `@atlas/<name>` subpackage under `node_modules/atlas/web/packages/`. `@atlas/<name>` imports in `src/` resolve through `tsconfig.json` `paths` entries — bun reads tsconfig at runtime. To bump atlas, change the tag in `package.json` and run `bun install`; if the release moved its packages (0.3.0 moved them under `web/`), repoint the `paths` too, or every import breaks at runtime. Atlas's per-package reference docs live at `node_modules/atlas/web/packages/<name>/AGENTS.md`; `node_modules/atlas/web/SOUL.md` and `node_modules/atlas/web/llms.txt` are the AI-session entry points (or read them on GitHub at wess/atlas).
 
 ### Request pipeline
 
