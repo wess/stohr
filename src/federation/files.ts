@@ -19,9 +19,7 @@ const authId = (c: any) => (c.assigns.auth as { id: number }).id
 const FED_KEY = (federationId: number, blobId: string) => `fed:${federationId}:${blobId}`
 const FED_SHARD_KEY = (federationId: number, blobId: string) => `fed-shard:${federationId}:${blobId}`
 
-// ──────────────────────────────────────────────────────────────────────────
 // Helpers
-// ──────────────────────────────────────────────────────────────────────────
 
 const openGroupKey = async (db: Connection, fed: FederationRow): Promise<Buffer> => {
   if (!fed.group_key_encrypted) throw new Error("No group key on this federation")
@@ -127,9 +125,7 @@ const dropBlobOnPeer = async (
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
 // Content-sharing upload + fetch
-// ──────────────────────────────────────────────────────────────────────────
 
 type UploadResult = {
   blob_id: string
@@ -315,9 +311,7 @@ const fetchContentSharing = async (
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
 // Space-offering upload + fetch (sharded; see erasure.ts)
-// ──────────────────────────────────────────────────────────────────────────
 
 const uploadSpaceOffering = async (
   db: Connection,
@@ -534,9 +528,7 @@ const fetchSpaceOffering = async (
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
 // Storage-key routing — called by src/files routes to handle fed: keys
-// ──────────────────────────────────────────────────────────────────────────
 
 export const isFederationKey = (storageKey: string): boolean =>
   storageKey.startsWith("fed:") || storageKey.startsWith("fed-shard:")
@@ -647,9 +639,7 @@ export const dropFederationBlob = async (db: Connection, store: StorageHandle, s
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
 // User-facing federation file routes
-// ──────────────────────────────────────────────────────────────────────────
 
 export const federationFilesRoutes = (db: Connection, secret: string, store: StorageHandle) => {
   const gate = requireSettingEnabled(db, SETTING_FEDERATION_ENABLED)
@@ -805,9 +795,7 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
       }),
     ),
 
-    // ────────────────────────────────────────────────────────────────────
     // Peer-to-peer receiver routes (signed peer transport)
-    // ────────────────────────────────────────────────────────────────────
 
     post(
       "/federation/blob/:slug/:blob_id",
@@ -1070,10 +1058,8 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
   ]
 }
 
-// ──────────────────────────────────────────────────────────────────────────
 // Drain sweep — re-replicate blobs we host for draining peers OR move our
 // blobs off draining local members. Best-effort; runs from server.ts.
-// ──────────────────────────────────────────────────────────────────────────
 
 export const sweepFederationDrains = async (db: Connection, store: StorageHandle): Promise<void> => {
   const draining = (await db.all(

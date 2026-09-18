@@ -544,7 +544,7 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
 .kebab-item.danger { color: var(--danger); }
 .kebab-item.danger:hover { background: var(--err-bg); }
 
-/* ─── Folder Settings: friendly sections ─── */
+/* Folder Settings: friendly sections */
 .settings-section {
   display: flex;
   flex-direction: column;
@@ -654,7 +654,7 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
   color: var(--text);
 }
 
-/* ─── Automations: recipe-driven, no jargon ─── */
+/* Automations: recipe-driven, no jargon */
 .auto-panel {
   display: flex;
   flex-direction: column;
@@ -2696,7 +2696,7 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
   .lp-nav-cta .lp-link { display: none; }
 }
 
-/* ─── Action Builder list page ─── */
+/* Action Builder list page */
 .actions-section { margin-bottom: 32px; }
 .actions-section-head {
   display: flex;
@@ -2771,7 +2771,7 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
 .action-tile-sub { font-size: 11px; color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 .action-tile-buttons { display: flex; gap: 6px; margin-top: auto; padding-top: 4px; }
 
-/* ─── Action Builder edit page ─── */
+/* Action Builder edit page */
 .action-edit {
   display: flex;
   flex-direction: column;
@@ -3056,7 +3056,7 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
   background: var(--border);
 }
 
-/* ─────────────── Developer landing page (/developers) ─────────────── */
+/* Developer landing page (/developers) */
 
 .devp-page { min-height: 100vh; }
 
@@ -3091,7 +3091,7 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
   color: var(--text);
 }
 
-/* ─────────────── Contact form (page + modal) ─────────────── */
+/* Contact form (page + modal) */
 
 .contact-form {
   display: flex;
@@ -3206,7 +3206,7 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
   box-shadow: var(--shadow-lg);
 }
 
-/* ─────────────── Help popover (dashboard sidebar) ─────────────── */
+/* Help popover (dashboard sidebar) */
 
 .help-wrap {
   position: relative;
@@ -3263,7 +3263,7 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
   margin-top: 3px;
 }
 
-/* ─────────────── Admin contact cards ─────────────── */
+/* Admin contact cards */
 
 .admin-tab-count {
   display: inline-block;

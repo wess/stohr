@@ -466,5 +466,4 @@ export const federationRoutes = (db: Connection, secret: string, publicBaseUrl: 
   ]
 }
 
-// Re-export utility helpers for other modules.
 export { generateEd25519, randomToken }

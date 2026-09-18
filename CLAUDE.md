@@ -1,6 +1,6 @@
-# CLAUDE.md
+# Stohr
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Repository guidance for agent sessions.
 
 `docs/ARCHITECTURE.md` is the maintained, exhaustive map of the codebase — the full module layout, request pipeline, permissions model, and background sweeps. Read it. This file covers what an agent needs that the docs don't: commands, conventions, and gotchas.
 

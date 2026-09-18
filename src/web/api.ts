@@ -695,7 +695,7 @@ export const adminGetSettings = () => jsonReq("GET", "/admin/settings") as Promi
 
 export const adminUpdateSettings = (updates: Record<string, unknown>) => jsonReq("PATCH", "/admin/settings", updates)
 
-// ──────────────── MCP (Model Context Protocol) ────────────────
+// MCP (Model Context Protocol)
 
 export type McpPreview = {
   enabled: boolean
@@ -756,7 +756,7 @@ export const enableWebdav = () => jsonReq("POST", "/me/webdav", {}) as Promise<W
 
 export const disableWebdav = () => jsonReq("DELETE", "/me/webdav") as Promise<{ disabled: boolean }>
 
-// ──────────────── Federation ────────────────
+// Federation
 
 export type FederationType = "content-sharing" | "space-offering"
 

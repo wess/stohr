@@ -4364,7 +4364,7 @@ const ShareText: React.FC<{ blobUrl: string }> = ({ blobUrl }) => {
   return <pre className="preview-text">{text}</pre>
 }
 
-/* ─────────── Action Builder views ─────────── */
+/* Action Builder views */
 
 const TRIGGER_LABELS: Record<api.ActionEventName, string> = {
   "file.created": "A file is uploaded here",
@@ -6735,9 +6735,7 @@ const WebdavSection: React.FC = () => {
   )
 }
 
-// ────────────────────────────────────────────────────────────────────────────
 // Federation
-// ────────────────────────────────────────────────────────────────────────────
 
 const formatGB = (bytes: number | string): string => {
   const n = Number(bytes)

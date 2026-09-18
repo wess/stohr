@@ -68,7 +68,7 @@ public actor StohrClient {
         throw StohrError(status: http.statusCode, message: "HTTP \(http.statusCode)", body: data)
     }
 
-    // ── auth ──────────────────────────────────────────
+    // auth
 
     public func login(identity: String, password: String) async throws -> AuthResult {
         let res: AuthResult = try await send("POST", "login", body: ["identity": identity, "password": password], expecting: AuthResult.self)
@@ -84,12 +84,12 @@ public actor StohrClient {
         return res
     }
 
-    // ── me ────────────────────────────────────────────
+    // me
 
     public func me() async throws -> User { try await send("GET", "me", expecting: User.self) }
     public func usage() async throws -> Usage { try await send("GET", "me/usage", expecting: Usage.self) }
 
-    // ── folders ───────────────────────────────────────
+    // folders
 
     public func listFolders(parentId: Int? = nil) async throws -> [Folder] {
         let path = "folders?parent_id=\(parentId.map(String.init) ?? "null")"
@@ -111,7 +111,7 @@ public actor StohrClient {
         let _: Empty = try await send("DELETE", "folders/\(id)", expecting: Empty.self)
     }
 
-    // ── files ─────────────────────────────────────────
+    // files
 
     public func listFiles(folderId: Int? = nil, query: String? = nil) async throws -> [StohrFile] {
         let qs = query.map { "q=\($0.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
@@ -156,7 +156,7 @@ public actor StohrClient {
         let _: Empty = try await send("DELETE", "files/\(id)", expecting: Empty.self)
     }
 
-    // ── photo backup ─────────────────────────────────
+    // photo backup
     //
     // Mobile-first protocol. See docs/PHOTO-BACKUP.md.
     //   1. initPhotoBackup() once at launch.
@@ -216,14 +216,14 @@ public actor StohrClient {
         return try JSONDecoder().decode(PhotoUploadResult.self, from: responseData)
     }
 
-    // ── shares ───────────────────────────────────────
+    // shares
 
     public func createShare(fileId: Int, expiresInSeconds: Int) async throws -> Share {
         struct Body: Encodable { let file_id: Int; let expires_in: Int }
         return try await send("POST", "shares", body: Body(file_id: fileId, expires_in: expiresInSeconds), expecting: Share.self)
     }
 
-    // ── s3 keys ──────────────────────────────────────
+    // s3 keys
 
     public func listS3Keys() async throws -> [S3AccessKey] { try await send("GET", "me/s3-keys", expecting: [S3AccessKey].self) }
 

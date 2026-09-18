@@ -131,7 +131,7 @@ const finishLogin = async (
   return renderRedirect(c, redirectTo, sess.token)
 }
 
-// --- Google (OIDC) ---------------------------------------------------------
+// Google (OIDC)
 
 const googleStart =
   (db: Connection, appUrl: string) =>
@@ -242,7 +242,7 @@ const googleCallback =
     )
   }
 
-// --- GitHub (plain OAuth2, no PKCE) ----------------------------------------
+// GitHub (plain OAuth2, no PKCE)
 
 const githubStart =
   (db: Connection, appUrl: string) =>

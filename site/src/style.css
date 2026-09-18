@@ -80,7 +80,7 @@ body {
   user-select: none;
 }
 
-/* ─────────────── Landing page (.lp-*) ─────────────── */
+/* Landing page (.lp-*) */
 
 .lp {
   /* Nord — Snow Storm + Frost + Aurora */
@@ -425,7 +425,7 @@ body {
   align-items: center;
 }
 
-/* ───────── Mock panel base ───────── */
+/* Mock panel base */
 .lp-mock {
   background: #ffffff;
   border: 1px solid var(--lp-line);
@@ -843,7 +843,7 @@ body {
 .lp-mock-link-preview-text strong { font-weight: 600; }
 .lp-mock-link-preview-text span { font-size: 12px; color: var(--lp-muted); }
 
-/* ───────── Federation mock ───────── */
+/* Federation mock */
 
 .lp-mock-fed-stat {
   display: flex;
@@ -919,7 +919,7 @@ body {
   .lp-mock-fed-list li { font-size: 12px; padding: 7px 9px; }
 }
 
-/* ───────── /federation + /webdav marketing pages (.fx-*) ───────── */
+/* /federation + /webdav marketing pages (.fx-*) */
 
 /* "Learn more →" inline link inside the feature body copy on the landing
    page — picks up the warm accent so it reads as a call-to-action without
@@ -935,7 +935,7 @@ body {
 }
 .lp-inline-more:hover { border-bottom-color: var(--lp-warm); }
 
-/* ── Hero "network" diagram on /federation ── */
+/* Hero "network" diagram on /federation */
 .fx-net {
   position: relative;
   width: 100%;
@@ -1002,7 +1002,7 @@ body {
   .fx-net-node { min-width: 80px; font-size: 10px; padding: 6px 8px; }
 }
 
-/* ── Pitch / problem framing block ── */
+/* Pitch / problem framing block */
 .fx-pitch {
   max-width: 760px;
   margin: 0 auto;
@@ -1019,7 +1019,7 @@ body {
 }
 .fx-pitch-lede:last-child { margin-bottom: 0; }
 
-/* ── Mode comparison cards ── */
+/* Mode comparison cards */
 .fx-modes {
   display: grid;
   grid-template-columns: 1fr;
@@ -1100,7 +1100,7 @@ body {
 }
 .fx-mode-note strong { color: var(--lp-ink); }
 
-/* ── How it works flow ── */
+/* How it works flow */
 .fx-flow {
   display: grid;
   grid-template-columns: 1fr;
@@ -1143,7 +1143,7 @@ body {
   margin: 0;
 }
 
-/* ── Versus alternative comparison ── */
+/* Versus alternative comparison */
 .fx-vs {
   display: grid;
   grid-template-columns: 1fr;
@@ -1307,7 +1307,7 @@ body {
   .lp-trust-item { font-size: 12px; }
 }
 
-/* ─────────────── Developer / docs pages (.devp-*) ─────────────── */
+/* Developer / docs pages (.devp-*) */
 
 .devp-page { min-height: 100vh; }
 
@@ -1480,7 +1480,7 @@ body {
 .devp-code .tk-punctuation { color: var(--tk-punctuation); }
 .devp-code .tk-operator    { color: var(--tk-operator); }
 
-/* ─────────────── Docs (markdown-rendered) ─────────────── */
+/* Docs (markdown-rendered) */
 
 .docs-wrap { display: grid; grid-template-columns: 1fr; gap: 24px; max-width: 1100px; margin: 0 auto; padding: 24px clamp(20px, 5vw, 32px) 64px; }
 @media (min-width: 980px) {
@@ -1613,7 +1613,7 @@ body {
   margin: 32px 0;
 }
 
-/* ─────────────── Mobile nav menu (.lp-nav-menu) ─────────────── */
+/* Mobile nav menu (.lp-nav-menu) */
 
 /* The desktop link row (.lp-nav-links) is hidden below 880px; this
    <details>-driven drop-down takes its place. Pure CSS so it works
@@ -1667,7 +1667,7 @@ body {
   .lp-nav-menu { display: block; }
 }
 
-/* ─────────────── Mobile polish ─────────────── */
+/* Mobile polish */
 
 @media (max-width: 600px) {
   .lp-nav-star { padding: 9px 14px; font-size: 14px; }
