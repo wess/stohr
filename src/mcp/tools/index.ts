@@ -16,7 +16,10 @@ export type ToolContext = {
   db: Connection
   store: StorageHandle
   userId: number
-  // The advertised public URL of this Stohr instance — used to mint share links.
+  // the caller's team, which is also the host's: every lookup a tool makes
+  // beyond the caller's own rows has to stay inside it
+  teamId: number
+  // base url of the team host the request came in on — share links land there
   appUrl: string
 }
 

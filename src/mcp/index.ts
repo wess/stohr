@@ -1,9 +1,13 @@
 import type { Connection } from "@atlas/db"
 import { get, json, parseJson, pipeline, post } from "@atlas/server"
+import type { TeamClaims } from "../auth/guard.ts"
 import { requireAuth } from "../auth/guard.ts"
+import { parseScope, type Scope } from "../oauth/helpers.ts"
 import { ownerOnly } from "../security/owner.ts"
 import { mcpEnabled, mcpToolEnabled } from "../settings/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
+import { rootOnly } from "../teams/guards.ts"
+import { requestBaseUrl } from "../teams/request.ts"
 import {
   ERR_INTERNAL,
   ERR_INVALID_PARAMS,
@@ -23,6 +27,24 @@ const SERVER_VERSION = "0.1.0"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
+// OAuth tokens carry a scope string; sessions and PATs act with the user's
+// full authority and get no list, which every check below reads as "allowed".
+const authScopes = (c: any): string[] | null => {
+  const auth = c.assigns.auth as { via?: string; scope?: string }
+  return auth.via === "oauth" ? parseScope(auth.scope ?? "") : null
+}
+
+// Tool categories map onto the OAuth scopes the HTTP API uses for the same
+// operations; trashing is a mutation, so it rides on `write`.
+const scopeFor = (category: ToolCategory): Scope => {
+  if (category === "read") return "read"
+  if (category === "share") return "share"
+  return "write"
+}
+
+const scopeAllows = (scopes: string[] | null, category: ToolCategory): boolean =>
+  scopes === null || scopes.includes(scopeFor(category))
+
 // We re-check per-tool category gating at tools/list time so disabled tools
 // don't even appear in the catalog. That's friendlier for AI clients — they
 // learn the surface upfront and never try to call something that will fail.
@@ -39,6 +61,7 @@ const dispatch = async (
   req: { id: JsonRpcId; method: string; params: any },
   ctx: ToolContext,
   allTools: Tool[],
+  scopes: string[] | null,
 ): Promise<JsonRpcResponse | null> => {
   const { id, method, params } = req
 
@@ -57,7 +80,7 @@ const dispatch = async (
   if (method.startsWith("notifications/")) return null
 
   if (method === "tools/list") {
-    const tools = await filterEnabledTools(ctx.db, allTools)
+    const tools = (await filterEnabledTools(ctx.db, allTools)).filter(t => scopeAllows(scopes, t.category))
     return ok(id, {
       tools: tools.map(t => ({
         name: t.name,
@@ -81,6 +104,14 @@ const dispatch = async (
     if (!allowed) {
       return ok(id, asError(`Tool '${tool.name}' is disabled by the instance owner (${tool.category} tools are off).`))
     }
+    if (!scopeAllows(scopes, tool.category)) {
+      return ok(
+        id,
+        asError(
+          `Tool '${tool.name}' needs the '${scopeFor(tool.category)}' scope; this token has [${(scopes ?? []).join(", ")}].`,
+        ),
+      )
+    }
     try {
       const result = await tool.handler(ctx, (params.arguments ?? {}) as Record<string, unknown>)
       return ok(id, result)
@@ -94,7 +125,9 @@ const dispatch = async (
 }
 
 export const mcpRoutes = (db: Connection, secret: string, store: StorageHandle, appUrl: string) => {
-  const guard = pipeline(requireAuth({ secret, db }), parseJson)
+  // POST would otherwise demand `write`; the session handshake and tools/list
+  // are reads, so the door needs `read` and each tool checks its own scope.
+  const guard = pipeline(requireAuth({ secret, db, scope: "read" }), parseJson)
   const tools = buildToolset()
 
   return [
@@ -110,7 +143,7 @@ export const mcpRoutes = (db: Connection, secret: string, store: StorageHandle, 
       }
       return json(c, 200, {
         enabled,
-        endpoint: `${appUrl.replace(/\/$/, "")}/mcp`,
+        endpoint: `${requestBaseUrl(c.request, appUrl)}/mcp`,
         protocol_version: PROTOCOL_VERSION,
         server: { name: SERVER_NAME, version: SERVER_VERSION },
         categories: cats,
@@ -135,7 +168,15 @@ export const mcpRoutes = (db: Connection, secret: string, store: StorageHandle, 
         }
 
         const userId = authId(c)
-        const ctx: ToolContext = { db, store, userId, appUrl }
+        const scopes = authScopes(c)
+        // share links the tools hand back must land on the caller's team host
+        const ctx: ToolContext = {
+          db,
+          store,
+          userId,
+          teamId: (c.assigns.auth as TeamClaims).teamId,
+          appUrl: requestBaseUrl(c.request, appUrl),
+        }
 
         const responses: JsonRpcResponse[] = []
         for (const raw of requests) {
@@ -145,7 +186,7 @@ export const mcpRoutes = (db: Connection, secret: string, store: StorageHandle, 
           }
           const idOrNull: JsonRpcId = raw.id === undefined ? null : raw.id
           try {
-            const res = await dispatch({ id: idOrNull, method: raw.method, params: raw.params }, ctx, tools)
+            const res = await dispatch({ id: idOrNull, method: raw.method, params: raw.params }, ctx, tools, scopes)
             // Notifications produce null — skip them in the response.
             if (res !== null) responses.push(res)
           } catch (err) {
@@ -173,7 +214,8 @@ export const mcpRoutes = (db: Connection, secret: string, store: StorageHandle, 
 export const adminMcpRoutes = (db: Connection, secret: string, appUrl: string) => {
   const tools = buildToolset()
   const ownerCheck = ownerOnly(db)
-  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck)
+  // instance-wide toggles live on the root host only
+  const guard = pipeline(rootOnly, requireAuth({ secret, db, noOAuth: true }), ownerCheck)
   return [
     get(
       "/admin/mcp/preview",
@@ -183,7 +225,7 @@ export const adminMcpRoutes = (db: Connection, secret: string, appUrl: string) =
         const advertisedNames = new Set(advertised.map(t => t.name))
         return json(c, 200, {
           enabled,
-          endpoint: `${appUrl.replace(/\/$/, "")}/mcp`,
+          endpoint: `${requestBaseUrl(c.request, appUrl)}/mcp`,
           advertised_tools: advertised.map(t => ({ name: t.name, category: t.category, description: t.description })),
           hidden_tools: tools
             .filter(t => !advertisedNames.has(t.name))

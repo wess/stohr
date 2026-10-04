@@ -44,10 +44,25 @@ bun test tests/auth.test.ts
 - `oauth.test.ts` — client registration, auth-code + PKCE flow, token endpoint, refresh rotation + reuse detection, scope guards, discovery
 - `oauth_device.test.ts` — device authorize + polling lifecycle (RFC 8628), discovery
 - `quotas.test.ts` — signup quota defaults, usage breakdown, `/me/usage`, admin-set storage caps
+- `spaces.test.ts` — membership roles, space_id inheritance, no moves across spaces, a removed member keeps no access (files, shares, search, trash, WebDAV), space deletion covers descendants
+- `folders.test.ts` — an editor cannot publish or retype a folder inside a shared folder
+- `webdav.test.ts` — PROPFIND/PUT/GET/MKCOL, MOVE cycle and missing-parent rejection, quota (507), attachment + nosniff on GET, scan verdict reset on replace
+- `uploads.test.ts` — chunked upload caps (total size, open sessions, reserved bytes), collaborator-owned sessions, quota re-check at finalize
+- `s3gateway.test.ts` — SigV4 clock skew, credential date, body hash, infected refusal, quota rollback
+- `filescan.test.ts` — re-upload and version restore reset the scan verdict
+- `teams_hosts.test.ts` — slug rules, `parseHost`, `X-Forwarded-Host` trust, team urls, `withTeams` (unknown slug 404, suspended 403, foreign host = root)
+- `teams_auth.test.ts` — a credential only works on its own team's host (JWT + PAT), `GET /me` team shape, login/password-reset/invite scoping, no open signup on a tenant host, root-only external login, per-host OAuth issuer
+- `teams_admin.test.ts` — `/admin/teams` CRUD + reserved slugs + purge sweep, `/team/*` scoping (a team admin never reaches another team's users, last-admin rule), team quota cap, `/internal/tls/allow`
+- `teams_hardening.test.ts` — the review follow-ups: uniqueness 409s sit behind the password / a per-admin budget and are audited, `root.<ROOT_DOMAIN>` is 404 with no certificate, `/internal/tls/allow` per-peer rate limit, deletion cancel links stay on the team host, `/team/audit` masks the owner as `Platform admin`, comments 404 when unseen, tenant invites are admin-only, the last-admin rule under concurrent demote/suspend/delete, `DELETE /admin/users/:id` drops blobs
+- `limitbody.test.ts` — body caps, and that the rebuilt request keeps the `peerIp` / team stashes
+- `helpers/multipart.ts` — `callMultipart` for the `POST /files` route (the in-memory `fakeStore` holds the bytes)
+- `helpers/teams.ts` — `signupOwner`, `createTeam`, `teamWithAdmin`, `addMember`: a root owner, a team on `acme.stohr.test`, its admin signed in on that host
+
+`buildApp(db, secret, { rootDomain })` turns host routing on for a file; `callJson` / `callRaw` / `callMultipart` take `host` (the `Host` header and url authority) and `peer` (the socket address `withSecurityHeaders` would stash). Without `rootDomain` every host is the root team, which is what the older files assume.
 
 ## What's deliberately not covered yet
 
-- File upload route (multipart parsing + storage I/O — needs a real or mock S3)
+- S3-backed chunked uploads (multipart against a real bucket; tests force `STORAGE_DRIVER=local`)
 - Public folder + public file routes (some go through storage)
 - Web UI (no React testing wired up)
 - Mobile (`flutter test` lives separately under `apps/mobile/`)

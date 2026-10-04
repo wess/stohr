@@ -43,7 +43,8 @@ Stohr ships two storage drivers. All file CRUD always goes through the API regar
 
 | var | default | purpose |
 | --- | --- | --- |
-| `APP_URL` | `http://localhost:3001` | Base URL for email links (invites, password reset, OAuth redirects). Always HTTPS in prod |
+| `APP_URL` | `http://localhost:3001` | Base URL of the root team: email links (invites, password reset, OAuth redirects) and the OAuth issuer. Always HTTPS in prod. With teams, a tenant's links use `<APP_URL scheme>://<slug>.<ROOT_DOMAIN><APP_URL port>` instead |
+| `ROOT_DOMAIN` | (empty) | Turns multi-tenancy on ([TEAMS.md](TEAMS.md)). `<slug>.ROOT_DOMAIN` is that team's host; `ROOT_DOMAIN` itself, and any host not under it (localhost, an IP, health checks), is the root team. An unknown or deleted slug is a 404 on every route, a suspended team a 403. Empty = single tenant, every host is root, nothing changes. Needs wildcard DNS (`*.ROOT_DOMAIN`) and the on-demand TLS block in `caddyfile`. `ROOT_DOMAIN=localhost` works in dev with no DNS (`acme.localhost:3001`). Also the default `RP_ID` when set |
 
 ### Email (Resend)
 
@@ -59,9 +60,9 @@ These three must be set together. A passkey created against one `RP_ID` cannot b
 
 | var | default | purpose |
 | --- | --- | --- |
-| `RP_ID` | `localhost` | Relying-party ID — domain only, no port and no protocol (`stohr.io`, not `https://stohr.io:443`) |
+| `RP_ID` | `ROOT_DOMAIN`, else `localhost` | Relying-party ID — domain only, no port and no protocol (`stohr.io`, not `https://stohr.io:443`). With teams it must be `ROOT_DOMAIN`: that is a registrable suffix of every team host, so one credential works on whichever subdomain its user lives on (credentials are still looked up per user, so they never cross teams) |
 | `RP_NAME` | `Stohr` | Display name shown in the OS-level passkey UI |
-| `RP_ORIGIN` | `http://localhost:3001` | Full origin the SPA is served from. Must match what the browser sees |
+| `RP_ORIGIN` | `http://localhost:3001` | Full origin the SPA is served from. Must match what the browser sees. With teams this is the root team's origin only; a tenant host's ceremonies expect that team's own origin (`https://<slug>.<ROOT_DOMAIN>`), which the API derives from the resolved team, never from the raw `Host` header |
 
 ### Social sign-in (OAuth consumer)
 
@@ -87,6 +88,7 @@ The server builds these from `APP_URL`, so it must match the origin browsers act
 | var | default | purpose |
 | --- | --- | --- |
 | `FEDERATION_PUBLIC_URL` | (empty → falls back to `APP_URL`) | The URL other Stohr instances should hit for peer-to-peer traffic (invite acceptance, blob/shard PUT/GET/DELETE, drain re-replication). Set this only when peer traffic should enter on a different hostname than the user-facing web app |
+| `FEDERATION_ALLOW_HTTP` | (empty) | **Development only.** Peer URLs (invite introducers, `peer_base_url`, gossiped members) must be public `https://` addresses — loopback, RFC1918, link-local and the like are refused before any connection is made. Set to `true` to accept plain `http://` *and* private/loopback peers so two local instances can pair. Never set this in production |
 
 The feature itself is toggled from **Admin → Settings** (`federation_enabled`), not via env. See [FEDERATION.md](FEDERATION.md).
 
@@ -103,7 +105,8 @@ WebDAV has no env var on new deploys — it's an owner toggle (`webdav_enabled`)
 | var | default | purpose |
 | --- | --- | --- |
 | `MAX_UPLOAD_BYTES` | `1073741824` (1 GiB) | Hard cap on a single request body. Bun buffers the body in memory; with `STORAGE_DRIVER=s3` the `@atlas/storage` driver re-buffers it to compute the SigV4 payload hash, so this is effectively a per-upload memory ceiling. The `local` driver streams to disk after Bun's initial buffer |
-| `TRUSTED_PROXIES` | (empty) | Comma-separated IPv4 addresses or CIDRs allowed to set `X-Forwarded-For` / `X-Real-IP`. With Docker Compose set this to `172.16.0.0/12` (covers the bridge). Leave empty for direct-to-API traffic. Untrusted XFF is ignored; the socket peer is used instead |
+| `TRUSTED_PROXIES` | (empty; `127.0.0.1` in the Docker image) | Comma-separated IPv4 addresses or CIDRs allowed to set `X-Forwarded-For` / `X-Real-IP` / `X-Forwarded-Host`. The chain is walked from the right past trusted hops to the first untrusted address, so list every proxy between the client and the API (the single-container image's web process is `127.0.0.1`; add your edge too). With Docker Compose set this to `172.16.0.0/12` (covers the bridge). Leave empty for direct-to-API traffic. Untrusted XFF is ignored; the socket peer is used instead. The same rule decides whether `X-Forwarded-Host` (which the web proxy always sets to the browser's `Host`) is believed when picking the team, and whether a peer may call `/internal/tls/allow` |
+| `WEBHOOKS_ALLOW_PRIVATE` | (empty) | Webhook URLs are resolved and refused when they land on loopback, RFC1918, link-local (cloud metadata), CGNAT or ULA addresses, both at registration and at every delivery; redirects are never followed. Set to `true` on a homelab deployment whose hooks legitimately target LAN services. `http://` is always accepted for webhooks |
 
 ### Antivirus scanning (ClamAV)
 
@@ -141,6 +144,7 @@ These are read by `compose.yaml` and aren't seen by the API directly.
 | --- | --- | --- |
 | `POSTGRES_PASSWORD` | (empty) | Password for the bundled Postgres container |
 | `DOMAIN` | (empty) | Public hostname Caddy serves on. Caddy auto-provisions Let's Encrypt when this is a real domain |
+| `ROOT_DOMAIN` | (empty) | Also passed to Caddy: the `caddyfile` serves `*.ROOT_DOMAIN` with on-demand certificates, each issued only after `GET /internal/tls/allow?domain=` says the name is `ROOT_DOMAIN` or a live team. Set it equal to `DOMAIN` |
 
 ## Email is required in production
 
@@ -200,7 +204,9 @@ On a fresh database, the first signup auto-bypasses the invite gate and is flagg
 
 Per-user storage caps live in the `users.storage_quota_bytes` column. It defaults to `0`, which means **unlimited**. The owner sets a cap for any user from **Admin → Users → Set quota** (`POST /admin/users/:id/quota`).
 
-The cap is enforced at upload time (see `src/files/index.ts` and the S3-compatible API) — an over-quota upload returns **402 Payment Required** with a JSON body `{ error, quota_bytes, used_bytes, attempted_bytes, breakdown }`. Concurrent uploads from the same user are rolled back if the post-write usage check exceeds the cap.
+A second cap applies per team: `teams.quota_bytes` (`NULL` = unlimited) is measured against the sum of every member's usage and set by the owner via `PATCH /admin/teams/:id`. `checkQuota` enforces both; the response says which one was hit (`scope: "user" | "team"`).
+
+The caps are enforced at upload time (see `src/files/index.ts` and the S3-compatible API) — an over-quota upload returns **402 Payment Required** with a JSON body `{ error, scope, quota_bytes, used_bytes, attempted_bytes, breakdown }`. Concurrent uploads are rolled back if the post-write usage check exceeds either cap.
 
 ## Other capabilities
 

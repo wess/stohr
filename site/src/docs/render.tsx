@@ -25,6 +25,7 @@ export const DOCS_INDEX: DocEntry[] = [
   { slug: "s3",             file: "docs/S3.md",            title: "S3-compatible API", group: "Reference" },
   { slug: "sdks",           file: "docs/SDKS.md",          title: "SDKs",              group: "Reference" },
   { slug: "admin",          file: "docs/ADMIN.md",         title: "Admin panel",       group: "Reference" },
+  { slug: "teams",          file: "docs/TEAMS.md",         title: "Teams",             group: "Reference" },
 
   { slug: "search",         file: "docs/SEARCH.md",        title: "Search",            group: "Features" },
   { slug: "spaces",         file: "docs/SPACES.md",        title: "Spaces",            group: "Features" },

@@ -61,6 +61,7 @@ type GithubEmail = {
 export type GithubProfile = {
   subject: string
   email: string | null
+  email_verified: boolean
   display_name: string | null
   preferred_username: string | null
 }
@@ -84,19 +85,25 @@ export const fetchGithubProfile = async (accessToken: string): Promise<GithubPro
   if (!userRes.ok) throw new Error(`GitHub user fetch failed: ${userRes.status}`)
   const user = (await userRes.json()) as GithubUser
 
+  // The public-profile email is free text the user typed, so it is never
+  // treated as verified. The emails endpoint (user:email scope) says which
+  // addresses GitHub actually confirmed.
   let email = user.email ? user.email.toLowerCase() : null
-  // Public-profile email is often null; pull the verified primary from the
-  // dedicated endpoint (granted by the user:email scope).
+  let verified = false
   const emailsRes = await fetch(GITHUB_EMAILS, { headers: ghHeaders(accessToken) })
   if (emailsRes.ok) {
     const emails = (await emailsRes.json()) as GithubEmail[]
     const found = primaryVerifiedEmail(emails)
-    if (found) email = found
+    if (found) {
+      email = found
+      verified = true
+    }
   }
 
   return {
     subject: String(user.id),
     email,
+    email_verified: verified,
     display_name: user.name ?? user.login,
     preferred_username: user.login,
   }

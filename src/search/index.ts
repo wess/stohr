@@ -2,6 +2,7 @@ import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { get, json, pipeline } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
+import { visibleFileSql, visibleFolderSql } from "../permissions/index.ts"
 import { escapeLike, mimePatternsFor, parseQuery } from "./parse.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -37,8 +38,10 @@ export const searchRoutes = (db: Connection, secret: string) => {
         const mimePatterns = types.flatMap(mimePatternsFor)
         const extPatterns = exts.map(e => `%.${escapeLike(e)}`)
 
+        // Personal rows plus the spaces the caller currently belongs to; a
+        // space folder's creator is not its owner.
         let filesQuery = from("files")
-          .where(p => p("user_id").equals(userId))
+          .where(p => p.raw(visibleFileSql(userId)))
           .where(p => p("deleted_at").isNull())
 
         if (hasName) {
@@ -66,7 +69,7 @@ export const searchRoutes = (db: Connection, secret: string) => {
         const folders = hasName
           ? await db.all(
               from("folders")
-                .where(p => p("user_id").equals(userId))
+                .where(p => p.raw(visibleFolderSql(userId)))
                 .where(p => p("deleted_at").isNull())
                 .where(p => p("name").ilike(pattern))
                 .orderBy(raw("similarity(name, $1)", name), "DESC")

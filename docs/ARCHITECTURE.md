@@ -36,7 +36,8 @@ src/
   schema/index.ts       — TypeScript schema mirror for @atlas/db
   auth/
     index.ts            — signup / login / MFA challenge
-    guard.ts            — requireAuth pipeline guard (JWT, PAT, OAuth)
+    guard.ts            — requireAuth pipeline guard (JWT, PAT, OAuth + scope derivation)
+    redirect.ts         — same-origin clamp for post-sign-in redirect_to
     sessions.ts         — list + revoke sessions, periodic sweep
     mfa.ts              — TOTP setup / enable / disable / backup codes
     passkeys.ts         — WebAuthn registration + discoverable login
@@ -64,14 +65,16 @@ src/
   s3/                   — S3-compatible endpoints with sigv4 verification
   security/
     headers.ts          — HSTS, CSP, frame-options, COOP/CORP, peer-IP capture
-    ratelimit.ts        — sliding-bucket rate limiter + TRUSTED_PROXIES check
+    ratelimit.ts        — sliding-bucket rate limiter + client IP resolution
+    proxies.ts          — TRUSTED_PROXIES parsing + right-to-left X-Forwarded-For walk (shared with web/serve.ts)
     audit.ts            — structured event logger
     sessions.ts         — JWT session activeness check
     totp.ts             — RFC 6238 verifier
     inline.ts           — inline-Content-Type allowlist for downloads
     owner.ts            — DB-backed `is_owner` guard
   permissions/          — unified folder/file access resolver (incl. Space membership lookup)
-  usage/                — storage-usage + quota-check helpers
+  usage/                — storage-usage + quota-check helpers (per-user and per-team caps)
+  teams/                — multi-tenancy (see TEAMS.md): host → team resolver + cache (resolve.ts, request.ts), slug rules, guards (rootOnly, teamAdminOnly), membership helpers, team urls, /admin/teams + purge sweep (admin.ts), /team/* (routes.ts), caddy on-demand tls allow-list (tls.ts)
   storage/              — pluggable blob backends (s3/, local/) behind a StorageDriver interface
   email/                — Resend integration + transactional templates
   federation/           — invite-gated peer networks; pairing, signed transport, placement, erasure coding, drain (see FEDERATION.md)
@@ -114,7 +117,9 @@ post("/folders", authed(async (c) => {
 }))
 ```
 
-`requireAuth` puts the verified caller on `c.assigns.auth`. It accepts three credential types:
+Before the router runs, `withTeams` (`src/teams/request.ts`) resolves the request host to a team — `ROOT_DOMAIN` or any host not under it is the root team, `<slug>.ROOT_DOMAIN` a tenant — answers 404 for an unknown slug and 403 for a suspended team, and stashes the result on the `Request`. `teamFor(c.request)` reads it anywhere; with `ROOT_DOMAIN` unset everything is root. See [TEAMS.md](TEAMS.md).
+
+`requireAuth` puts the verified caller on `c.assigns.auth` (including `teamId`, `teamAdmin`, `isRoot`) and refuses, with a generic 401, any credential whose user is not in the host's team. It accepts three credential types:
 
 - **JWT** — issued by `/login`, `/signup`, `/login/mfa`. Carries a `jti` checked against the `sessions` table on every request, so revocation is immediate.
 - **PAT** — strings prefixed `stohr_pat_…`, minted via `POST /me/apps`. Stored as SHA-256 hashes; `last_used_at` updated on each call.
@@ -140,9 +145,11 @@ Roles: `owner` (the user the file/folder belongs to), `editor` (write), `viewer`
 
 `src/security/headers.ts` wraps the router and adds HSTS, `Content-Security-Policy` (strict in prod, HMR-friendly in dev), `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, and the COOP/CORP pair to every response. The same wrapper captures Bun's socket peer IP (via `server.requestIP`) onto `req.peerIp` so the rate limiter can verify XFF claims.
 
-Rate limiting is applied per-route via `checkRate` against the `rate_limits` table (sliding-bucket counters keyed by `<scope>:<key>`). The bucket key uses `clientIp(req)` — which only honors `X-Forwarded-For` / `X-Real-IP` when the socket peer matches a `TRUSTED_PROXIES` CIDR. Otherwise it uses the raw peer.
+Rate limiting is applied per-route via `checkRate` against the `rate_limits` table (sliding-bucket counters keyed by `<scope>:<key>`). The bucket key uses `clientIp(req)` — which only honors `X-Forwarded-For` / `X-Real-IP` when the socket peer matches a `TRUSTED_PROXIES` CIDR, and then walks the chain from the right past trusted hops to the first untrusted address. Otherwise it uses the raw peer.
 
-Audit events (`audit_events` table) are emitted from auth, MFA, sessions, password reset, and OAuth flows via `logEvent`. Owner-only routes go through `ownerOnly(db)` from `src/security/owner.ts`, which re-queries the database rather than trusting the JWT's `is_owner` claim.
+Audit events (`audit_events` table) are emitted from auth, MFA, sessions, password reset, and OAuth flows via `logEvent`; each row carries the actor's `team_id`. Owner-only routes go through `ownerOnly(db)` from `src/security/owner.ts`, which re-queries the database rather than trusting the JWT's `is_owner` claim and only passes root-team users. Team-admin routes (`/team/*`) use `teamAdminOnly(db)` from `src/teams/guards.ts` the same way; `rootOnly` hides root-only surfaces (external login, federation) from tenant hosts with a 404.
+
+`limitBody` (`src/util/limitbody/`) rebuilds the `Request` after capping the body and copies the expando stashes (`peerIp`, the team) onto the new object — without that, `clientIp()` and `teamFor()` would see a bare request on every route with a body.
 
 ## Storage
 
@@ -184,6 +191,7 @@ Started from `src/server.ts` on a `setInterval`. Each one is wrapped in a "runni
 - Expired OAuth refresh tokens (30 day TTL) — every hour
 - Expired password-reset tokens (1 h TTL) — every hour
 - Expired WebAuthn challenges (5 min TTL) — every 5 min
+- Soft-deleted teams past the 24h grace window — every hour; members go through the account hard-delete path (`purgeUser`), then the team row
 - Expired share rows — every hour (started from `shareRoutes`)
 - Expired federation invites (7-day default TTL) — every hour
 - Federation drain re-replication — every 10 min; moves blobs off members marked `draining` until empty, then flips them to `left`

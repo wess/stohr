@@ -125,8 +125,10 @@ const buildSuccessRedirect = (redirectUri: string, code: string, state?: string)
 }
 
 export const oauthAuthorizeRoutes = (db: Connection, secret: string) => {
-  const guard = pipeline(requireAuth({ secret, db }))
-  const authed = pipeline(requireAuth({ secret, db }), parseJson)
+  // Consent mints a new grant. An OAuth token approving another OAuth grant
+  // would let one client bootstrap credentials for any other client.
+  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }))
+  const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), parseJson)
 
   return [
     // The SPA hits this to render the consent screen. We validate every parameter

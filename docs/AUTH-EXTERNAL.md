@@ -4,7 +4,7 @@ Stohr can delegate authentication to **OpenID Connect (OIDC)** identity provider
 
 Once enabled:
 
-- **OIDC** — adds a "Sign in with SSO" button on the login screen. Clicking it kicks off the standard authorization-code flow with PKCE. After the IdP redirects back, Stohr verifies the ID token signature against the issuer's JWKS, applies the configured claim mapping, and either links the OIDC subject to an existing local user (matched by email) or auto-provisions a new account.
+- **OIDC** — adds a "Sign in with SSO" button on the login screen. Clicking it kicks off the standard authorization-code flow with PKCE. After the IdP redirects back, Stohr verifies the ID token signature against the issuer's JWKS, applies the configured claim mapping, and either links the OIDC subject to an existing local user (matched by email, only when the ID token carries `email_verified: true`) or auto-provisions a new account.
 - **LDAP** — adds a "Sign in with LDAP" toggle on the login screen. Submitting the form binds against your directory using the configured service account, looks the user up by filter, then re-binds as the user with the supplied password.
 
 Both providers store a row in `external_identities` keyed on `(provider, subject)`. The "subject" is the OIDC `sub` claim or the user's LDAP DN — durable enough to survive an email change on the IdP side.
@@ -41,10 +41,12 @@ Where `APP_URL` is the value of your `APP_URL` env var (defaults to `http://loca
 3. After the user authenticates at the IdP, the IdP redirects to `/api/auth/oidc/callback?code=…&state=…`.
 4. Stohr exchanges the code at the token endpoint (using the PKCE verifier), verifies the ID token against the IdP's JWKS (RS256 / RS384 / RS512 / ES256 / ES384 supported), and looks up `external_identities` by `(oidc, sub)`.
 5. If a link exists → log the existing user in.
-   - Else if the email already exists locally → link the OIDC identity and log in.
-   - Else if `auto_provision` is on → create a local account and log in.
-   - Else → reject with a clear error.
-6. Stohr issues a normal session JWT and redirects back to the SPA with the token in the URL fragment.
+   - Else if the email is **verified** (`email_verified: true` in the ID token) and already exists locally → link the OIDC identity and log in.
+   - Else if `auto_provision` is on and the email is verified → create a local account and log in. Pending collaborator invites addressed to that email are attached to the new account.
+   - Else → reject with a clear error. An unverified email is never used to match, link, or create an account: anyone who can type an address into their IdP profile would otherwise inherit the account that owns it. Keycloak marks admin-created users unverified by default — tick "Email verified" there, or have users confirm their address.
+6. Stohr issues a normal session JWT and redirects back to the SPA with the token in the URL fragment. An optional `redirect_to` on `/api/auth/oidc/start` is resolved against `APP_URL` and must land on the same origin (path + query only); anything else falls back to `/`.
+
+GitHub reports which addresses it has confirmed, and only those count as verified. Google always sends `email_verified`. LDAP has no such claim: the directory is admin-run, so a `mail` attribute is treated as verified.
 
 State rows are swept every 5 minutes.
 

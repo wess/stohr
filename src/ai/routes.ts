@@ -3,6 +3,7 @@ import { from, raw } from "@atlas/db"
 import { get, json, parseJson, pipeline, post, put } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { ownerOnly } from "../security/owner.ts"
+import { rootOnly } from "../teams/guards.ts"
 import { type AiHandle, type AiMessage, createAi } from "./index.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -65,8 +66,9 @@ const VALID_PROVIDERS = new Set(["openai", "anthropic", "local"])
 
 export const aiRoutes = (db: Connection, secret: string) => {
   const ownerCheck = ownerOnly(db)
-  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck)
-  const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)
+  // one provider config for the instance, keyed by the owner on the root host
+  const guard = pipeline(rootOnly, requireAuth({ secret, db, noOAuth: true }), ownerCheck)
+  const authed = pipeline(rootOnly, requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)
 
   return [
     get(

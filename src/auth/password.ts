@@ -8,6 +8,8 @@ import { passwordResetEmail } from "../email/templates/password.ts"
 import { logEvent } from "../security/audit.ts"
 import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
 import { revokeAllSessions } from "../security/sessions.ts"
+import { requestBaseUrl, teamFor } from "../teams/request.ts"
+import { limitBody } from "../util/limitbody/index.ts"
 import { isEmail } from "../util/username.ts"
 import { hashToken } from "./guard.ts"
 
@@ -16,8 +18,32 @@ const TTL_SECONDS = 60 * 60 // 1 hour
 
 const generateResetToken = (): string => `${PWR_PREFIX}${randomBytes(32).toString("base64url")}`
 
+// Mint a one-hour reset token for a user and return the plaintext exactly
+// once. Shared by the forgot-password flow, admin resets, and the
+// set-your-password link a freshly created team user receives.
+export const issuePasswordReset = async (
+  db: Connection,
+  userId: number,
+  ip: string | null,
+): Promise<{ token: string; expiresAt: Date }> => {
+  const token = generateResetToken()
+  const expiresAt = new Date(Date.now() + TTL_SECONDS * 1000)
+  await db.execute(
+    from("password_resets").insert({
+      user_id: userId,
+      token_hash: hashToken(token),
+      expires_at: expiresAt,
+      ip,
+    }),
+  )
+  return { token, expiresAt }
+}
+
+export const passwordResetUrl = (baseUrl: string, token: string): string =>
+  `${baseUrl.replace(/\/$/, "")}/password/reset?token=${encodeURIComponent(token)}`
+
 export const passwordRoutes = (db: Connection, emailer: Emailer, appUrl: string) => {
-  const api = pipeline(parseJson)
+  const api = pipeline(limitBody(), parseJson)
 
   return [
     post(
@@ -44,9 +70,13 @@ export const passwordRoutes = (db: Connection, emailer: Emailer, appUrl: string)
           return ok
         }
 
+        // Only this host's team: an address on another team gets the same
+        // silent 200, so one tenant cannot probe another's membership.
+        const host = teamFor(c.request)
         const user = (await db.one(
           from("users")
             .where(q => q("email").equals(email))
+            .where(q => q("team_id").equals(host.team.id))
             .where(q => q("deleted_at").isNull())
             .select("id", "name", "email"),
         )) as { id: number; name: string; email: string } | null
@@ -54,38 +84,35 @@ export const passwordRoutes = (db: Connection, emailer: Emailer, appUrl: string)
         // either way to avoid leaking which addresses are scheduled for deletion.
         if (!user) return ok
 
-        const fullToken = generateResetToken()
-        const tokenHash = hashToken(fullToken)
-        const expiresAt = new Date(Date.now() + TTL_SECONDS * 1000)
+        // The response goes out before the token is written or the email is
+        // sent. Awaiting the send here made a real address take a network
+        // round-trip longer than an unknown one, which is the leak the
+        // generic 200 exists to prevent.
+        const baseUrl = requestBaseUrl(c.request, appUrl)
+        void (async () => {
+          const { token: fullToken } = await issuePasswordReset(db, user.id, ip)
+          const resetUrl = passwordResetUrl(baseUrl, fullToken)
+          const tpl = passwordResetEmail({ name: user.name, resetUrl })
+          const sent = await emailer.send({
+            to: user.email,
+            subject: tpl.subject,
+            html: tpl.html,
+            text: tpl.text,
+          })
 
-        await db.execute(
-          from("password_resets").insert({
-            user_id: user.id,
-            token_hash: tokenHash,
-            expires_at: expiresAt,
+          logEvent(db, {
+            userId: user.id,
+            event: "password.reset_requested",
+            metadata: {
+              email_ok: sent.ok,
+              email_id: sent.ok ? (sent.id ?? null) : null,
+              error: sent.ok ? null : sent.error,
+            },
             ip,
-          }),
-        )
-
-        const resetUrl = `${appUrl.replace(/\/$/, "")}/password/reset?token=${encodeURIComponent(fullToken)}`
-        const tpl = passwordResetEmail({ name: user.name, resetUrl })
-        const sent = await emailer.send({
-          to: user.email,
-          subject: tpl.subject,
-          html: tpl.html,
-          text: tpl.text,
-        })
-
-        logEvent(db, {
-          userId: user.id,
-          event: "password.reset_requested",
-          metadata: {
-            email_ok: sent.ok,
-            email_id: sent.ok ? (sent.id ?? null) : null,
-            error: sent.ok ? null : sent.error,
-          },
-          ip,
-          userAgent: ua,
+            userAgent: ua,
+          })
+        })().catch(err => {
+          console.error("[password] reset request failed:", err)
         })
 
         return ok
@@ -114,13 +141,17 @@ export const passwordRoutes = (db: Connection, emailer: Emailer, appUrl: string)
         }
 
         const tokenHash = hashToken(tokenRaw)
-        const row = (await db.one(
-          from("password_resets")
-            .where(q => q("token_hash").equals(tokenHash))
-            .select("id", "user_id", "expires_at", "used_at"),
-        )) as { id: number; user_id: number; expires_at: string; used_at: string | null } | null
+        const row = (await db.one({
+          text: `SELECT p.id, p.user_id, p.expires_at, p.used_at, u.team_id
+                   FROM password_resets p JOIN users u ON u.id = p.user_id
+                  WHERE p.token_hash = $1 LIMIT 1`,
+          values: [tokenHash],
+        })) as { id: number; user_id: number; expires_at: string; used_at: string | null; team_id: number } | null
 
-        if (!row) return json(c, 400, { error: "Invalid or expired reset link" })
+        // a link minted for one team's host is not a link anywhere else
+        if (!row || Number(row.team_id) !== teamFor(c.request).team.id) {
+          return json(c, 400, { error: "Invalid or expired reset link" })
+        }
         if (row.used_at) return json(c, 400, { error: "This reset link has already been used" })
         if (new Date(row.expires_at).getTime() < Date.now()) {
           return json(c, 400, { error: "This reset link has expired" })

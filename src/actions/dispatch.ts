@@ -36,11 +36,14 @@ const wrapUserActionAsAction = (row: UserActionRow): Action => {
   }
 }
 
-const resolveAction = async (db: Connection, slug: string): Promise<Action | null> => {
-  const userId = parseUserSlug(slug)
-  if (userId !== null) {
-    const row = await loadUserAction(db, userId)
-    return row ? wrapUserActionAsAction(row) : null
+// A user recipe only ever runs in its author's own folders. A folder_actions
+// row pointing at someone else's recipe is treated as unknown, so a recipe
+// can never be reached from another account, let alone another team.
+const resolveAction = async (db: Connection, slug: string, ownerId: number): Promise<Action | null> => {
+  const actionId = parseUserSlug(slug)
+  if (actionId !== null) {
+    const row = await loadUserAction(db, actionId)
+    return row && row.user_id === ownerId ? wrapUserActionAsAction(row) : null
   }
   return getAction(slug)
 }
@@ -94,7 +97,7 @@ export const fireEvent = async (args: FireEventArgs): Promise<RunSummary[]> => {
   let currentSubject: Subject | null = subject
 
   for (const row of rows) {
-    const action = await resolveAction(db, row.slug)
+    const action = await resolveAction(db, row.slug, folder.user_id)
     const inserted = (await db.execute(
       from("folder_action_runs")
         .insert({

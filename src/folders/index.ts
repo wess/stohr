@@ -5,7 +5,7 @@ import type { RunSummary } from "../actions/dispatch.ts"
 import { fireEvent } from "../actions/dispatch.ts"
 import { requireAuth } from "../auth/guard.ts"
 import type { FolderRow } from "../permissions/index.ts"
-import { canWrite, folderAccess, isOwner } from "../permissions/index.ts"
+import { canWrite, folderAccess, isOwner, trashedFolderAccess } from "../permissions/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { drop } from "../storage/index.ts"
 import { pagingHeaders, parsePaging } from "../util/paging.ts"
@@ -13,14 +13,15 @@ import { pagingHeaders, parsePaging } from "../util/paging.ts"
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
 // All ids in the subtree rooted at rootId (inclusive). One recursive CTE
-// regardless of depth or fan-out.
+// regardless of depth or fan-out. The depth guard keeps a parent_id cycle
+// (should one ever land in the table) from spinning the query forever.
 const collectSubtreeAll = async (db: Connection, rootId: number): Promise<number[]> => {
   const rows = (await db.execute({
     text: `
       WITH RECURSIVE sub AS (
-        SELECT id FROM folders WHERE id = $1
+        SELECT id, 0 AS depth FROM folders WHERE id = $1
         UNION ALL
-        SELECT f.id FROM folders f JOIN sub s ON f.parent_id = s.id
+        SELECT f.id, s.depth + 1 FROM folders f JOIN sub s ON f.parent_id = s.id WHERE s.depth < 64
       )
       SELECT id FROM sub
     `,
@@ -100,12 +101,15 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
           (qb as any).orderBy("name", "ASC").orderBy("id", "ASC").limit(paging.limit).offset(paging.offset)
 
         if (parentId === null) {
+          // Space roots also have parent_id NULL; they belong to the space,
+          // not to whoever created them.
           const rows = await db.all(
             page(
               from("folders")
                 .where(q => q("user_id").equals(userId))
                 .where(q => q("deleted_at").isNull())
-                .where(q => q("parent_id").isNull()),
+                .where(q => q("parent_id").isNull())
+                .where(q => q("space_id").isNull()),
             ),
           )
           return json(pagingHeaders(c, putHeader, paging, rows.length), 200, rows)
@@ -159,8 +163,8 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
         }
         const name = body.name
         const parentId = body.parent_id ?? body.parentId ?? null
-        const kind = body.kind === "photos" ? "photos" : body.kind === "screenshots" ? "screenshots" : "standard"
-        const isPublic = body.is_public ?? body.isPublic ?? false
+        let kind = body.kind === "photos" ? "photos" : body.kind === "screenshots" ? "screenshots" : "standard"
+        let isPublic = body.is_public ?? body.isPublic ?? false
         if (!name?.trim()) return json(c, 422, { error: "Name required" })
 
         let ownerId = userId
@@ -171,12 +175,27 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
           if (!canWrite(access.role)) return json(c, 403, { error: "You don't have permission to add to this folder" })
           ownerId = access.folder.user_id
           parentFolder = access.folder
+          // Same rule as PATCH: only the owner decides folder type and public
+          // exposure. An editor used to be able to publish a subtree here.
+          if (!isOwner(access.role)) {
+            kind = "standard"
+            isPublic = false
+          }
         }
 
+        // A child of a space folder is in that space; it was inserted with
+        // NULL before, which made it the creator's personal folder.
         const rows = await db.execute(
           from("folders")
-            .insert({ user_id: ownerId, parent_id: parentId, name: name.trim(), kind, is_public: isPublic })
-            .returning("id", "name", "parent_id", "kind", "is_public", "created_at"),
+            .insert({
+              user_id: ownerId,
+              parent_id: parentId,
+              space_id: parentFolder?.space_id ?? null,
+              name: name.trim(),
+              kind,
+              is_public: isPublic,
+            })
+            .returning("id", "name", "parent_id", "space_id", "kind", "is_public", "created_at"),
         )
 
         const summaries: RunSummary[] = []
@@ -252,12 +271,19 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
           if (parentId === id) return json(c, 422, { error: "Cannot move folder into itself" })
 
           if (parentId === null) {
+            // For a space folder this makes it a space root; space_id stays put.
             if (!isOwner(access.role)) return json(c, 403, { error: "Only the owner can move a folder to the root" })
           } else {
             const targetAccess = await folderAccess(db, userId, parentId)
             if (!targetAccess) return json(c, 404, { error: "Target folder not found" })
             if (!canWrite(targetAccess.role)) return json(c, 403, { error: "No write access on target" })
-            if (targetAccess.folder.user_id !== access.folder.user_id) {
+            // A folder never changes space: not into a personal tree, not out
+            // of one, not between spaces. Inside a space user_id is only
+            // attribution, so the owner check applies to personal trees only.
+            if ((targetAccess.folder.space_id ?? null) !== (access.folder.space_id ?? null)) {
+              return json(c, 422, { error: "Cannot move folder across spaces" })
+            }
+            if (access.folder.space_id == null && targetAccess.folder.user_id !== access.folder.user_id) {
               return json(c, 422, { error: "Cannot move folder across owners" })
             }
             // Cycle check is the expensive part — only walk the subtree once
@@ -396,12 +422,10 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       guard(async c => {
         const userId = authId(c)
         const id = Number(c.params.id)
-        const row = (await db.one(
-          from("folders")
-            .where(q => q("id").equals(id))
-            .where(q => q("user_id").equals(userId)),
-        )) as { id: number; parent_id: number | null; deleted_at: string | null } | null
-        if (!row) return json(c, 404, { error: "Folder not found" })
+        const access = await trashedFolderAccess(db, userId, id)
+        if (!access) return json(c, 404, { error: "Folder not found" })
+        if (!canWrite(access.role)) return json(c, 403, { error: "Read-only access" })
+        const row = access.folder
         if (!row.deleted_at) return json(c, 200, { id })
 
         let newParentId: number | null = row.parent_id
@@ -429,12 +453,9 @@ export const folderRoutes = (db: Connection, secret: string, store: StorageHandl
       guard(async c => {
         const userId = authId(c)
         const id = Number(c.params.id)
-        const row = await db.one(
-          from("folders")
-            .where(q => q("id").equals(id))
-            .where(q => q("user_id").equals(userId)),
-        )
-        if (!row) return json(c, 404, { error: "Folder not found" })
+        const access = await trashedFolderAccess(db, userId, id)
+        if (!access) return json(c, 404, { error: "Folder not found" })
+        if (!isOwner(access.role)) return json(c, 403, { error: "Only the owner can purge" })
 
         const ids = await collectSubtreeAll(db, id)
 

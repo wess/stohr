@@ -2,10 +2,12 @@ import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 import { get, json, parseJson, parseMultipart, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
+import { clamdConfig } from "../scanning/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { drop, makeKey, put } from "../storage/index.ts"
 import { generateImageThumb, isThumbable, THUMB_MAX_BYTES, thumbKeyFor } from "../storage/thumb.ts"
-import { checkQuota } from "../usage/index.ts"
+import { quotaAfterWrite, quotaMessage } from "../uploads/quota.ts"
+import { checkQuota, userQuota } from "../usage/index.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -21,6 +23,7 @@ const ensurePhotosFolder = async (db: Connection, userId: number): Promise<numbe
   const existing = (await db.one(
     from("folders")
       .where(q => q("user_id").equals(userId))
+      .where(q => q("space_id").isNull())
       .where(q => q("kind").equals("photos"))
       .where(q => q("deleted_at").isNull())
       .where(q => q("parent_id").isNull())
@@ -169,16 +172,12 @@ export const photoRoutes = (db: Connection, secret: string, store: StorageHandle
         const capturedAt = parseCapturedAt(body.fields?.captured_at ?? body.fields?.capturedAt)
 
         // Quota check before write — same pattern as POST /files.
-        const owner = (await db.one(
-          from("users")
-            .where(q => q("id").equals(userId))
-            .select("storage_quota_bytes"),
-        )) as { storage_quota_bytes: number | string } | null
-        const quota = Number(owner?.storage_quota_bytes ?? 0)
+        const quota = await userQuota(db, userId)
         const check = await checkQuota(db, userId, quota, size)
         if (!check.ok) {
           return json(c, 402, {
-            error: "Storage quota exceeded",
+            error: quotaMessage(check.scope),
+            scope: check.scope,
             quota_bytes: check.quota_bytes,
             used_bytes: check.used_bytes,
             attempted_bytes: check.attempted_bytes,
@@ -215,6 +214,7 @@ export const photoRoutes = (db: Connection, secret: string, store: StorageHandle
                 storage_key: key,
                 thumb_key: thumbKey,
                 version: 1,
+                scan_status: clamdConfig() ? "pending" : "skipped",
                 photo_asset_id: assetId,
                 captured_at: capturedAt,
               })
@@ -228,7 +228,27 @@ export const photoRoutes = (db: Connection, secret: string, store: StorageHandle
             version: number
             created_at: string
           }>
-          return json(c, 201, { ...inserted[0], deduped: false })
+          const row = inserted[0]!
+
+          // The check above raced with every other write since; a photo
+          // backup runs many uploads in parallel, so re-read both caps and undo.
+          const over = await quotaAfterWrite(db, userId, quota, size)
+          if (over) {
+            await db.execute(
+              from("files")
+                .where(q => q("id").equals(row.id))
+                .del(),
+            )
+            await Promise.allSettled([drop(store, key), ...(thumbKey ? [drop(store, thumbKey)] : [])])
+            return json(c, 402, {
+              error: quotaMessage(over.scope),
+              scope: over.scope,
+              quota_bytes: over.quota_bytes,
+              used_bytes: over.used_bytes,
+              attempted_bytes: size,
+            })
+          }
+          return json(c, 201, { ...row, deduped: false })
         } catch (err) {
           // The (user, asset_id) unique index means a racy double-tap
           // upload by the same client lands here. Surface it as a 200

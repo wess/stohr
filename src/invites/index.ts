@@ -2,6 +2,7 @@ import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
+import { teamFor } from "../teams/request.ts"
 import { randomToken, sha256Hex } from "../util/token.ts"
 import { isEmail } from "../util/username.ts"
 
@@ -33,17 +34,25 @@ export const inviteRoutes = (db: Connection, secret: string) => {
       "/invites",
       authed(async c => {
         const userId = authId(c)
+        // Any root user may bring someone in, as before teams. A tenant
+        // team's membership is its admins' call: only they mint invites
+        // there. teamAdmin is read off the users row by requireAuth on
+        // every request, so a demotion bites at once.
+        const { isRoot } = teamFor(c.request)
+        const { teamAdmin } = c.assigns.auth as { teamAdmin?: boolean }
+        if (!isRoot && !teamAdmin) return json(c, 403, { error: "Team admin access required" })
         const body = c.body as { email?: string }
         const emailRaw = body.email?.trim().toLowerCase()
         if (emailRaw && !isEmail(emailRaw)) return json(c, 422, { error: "Invalid email format" })
         const email = emailRaw || null
 
         // Generate the plaintext, store only its hash. The plaintext is
-        // returned exactly once — same pattern as PATs / app tokens.
+        // returned exactly once — same pattern as PATs / app tokens. The
+        // invite is bound to the inviter's team and redeems on its host only.
         const token = randomToken()
         const rows = (await db.execute(
           from("invites")
-            .insert({ token_hash: sha256Hex(token), email, invited_by: userId })
+            .insert({ token_hash: sha256Hex(token), email, invited_by: userId, team_id: teamFor(c.request).team.id })
             .returning("id", "email", "created_at"),
         )) as Array<{ id: number; email: string | null; created_at: string }>
         return json(c, 201, { ...rows[0], token })
@@ -77,6 +86,7 @@ export const inviteRoutes = (db: Connection, secret: string) => {
       const row = (await db.one(
         from("invites")
           .where(q => q("token_hash").equals(sha256Hex(token)))
+          .where(q => q("team_id").equals(teamFor(c.request).team.id))
           .select("email", "used_at"),
       )) as { email: string | null; used_at: string | null } | null
       if (!row) return json(c, 404, { valid: false, error: "Invalid invite" })

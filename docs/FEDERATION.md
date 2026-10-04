@@ -116,6 +116,8 @@ An invite token is a signed payload:
 
 Signed by the federation's Ed25519 key. The accepting instance verifies the signature against the federation pubkey (delivered out-of-band the first time, or embedded in the token for trust-on-first-use), then performs a pairing handshake with the introducer to establish its own membership.
 
+Trust-on-first-use is exactly that — first use. Once an instance knows a federation by slug, any further invite for that slug must be signed by the key already on file, and the introducer's handshake must return that same key under that same slug; anything else is refused. Introducer and peer URLs must be public `https://` addresses (loopback, private and link-local ranges are rejected before a connection is attempted; `FEDERATION_ALLOW_HTTP` relaxes this for local development only). Signed peer requests carry a per-request nonce that is remembered for the 5-minute timestamp window, so a captured request cannot be replayed.
+
 Tokens are single-use, expire by default in 7 days, and can be revoked by any federation admin before use.
 
 ## Folder-as-mount-point

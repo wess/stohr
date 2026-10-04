@@ -5,8 +5,11 @@ import { get, halt, json, pipeline, putHeader } from "@atlas/server"
 import { logEvent } from "../../security/audit.ts"
 import { clientIp, userAgent } from "../../security/ratelimit.ts"
 import { issueSession } from "../../security/sessions.ts"
+import { rootOnly } from "../../teams/guards.ts"
+import { teamFor } from "../../teams/request.ts"
 import { randomToken } from "../../util/token.ts"
 import { upsertFromExternal } from "../external.ts"
+import { safeRedirectPath } from "../redirect.ts"
 import { isOidcReady, loadOidcConfig } from "./config.ts"
 import { fetchDiscovery } from "./discovery.ts"
 import { verifyIdToken } from "./jwks.ts"
@@ -56,7 +59,8 @@ const renderRedirect = (c: Conn, toUrl: string, token: string): Conn => {
 }
 
 export const oidcRoutes = (db: Connection, secret: string, appUrl: string) => {
-  const pre = pipeline()
+  // external login is a root-team surface; tenant hosts have no such routes
+  const pre = pipeline(rootOnly)
 
   return [
     // Lightweight discovery for the login page — tells the SPA whether to
@@ -64,7 +68,7 @@ export const oidcRoutes = (db: Connection, secret: string, appUrl: string) => {
     get("/auth/oidc/status", async c => {
       const cfg = await loadOidcConfig(db)
       return json(c, 200, {
-        available: isOidcReady(cfg),
+        available: teamFor(c.request).isRoot && isOidcReady(cfg),
         label: cfg.button_label,
       })
     }),
@@ -89,11 +93,10 @@ export const oidcRoutes = (db: Connection, secret: string, appUrl: string) => {
         const codeVerifier = randomToken(48)
         const codeChallenge = await sha256B64u(codeVerifier)
 
-        // Optional ?redirect_to=<path> — clamp to relative paths only so we
+        // Optional ?redirect_to=<path> — clamped to our own origin so we
         // can't be turned into an open redirector by a phishing email.
         const url = new URL(c.request.url)
-        const requested = url.searchParams.get("redirect_to")
-        const redirect = requested?.startsWith("/") && !requested.startsWith("//") ? requested : "/"
+        const redirect = safeRedirectPath(url.searchParams.get("redirect_to"), appUrl)
 
         const expiresAt = new Date(Date.now() + STATE_TTL_SEC * 1000)
         await db.execute(
@@ -210,6 +213,8 @@ export const oidcRoutes = (db: Connection, secret: string, appUrl: string) => {
               provider: "oidc",
               subject: claims.sub,
               email: emailClaim?.toLowerCase() ?? null,
+              // some IdPs serialise the boolean claim as a string
+              email_verified: claims.email_verified === true || (claims.email_verified as unknown) === "true",
               display_name: nameClaim ?? null,
               preferred_username: usernameClaim ?? null,
             },
@@ -243,7 +248,7 @@ export const oidcRoutes = (db: Connection, secret: string, appUrl: string) => {
           { ip: clientIp(c.request), userAgent: userAgent(c.request) },
         )
 
-        return renderRedirect(c, stateRow.redirect_to ?? "/", sess.token)
+        return renderRedirect(c, safeRedirectPath(stateRow.redirect_to, appUrl), sess.token)
       }),
     ),
   ]

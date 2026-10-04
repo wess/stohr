@@ -3,6 +3,7 @@ import { from, raw } from "@atlas/db"
 import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { emit } from "../notifications/emit.ts"
+import { teamFor } from "../teams/request.ts"
 import { insertRootMessage } from "./system.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -116,15 +117,21 @@ const loadThread = async (db: Connection, userId: number, threadId: number) => {
   }) as Promise<MessageRow[]>
 }
 
+// Recipients resolve by id or username only, and only inside the sender's
+// team. Resolving by email turned the 404/201 split into an "is this address
+// registered here" oracle for any logged-in user; usernames and ids are
+// already public via /users/search — within the team.
 const resolveRecipient = async (
   db: Connection,
-  input: { user_id?: number; userId?: number; username?: string; email?: string },
+  teamId: number,
+  input: { user_id?: number; userId?: number; to_user_id?: number; toUserId?: number; username?: string },
 ): Promise<{ id: number } | null> => {
-  const id = input.user_id ?? input.userId
+  const id = input.user_id ?? input.userId ?? input.to_user_id ?? input.toUserId
   if (id) {
     return (await db.one(
       from("users")
         .where(q => q("id").equals(id))
+        .where(q => q("team_id").equals(teamId))
         .where(q => q("deleted_at").isNull())
         .select("id"),
     )) as { id: number } | null
@@ -134,15 +141,7 @@ const resolveRecipient = async (
     return (await db.one(
       from("users")
         .where(q => q("username").equals(username.toLowerCase()))
-        .where(q => q("deleted_at").isNull())
-        .select("id"),
-    )) as { id: number } | null
-  }
-  const email = input.email
-  if (email) {
-    return (await db.one(
-      from("users")
-        .where(q => q("email").equals(email.toLowerCase()))
+        .where(q => q("team_id").equals(teamId))
         .where(q => q("deleted_at").isNull())
         .select("id"),
     )) as { id: number } | null
@@ -217,10 +216,11 @@ export const messageRoutes = (db: Connection, secret: string) => {
       authed(async c => {
         const userId = authId(c)
         const body = c.body as {
+          user_id?: number
+          userId?: number
           to_user_id?: number
           toUserId?: number
           username?: string
-          email?: string
           subject?: string
           body?: string
         }
@@ -233,7 +233,7 @@ export const messageRoutes = (db: Connection, secret: string) => {
           return json(c, 422, { error: `body must be 1-${BODY_MAX} chars` })
         }
 
-        const recipient = await resolveRecipient(db, body)
+        const recipient = await resolveRecipient(db, teamFor(c.request).team.id, body)
         if (!recipient) return json(c, 404, { error: "Recipient not found" })
         if (recipient.id === userId) return json(c, 422, { error: "Cannot send a message to yourself" })
 

@@ -6,6 +6,8 @@ import type { Emailer } from "../email/index.ts"
 import { inviteEmail } from "../email/templates/invite.ts"
 import { emit } from "../notifications/emit.ts"
 import { fileAccess, folderAccess, isOwner } from "../permissions/index.ts"
+import { inTeam } from "../teams/members.ts"
+import { requestBaseUrl, teamFor } from "../teams/request.ts"
 import { randomToken, sha256Hex } from "../util/token.ts"
 import { isEmail, normalizeUsername } from "../util/username.ts"
 import { dispatchWebhook } from "../webhooks/dispatch.ts"
@@ -14,7 +16,11 @@ const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
 type ResourceKind = "folder" | "file"
 
-const resolveTarget = async (db: Connection, identity: string) => {
+// Targets resolve inside the caller's team only. An email that belongs to
+// another team's account looks exactly like an unregistered one (a pending
+// grant plus an invite for this team), and a username from another team is
+// simply missing — neither answer tells the caller the other team exists.
+const resolveTarget = async (db: Connection, teamId: number, identity: string) => {
   const trimmed = identity.trim()
   if (!trimmed) return { kind: "invalid" as const }
   if (isEmail(trimmed)) {
@@ -22,6 +28,7 @@ const resolveTarget = async (db: Connection, identity: string) => {
     const user = (await db.one(
       from("users")
         .where(q => q("email").equals(email))
+        .where(q => q("team_id").equals(teamId))
         .select("id", "email", "username", "name"),
     )) as { id: number; email: string; username: string; name: string } | null
     return user ? { kind: "user" as const, user } : { kind: "email" as const, email }
@@ -30,18 +37,20 @@ const resolveTarget = async (db: Connection, identity: string) => {
   const user = (await db.one(
     from("users")
       .where(q => q("username").equals(username))
+      .where(q => q("team_id").equals(teamId))
       .select("id", "email", "username", "name"),
   )) as { id: number; email: string; username: string; name: string } | null
   if (!user) return { kind: "missing" as const }
   return { kind: "user" as const, user }
 }
 
-const enrichCollabs = async (db: Connection, rows: Array<any>) => {
+const enrichCollabs = async (db: Connection, teamId: number, rows: Array<any>) => {
   const userIds = Array.from(new Set(rows.map(r => r.user_id).filter((x): x is number => x != null)))
   if (userIds.length === 0) return rows.map(r => ({ ...r, user: null }))
   const users = (await db.all(
     from("users")
       .where(q => q("id").inList(userIds))
+      .where(q => q("team_id").equals(teamId))
       .select("id", "username", "email", "name"),
   )) as Array<{ id: number; username: string; email: string; name: string }>
   const byId = new Map(users.map(u => [u.id, u]))
@@ -64,7 +73,7 @@ const listCollabs = (db: Connection, kind: ResourceKind) => async (c: any) => {
       .select("id", "user_id", "email", "role", "created_at", "accepted_at")
       .orderBy("created_at", "ASC"),
   )
-  const enriched = await enrichCollabs(db, rows)
+  const enriched = await enrichCollabs(db, teamFor(c.request).team.id, rows)
   return json(c, 200, enriched)
 }
 
@@ -80,7 +89,7 @@ const addCollab = (db: Connection, kind: ResourceKind, emailer: Emailer, appUrl:
   const role = body.role === "editor" ? "editor" : "viewer"
   if (!identity) return json(c, 422, { error: "identity required" })
 
-  const target = await resolveTarget(db, identity)
+  const target = await resolveTarget(db, teamFor(c.request).team.id, identity)
   if (target.kind === "invalid") return json(c, 422, { error: "Invalid identity" })
   if (target.kind === "missing") return json(c, 404, { error: "User not found" })
 
@@ -171,13 +180,15 @@ const addCollab = (db: Connection, kind: ResourceKind, emailer: Emailer, appUrl:
   }
 
   // Always issue a fresh invite token. We can no longer reuse a pre-existing
-  // unused invite for the same email — only the hash is stored at rest.
+  // unused invite for the same email — only the hash is stored at rest. The
+  // invite joins the newcomer to the inviter's team, on that team's host.
   const inviteToken = randomToken()
   await db.execute(
     from("invites").insert({
       token_hash: sha256Hex(inviteToken),
       email,
       invited_by: userId,
+      team_id: teamFor(c.request).team.id,
     }),
   )
 
@@ -186,7 +197,7 @@ const addCollab = (db: Connection, kind: ResourceKind, emailer: Emailer, appUrl:
       .where(q => q("id").equals(userId))
       .select("name", "username"),
   )) as { name: string; username: string } | null
-  const signupUrl = `${appUrl.replace(/\/$/, "")}/signup?invite=${encodeURIComponent(inviteToken)}`
+  const signupUrl = `${requestBaseUrl(c.request, appUrl)}/signup?invite=${encodeURIComponent(inviteToken)}`
   const tpl = inviteEmail({
     inviterName: inviter?.name ?? inviter?.username ?? null,
     email,
@@ -238,6 +249,7 @@ const removeCollab = (db: Connection, kind: ResourceKind) => async (c: any) => {
 
 const sharedWithMe = (db: Connection) => async (c: any) => {
   const userId = authId(c)
+  const teamId = teamFor(c.request).team.id
   const collabs = (await db.all(
     from("collaborations")
       .where(q => q("user_id").equals(userId))
@@ -247,6 +259,8 @@ const sharedWithMe = (db: Connection) => async (c: any) => {
   const folderIds = collabs.filter(c => c.resource_type === "folder").map(c => c.resource_id)
   const fileIds = collabs.filter(c => c.resource_type === "file").map(c => c.resource_id)
 
+  // grants only ever point inside the team now; the owner filter keeps any
+  // older or hand-made row from listing another tenant's names here
   const folders =
     folderIds.length === 0
       ? []
@@ -254,6 +268,7 @@ const sharedWithMe = (db: Connection) => async (c: any) => {
           from("folders")
             .where(q => q("id").inList(folderIds))
             .where(q => q("deleted_at").isNull())
+            .where(inTeam("folders.user_id", teamId))
             .select("id", "user_id", "parent_id", "name", "created_at"),
         )) as Array<{ id: number; user_id: number; parent_id: number | null; name: string; created_at: string }>)
 
@@ -264,6 +279,7 @@ const sharedWithMe = (db: Connection) => async (c: any) => {
           from("files")
             .where(q => q("id").inList(fileIds))
             .where(q => q("deleted_at").isNull())
+            .where(inTeam("files.user_id", teamId))
             .select("id", "user_id", "name", "mime", "size", "folder_id", "version", "created_at"),
         )) as Array<{
           id: number

@@ -6,6 +6,7 @@ import { requireAuth } from "../auth/guard.ts"
 import { requireSettingEnabled, SETTING_FEDERATION_ENABLED } from "../settings/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { drop, fetchObject, put } from "../storage/index.ts"
+import { rootOnlyRoutes } from "../teams/guards.ts"
 import { aesGcmDecrypt, aesGcmEncrypt, generateSymmetricKey, openSealedX25519, sealForX25519 } from "./crypto.ts"
 import { decode, encode, erasureConfig } from "./erasure.ts"
 import { getInstanceKeys } from "./keys.ts"
@@ -18,6 +19,9 @@ const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
 const FED_KEY = (federationId: number, blobId: string) => `fed:${federationId}:${blobId}`
 const FED_SHARD_KEY = (federationId: number, blobId: string) => `fed-shard:${federationId}:${blobId}`
+
+// blob ids are uuids we minted; anything else has no business in a storage key
+const BLOB_ID = /^[A-Za-z0-9_-]{1,64}$/
 
 // Helpers
 
@@ -647,9 +651,13 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
   const guard = pipeline(gate, requireAuth({ secret, db }))
   // Receiver endpoints also need the gate — a disabled federation must
   // reject peer traffic, not silently swallow blobs.
-  const receiver = pipeline(gate, requirePeerSignature())
+  const receiver = pipeline(gate, requirePeerSignature(db))
 
-  return [
+  // the pushing peer tells us the size in a header; the body is the truth
+  const declaredSizeMatches = (header: string | null, actual: number): boolean =>
+    header === null || Number(header) === actual
+
+  return rootOnlyRoutes([
     // User uploads a file into a federation. Body is multipart with a
     // single file. The destination folder must be a federation-tied
     // folder; we use the user's contribution folder for both modes (in
@@ -723,22 +731,22 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
         const member = await localMemberFor(db, fedId, userId)
         if (!member) return json(c, 404, { error: "Federation not found" })
 
+        // Content-sharing blobs are visible to every member; space-offering
+        // shards are the uploader's private files — the caller has to own
+        // the files row, same as DELETE.
+        const storageKey = fed.type === "content-sharing" ? FED_KEY(fed.id, blobId) : FED_SHARD_KEY(fed.id, blobId)
+        let rowQuery = from("files")
+          .where(q => q("storage_key").equals(storageKey))
+          .where(q => q("deleted_at").isNull())
+        if (fed.type === "space-offering") rowQuery = rowQuery.where(q => q("user_id").equals(userId))
+        const row = (await db.one(rowQuery.select("name", "mime"))) as { name: string; mime: string } | null
+        if (fed.type === "space-offering" && !row) return json(c, 404, { error: "File not found" })
+
         const bytes =
           fed.type === "content-sharing"
             ? await fetchContentSharing(db, store, fed, blobId)
             : await fetchSpaceOffering(db, store, fed, blobId)
         if (!bytes) return json(c, 404, { error: "Blob not found or unrecoverable" })
-
-        // Find a corresponding file row for content-disposition naming.
-        const row = (await db.one(
-          from("files")
-            .where(q =>
-              q("storage_key").equals(
-                fed.type === "content-sharing" ? FED_KEY(fed.id, blobId) : FED_SHARD_KEY(fed.id, blobId),
-              ),
-            )
-            .select("name", "mime"),
-        )) as { name: string; mime: string } | null
 
         const ct = row?.mime ?? "application/octet-stream"
         const name = row?.name ?? blobId
@@ -808,12 +816,28 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
         const peer = (c.assigns as any).peer as { pubkeyRaw: string; body: Uint8Array }
         const member = await memberForPeer(db, fed.id, peer.pubkeyRaw)
         if (!member || member.status !== "active") return json(c, 403, { error: "Not an active federation peer" })
+        if (!BLOB_ID.test(blobId)) return json(c, 422, { error: "Invalid blob_id" })
 
         const ownerPubkey = c.request.headers.get("x-fed-owner-pubkey")
         const sizeHeader = c.request.headers.get("x-fed-size")
         const encMeta = c.request.headers.get("x-fed-meta")
-        if (!ownerPubkey || !sizeHeader) return json(c, 422, { error: "Missing x-fed-owner-pubkey or x-fed-size" })
-        const size = Number(sizeHeader)
+        if (!ownerPubkey) return json(c, 422, { error: "Missing x-fed-owner-pubkey" })
+        const size = peer.body.length
+        if (size === 0) return json(c, 422, { error: "Empty blob" })
+        if (!declaredSizeMatches(sizeHeader, size)) return json(c, 422, { error: "x-fed-size does not match body" })
+
+        // A placement we already hold is refused up front. The storage key is
+        // deterministic, so writing first and sorting it out on the unique
+        // violation used to overwrite the existing object and then drop it.
+        const keys = await getInstanceKeys(db)
+        const held = await db.one(
+          from("federation_blobs")
+            .where(q => q("federation_id").equals(fed.id))
+            .where(q => q("blob_id").equals(blobId))
+            .where(q => q("peer_pubkey").equals(keys.ed25519PublicRaw))
+            .select("id"),
+        )
+        if (held) return json(c, 409, { error: "Blob already stored on this peer" })
 
         // Find our local contribution folder for the owner's user — peers
         // sending blobs don't know our user IDs; we host on behalf of "any
@@ -839,7 +863,6 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
             .where(q => q("id").equals(localContrib.user_id))
             .select("id"),
         )
-        const keys = await getInstanceKeys(db)
         try {
           await db.execute(
             from("federation_blobs").insert({
@@ -854,8 +877,18 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
             }),
           )
         } catch {
-          // Duplicate placement — already had it. Drop the new bytes.
-          await drop(store, localKey).catch(() => {})
+          // Lost a race with a concurrent PUT of the same blob. Only drop our
+          // object if the surviving row points somewhere else — if it shares
+          // our key we just rewrote it with identical bytes.
+          const survivor = (await db.one(
+            from("federation_blobs")
+              .where(q => q("federation_id").equals(fed.id))
+              .where(q => q("blob_id").equals(blobId))
+              .where(q => q("peer_pubkey").equals(keys.ed25519PublicRaw))
+              .select("local_storage_key"),
+          )) as { local_storage_key: string | null } | null
+          if (survivor?.local_storage_key !== localKey) await drop(store, localKey).catch(() => {})
+          return json(c, 409, { error: "Blob already stored on this peer" })
         }
         await db.execute({
           text: `UPDATE federation_members SET used_bytes = used_bytes + $1 WHERE federation_id = $2 AND user_id = $3 AND is_local = TRUE`,
@@ -938,6 +971,7 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
         const peer = (c.assigns as any).peer as { pubkeyRaw: string; body: Uint8Array }
         const member = await memberForPeer(db, fed.id, peer.pubkeyRaw)
         if (!member || member.status !== "active") return json(c, 403, { error: "Not an active federation peer" })
+        if (!BLOB_ID.test(blobId)) return json(c, 422, { error: "Invalid blob_id" })
 
         const ownerPubkey = c.request.headers.get("x-fed-owner-pubkey")
         const sizeHeader = c.request.headers.get("x-fed-size")
@@ -945,10 +979,39 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
         const k = c.request.headers.get("x-fed-shard-k")
         const m = c.request.headers.get("x-fed-shard-m")
         const encMeta = c.request.headers.get("x-fed-meta")
-        if (!ownerPubkey || !sizeHeader || !totalSize || !k || !m) {
+        if (!ownerPubkey || !totalSize || !k || !m) {
           return json(c, 422, { error: "Missing shard headers" })
         }
-        const size = Number(sizeHeader)
+        const shardK = Number(k)
+        const shardM = Number(m)
+        if (
+          !Number.isInteger(shardK) ||
+          !Number.isInteger(shardM) ||
+          shardK < 1 ||
+          shardM < shardK ||
+          !Number.isInteger(shardIndex) ||
+          shardIndex < 0 ||
+          shardIndex >= shardM ||
+          !Number.isInteger(Number(totalSize)) ||
+          Number(totalSize) < 0
+        ) {
+          return json(c, 422, { error: "Invalid shard parameters" })
+        }
+        const size = peer.body.length
+        if (size === 0) return json(c, 422, { error: "Empty shard" })
+        if (!declaredSizeMatches(sizeHeader, size)) return json(c, 422, { error: "x-fed-size does not match body" })
+
+        // see the blob receiver: refuse a shard we already hold before the
+        // deterministic key gets overwritten
+        const keys = await getInstanceKeys(db)
+        const held = await db.one(
+          from("federation_shards")
+            .where(q => q("federation_id").equals(fed.id))
+            .where(q => q("blob_id").equals(blobId))
+            .where(q => q("shard_index").equals(shardIndex))
+            .select("id"),
+        )
+        if (held) return json(c, 409, { error: "Shard already stored on this peer" })
 
         const localContrib = (await db.one({
           text: `SELECT f.id, f.user_id
@@ -965,15 +1028,14 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
         const localKey = localStorageKeyForFedBlob(localContrib.user_id, blobId, shardIndex)
         await put(store, localKey, peer.body, "application/octet-stream")
 
-        const keys = await getInstanceKeys(db)
         try {
           await db.execute(
             from("federation_shards").insert({
               federation_id: fed.id,
               blob_id: blobId,
               shard_index: shardIndex,
-              shard_k: Number(k),
-              shard_m: Number(m),
+              shard_k: shardK,
+              shard_m: shardM,
               size,
               total_size: Number(totalSize),
               owner_pubkey: ownerPubkey,
@@ -984,7 +1046,15 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
             }),
           )
         } catch {
-          await drop(store, localKey).catch(() => {})
+          const survivor = (await db.one(
+            from("federation_shards")
+              .where(q => q("federation_id").equals(fed.id))
+              .where(q => q("blob_id").equals(blobId))
+              .where(q => q("shard_index").equals(shardIndex))
+              .select("local_storage_key"),
+          )) as { local_storage_key: string | null } | null
+          if (survivor?.local_storage_key !== localKey) await drop(store, localKey).catch(() => {})
+          return json(c, 409, { error: "Shard already stored on this peer" })
         }
         await db.execute({
           text: `UPDATE federation_members SET used_bytes = used_bytes + $1 WHERE federation_id = $2 AND user_id = $3 AND is_local = TRUE`,
@@ -1055,7 +1125,7 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
         return json(c, 200, { deleted: blobId, shard_index: shardIndex })
       }),
     ),
-  ]
+  ])
 }
 
 // Drain sweep — re-replicate blobs we host for draining peers OR move our

@@ -4,6 +4,7 @@ import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { folderAccess } from "../permissions/index.ts"
 import { requireSettingEnabled, SETTING_FEDERATION_ENABLED } from "../settings/index.ts"
+import { rootOnlyRoutes } from "../teams/guards.ts"
 import { federationById, localMemberFor } from "./membership.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -44,7 +45,7 @@ export const federationFolderRoutes = (db: Connection, secret: string) => {
   const guard = pipeline(gate, requireAuth({ secret, db, noOAuth: true }))
   const authed = pipeline(gate, requireAuth({ secret, db, noOAuth: true }), parseJson)
 
-  return [
+  return rootOnlyRoutes([
     // Designate an existing folder as the user's contribution mount-point
     // for this federation. The folder must already exist, be owned by the
     // user, and not already be tied to a different federation.
@@ -275,5 +276,5 @@ export const federationFolderRoutes = (db: Connection, secret: string) => {
         })
       }),
     ),
-  ]
+  ])
 }

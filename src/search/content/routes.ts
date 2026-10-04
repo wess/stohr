@@ -1,6 +1,7 @@
 import type { Connection } from "@atlas/db"
 import { get, json, pipeline } from "@atlas/server"
 import { requireAuth } from "../../auth/guard.ts"
+import { ownerOnly } from "../../security/owner.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -30,6 +31,7 @@ const renderSnippet = (raw: string): string =>
 
 export const contentSearchRoutes = (db: Connection, secret: string) => {
   const guard = pipeline(requireAuth({ secret, db }))
+  const adminGuard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerOnly(db))
 
   return [
     get(
@@ -43,8 +45,10 @@ export const contentSearchRoutes = (db: Connection, secret: string) => {
         const limitRaw = Number(url.searchParams.get("limit") ?? "20")
         const limit = Math.max(1, Math.min(Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 20, 50))
 
-        // The visibility rule is "owned by caller OR reachable via a folder
-        // collaboration grant that resolves to this folder's ancestry."
+        // The visibility rule is "owned by caller (outside any space) OR in a
+        // space the caller is a member of OR reachable via a folder
+        // collaboration grant that resolves to this folder's ancestry" — and
+        // always inside the caller's team, whatever a grant row says.
         // permissions/index.ts has the same CTE; we inline it here so the
         // search stays a single round-trip rather than fanning out per hit.
         const rows = (await db.execute({
@@ -54,20 +58,27 @@ export const contentSearchRoutes = (db: Connection, secret: string) => {
           ),
           accessible AS (
             SELECT id FROM folders
-             WHERE user_id = $2 AND deleted_at IS NULL
+             WHERE user_id = $2 AND space_id IS NULL AND deleted_at IS NULL
+            UNION
+            SELECT fo.id
+              FROM folders fo
+              JOIN space_members sm ON sm.space_id = fo.space_id AND sm.user_id = $2
+              JOIN spaces s ON s.id = fo.space_id AND s.deleted_at IS NULL
+             WHERE fo.deleted_at IS NULL
             UNION
             SELECT f.id
               FROM folders f
               JOIN (
                 WITH RECURSIVE walk AS (
-                  SELECT f0.id AS root_id, f0.id AS id
+                  SELECT f0.id AS root_id, f0.id AS id, 0 AS depth
                     FROM folders f0
                     JOIN collaborations c
                       ON c.resource_type = 'folder' AND c.resource_id = f0.id AND c.user_id = $2
                   UNION ALL
-                  SELECT w.root_id, fc.id
+                  SELECT w.root_id, fc.id, w.depth + 1
                     FROM walk w
                     JOIN folders fc ON fc.parent_id = w.id
+                   WHERE w.depth < 64
                 )
                 SELECT id FROM walk
               ) reach ON reach.id = f.id
@@ -82,8 +93,10 @@ export const contentSearchRoutes = (db: Connection, secret: string) => {
             FROM files f, q
            WHERE f.deleted_at IS NULL
              AND f.text_tsv @@ q.tsq
+             AND (SELECT team_id FROM users WHERE id = f.user_id) = (SELECT team_id FROM users WHERE id = $2)
              AND (
-               f.user_id = $2
+               (f.user_id = $2 AND NOT EXISTS (
+                 SELECT 1 FROM folders fo WHERE fo.id = f.folder_id AND fo.space_id IS NOT NULL))
                OR f.folder_id IN (SELECT id FROM accessible)
                OR EXISTS (
                  SELECT 1 FROM collaborations c
@@ -129,17 +142,11 @@ export const contentSearchRoutes = (db: Connection, secret: string) => {
 
     // Owner-only health view: how many files still need indexing, plus
     // last-error stats. Cheap query — the partial index makes this O(N)
-    // over pending rows only.
+    // over pending rows only. ownerOnly rather than a bare is_owner read:
+    // the instance-wide count must never open from a tenant host.
     get(
       "/admin/content-index/status",
-      guard(async c => {
-        const userId = authId(c)
-        const me = (await db.one({
-          text: `SELECT is_owner FROM users WHERE id = $1`,
-          values: [userId],
-        })) as { is_owner: boolean } | null
-        if (!me?.is_owner) return json(c, 403, { error: "Owner access required" })
-
+      adminGuard(async c => {
         const totals = (await db.one({
           text: `
           SELECT

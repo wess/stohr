@@ -29,6 +29,7 @@ import { federationFolderRoutes } from "./federation/folders.ts"
 import { federationRoutes } from "./federation/index.ts"
 import { sweepExpiredFederationInvites } from "./federation/invites.ts"
 import { pairingReceiverRoutes } from "./federation/pairing.ts"
+import { sweepFederationNonces } from "./federation/transport.ts"
 import { fileRoutes } from "./files/index.ts"
 import { folderRoutes } from "./folders/index.ts"
 import { inviteRoutes } from "./invites/index.ts"
@@ -58,6 +59,14 @@ import { adminSettingsRoutes, SETTING_WEBDAV_ENABLED, seedIfMissing } from "./se
 import { shareRoutes, sweepExpiredShares } from "./shares/index.ts"
 import { spaceRoutes } from "./spaces/index.ts"
 import { setupStohrSso, ssoStatusRoutes } from "./sso/index.ts"
+import {
+  adminTeamRoutes,
+  type HostConfig,
+  sweepDeletedTeams,
+  teamRoutes,
+  tlsAllowRoutes,
+  withTeams,
+} from "./teams/index.ts"
 import { trashRoutes } from "./trash/index.ts"
 import { cleanupExpiredUploads, uploadRoutes } from "./uploads/index.ts"
 import { userRoutes } from "./users/index.ts"
@@ -106,6 +115,10 @@ const config = defineConfig({
   s3AccessKey: env("S3_ACCESS_KEY", { default: "rustfsadmin" }),
   s3SecretKey: env("S3_SECRET_KEY", { default: "rustfsadmin" }),
   appUrl: env("APP_URL", { default: "http://localhost:3001" }),
+  // Turns host routing on: <slug>.<ROOT_DOMAIN> is that team, ROOT_DOMAIN
+  // itself (or any host not under it) is the root team. Empty = single
+  // tenant, every host is root. See docs/TEAMS.md.
+  rootDomain: env("ROOT_DOMAIN", { default: "" }),
   federationPublicUrl: env("FEDERATION_PUBLIC_URL", { default: "" }),
   // Legacy env: pre-Admin-Settings releases enabled WebDAV via env var.
   // Read once at boot and seed the DB setting if missing, so upgrades
@@ -115,7 +128,9 @@ const config = defineConfig({
   resendApiKey: env("RESEND_API_KEY", { default: "" }),
   resendFrom: env("RESEND_FROM", { default: "Stohr <onboarding@resend.dev>" }),
   resendApiUrl: env("RESEND_API_URL", { default: "https://api.resend.com" }),
-  rpId: env("RP_ID", { default: "localhost" }),
+  // RP_ID defaults to ROOT_DOMAIN when host routing is on (a registrable
+  // suffix of every team host), else localhost; resolved below.
+  rpId: env("RP_ID", { default: "" }),
   rpName: env("RP_NAME", { default: "Stohr" }),
   rpOrigin: env("RP_ORIGIN", { default: "http://localhost:3001" }),
   // @atlas/storage buffers the upload body in API memory to compute the
@@ -187,13 +202,18 @@ if (config.webdavEnabledLegacy === "true") {
 
 const ssoRoutes = await maybeSsoRoutes(db, config)
 
+// Host routing config shared by everything that builds a team's url.
+const hosts: HostConfig = { rootDomain: config.rootDomain || null, appUrl: config.appUrl }
+const rpId = config.rpId || hosts.rootDomain || "localhost"
+
 const baseFetch = router(
   ...healthRoutes(db, store),
   ...metricsRoutes(),
+  ...tlsAllowRoutes(db, hosts),
   ...authRoutes(db, config.secret),
   ...passwordRoutes(db, emailer, config.appUrl),
   ...mfaRoutes(db, config.secret),
-  ...passkeyRoutes(db, config.secret, { rpId: config.rpId, rpName: config.rpName, rpOrigin: config.rpOrigin }),
+  ...passkeyRoutes(db, config.secret, { rpId, rpName: config.rpName, rpOrigin: config.rpOrigin }),
   ...sessionRoutes(db, config.secret),
   ...oidcRoutes(db, config.secret, config.appUrl),
   ...socialRoutes(db, { secret: config.secret, appUrl: config.appUrl }),
@@ -221,8 +241,10 @@ const baseFetch = router(
   ...publicRoutes(db, config.secret, store),
   ...contactRoutes(db, config.secret),
   ...aiRoutes(db, config.secret),
-  ...adminRoutes(db, config.secret),
-  ...adminUserRoutes(db, config.secret, emailer, config.appUrl),
+  ...adminRoutes(db, config.secret, store),
+  ...adminUserRoutes(db, config.secret, emailer, hosts),
+  ...adminTeamRoutes(db, config.secret, emailer, hosts),
+  ...teamRoutes(db, config.secret, emailer, store, hosts),
   ...s3KeyRoutes(db, config.secret),
   ...s3Routes(db, store),
   ...appRoutes(db, config.secret),
@@ -230,7 +252,7 @@ const baseFetch = router(
   ...oauthAuthorizeRoutes(db, config.secret),
   ...oauthTokenRoutes(db, config.secret),
   ...oauthRevokeRoutes(db),
-  ...oauthDiscoveryRoutes(),
+  ...oauthDiscoveryRoutes(config.appUrl),
   ...deviceAuthorizeRoutes(db, config.secret),
   ...actionRoutes(db, config.secret),
   ...userActionRoutes(db, config.secret),
@@ -250,9 +272,13 @@ const baseFetch = router(
 )
 
 // Request pipeline wrapping: metrics on the outside times the full request
-// (including the security-header pass), then security headers, then the router.
-// Metrics are per-process and in-memory — they reset on restart.
-const fetch = withMetrics(withSecurityHeaders(baseFetch))
+// (including the security-header pass), then security headers, then team
+// resolution, then the router. withSecurityHeaders stashes the socket peer on
+// the request, which withTeams needs to decide whether X-Forwarded-Host can
+// be believed — so it has to sit inside. An unknown or suspended team is
+// answered there, before any route runs. Metrics are per-process and
+// in-memory — they reset on restart.
+const fetch = withMetrics(withSecurityHeaders(withTeams(db, baseFetch, hosts)))
 
 // OAuth cleanup: expired auth codes (60s TTL) every 5 min, expired device
 // codes (10 min TTL) every 5 min, expired refresh tokens (30 day TTL) every
@@ -278,8 +304,13 @@ const sweepRefreshTokens = guardedSweep("refresh_tokens", () => sweepExpiredRefr
 const sweepPasswordResets = guardedSweep("password_resets", () => sweepExpiredPasswordResets(db))
 const sweepWebauthn = guardedSweep("webauthn_challenges", () => sweepExpiredWebauthnChallenges(db))
 const sweepDeletions = guardedSweep("deleted_accounts", () => sweepDeletedAccounts(db, store))
+// Soft-deleted teams: members go through the same hard-delete path, then the
+// team row. Same 24h grace window as accounts.
+const sweepTeams = guardedSweep("deleted_teams", () => sweepDeletedTeams(db, store))
 const sweepFedInvites = guardedSweep("federation_invites", () => sweepExpiredFederationInvites(db))
 const sweepFedDrains = guardedSweep("federation_drains", () => sweepFederationDrains(db, store))
+// Seen peer nonces only matter inside the 5-minute signature window.
+const sweepFedNonces = guardedSweep("federation_nonces", () => sweepFederationNonces(db))
 const sweepOidcStates = guardedSweep("oidc_states", () => sweepExpiredOidcStates(db))
 // Sessions and share tokens used to schedule themselves from inside their
 // route factories. They live here now so every background job is visible in
@@ -335,6 +366,12 @@ setInterval(
 )
 setInterval(
   () => {
+    void sweepTeams()
+  },
+  60 * 60 * 1000,
+)
+setInterval(
+  () => {
     void sweepFedInvites()
   },
   60 * 60 * 1000,
@@ -344,6 +381,12 @@ setInterval(
     void sweepFedDrains()
   },
   10 * 60 * 1000,
+)
+setInterval(
+  () => {
+    void sweepFedNonces()
+  },
+  5 * 60 * 1000,
 )
 setInterval(
   () => {
@@ -393,9 +436,9 @@ if (clamdConfig()) {
   }, 20 * 1000)
   void tickScanSweep()
 }
-// Kick every sweep once at boot, but stagger them. Firing all thirteen at
-// once made the first seconds of uptime contend for the whole connection
-// pool against the requests arriving at the same time.
+// Kick every sweep once at boot, but stagger them. Firing them all at once
+// made the first seconds of uptime contend for the whole connection pool
+// against the requests arriving at the same time.
 const bootSweeps = [
   sweepAuthCodes,
   sweepDeviceCodes,
@@ -403,8 +446,10 @@ const bootSweeps = [
   sweepPasswordResets,
   sweepWebauthn,
   sweepDeletions,
+  sweepTeams,
   sweepFedInvites,
   sweepFedDrains,
+  sweepFedNonces,
   sweepOidcStates,
   sweepSessions,
   sweepShareTokens,
@@ -463,6 +508,6 @@ process.on("unhandledRejection", reason => {
   console.error("[stohr] unhandled rejection:", reason)
 })
 
-info("server", "api listening", { port: config.port })
+info("server", "api listening", { port: config.port, rootDomain: hosts.rootDomain ?? "(single tenant)" })
 const storageInfo = config.storageDriver === "local" ? `local (${config.storageLocalDir})` : `s3 (${config.s3Endpoint})`
 console.log(`[stohr] storage: ${storageInfo} (encryption-at-rest is the provider's responsibility — see SECURITY.md)`)

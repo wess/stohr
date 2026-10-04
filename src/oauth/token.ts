@@ -5,6 +5,7 @@ import { from, raw } from "@atlas/db"
 import { json, parseForm, parseJson, pipeline, post } from "@atlas/server"
 import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
+import { teamFor } from "../teams/request.ts"
 import {
   ACCESS_TOKEN_TTL_SECONDS,
   DEVICE_POLL_INTERVAL_SECONDS,
@@ -54,10 +55,24 @@ type UserRow = {
   username: string
   name: string
   is_owner: boolean
+  team_id: number
 }
 
 const findClient = async (db: Connection, clientId: string): Promise<ClientRow | null> =>
   (await db.one(from("oauth_clients").where(q => q("client_id").equals(clientId)))) as ClientRow | null
+
+const findUser = async (db: Connection, id: number): Promise<UserRow | null> =>
+  (await db.one(
+    from("users")
+      .where(q => q("id").equals(id))
+      .select("id", "email", "username", "name", "is_owner", "team_id"),
+  )) as UserRow | null
+
+// A grant (code, refresh token, device code) belongs to its user's team and
+// the tokens it yields only ever work on that team's host, so it is redeemed
+// there and nowhere else. requireAuth would refuse the access token anyway;
+// refusing here keeps the refresh token from being minted at all.
+const onThisHost = (c: any, user: UserRow): boolean => Number(user.team_id) === teamFor(c.request as Request).team.id
 
 const oauthError = (c: any, status: number, error: string, description?: string) =>
   json(c, status, description ? { error, error_description: description } : { error })
@@ -176,13 +191,12 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
         return oauthError(c, 400, "invalid_grant", "PKCE verifier did not match the challenge")
       }
 
-      const user = (await db.one(
-        from("users")
-          .where(q => q("id").equals(claimedCode.user_id))
-          .select("id", "email", "username", "name", "is_owner"),
-      )) as UserRow | null
+      const user = await findUser(db, claimedCode.user_id)
       if (!user) {
         return oauthError(c, 400, "invalid_grant", "User no longer exists")
+      }
+      if (!onThisHost(c, user)) {
+        return oauthError(c, 400, "invalid_grant", "Code was issued on a different host")
       }
 
       const tokens = await issueTokens(db, secret, user, clientId, claimedCode.scope)
@@ -247,6 +261,16 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
         return oauthError(c, 400, "invalid_grant", "Refresh token has been revoked")
       }
 
+      // Before rotation: a refresh presented on the wrong host is refused
+      // without touching the chain, so the client at home keeps working.
+      const user = await findUser(db, row.user_id)
+      if (!user) {
+        return oauthError(c, 400, "invalid_grant", "User no longer exists")
+      }
+      if (!onThisHost(c, user)) {
+        return oauthError(c, 400, "invalid_grant", "Refresh token was issued on a different host")
+      }
+
       // Rotate: revoke this refresh, mint a new pair.
       await db.execute(
         from("oauth_refresh_tokens")
@@ -264,15 +288,6 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
           return oauthError(c, 400, "invalid_scope", "Requested scope must be a subset of the original grant")
         }
         scope = formatScope(downscoped)
-      }
-
-      const user = (await db.one(
-        from("users")
-          .where(q => q("id").equals(row.user_id))
-          .select("id", "email", "username", "name", "is_owner"),
-      )) as UserRow | null
-      if (!user) {
-        return oauthError(c, 400, "invalid_grant", "User no longer exists")
       }
 
       const tokens = await issueTokens(db, secret, user, clientId, scope, tokenHash)
@@ -352,12 +367,11 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
           .del(),
       )
 
-      const user = (await db.one(
-        from("users")
-          .where(q => q("id").equals(row.user_id))
-          .select("id", "email", "username", "name", "is_owner"),
-      )) as UserRow | null
+      const user = await findUser(db, row.user_id)
       if (!user) return oauthError(c, 400, "invalid_grant", "User no longer exists")
+      if (!onThisHost(c, user)) {
+        return oauthError(c, 400, "invalid_grant", "Device code was approved on a different host")
+      }
 
       const tokens = await issueTokens(db, secret, user, clientId, row.scope)
       logEvent(db, {

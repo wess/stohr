@@ -135,10 +135,22 @@ export const commentRoutes = (db: Connection, secret: string) => {
         const row = (await db.one(
           from("comments")
             .where(q => q("id").equals(id))
-            .select("id", "user_id", "deleted_at"),
-        )) as { id: number; user_id: number; deleted_at: string | null } | null
+            .select("id", "user_id", "resource_type", "resource_id", "deleted_at"),
+        )) as {
+          id: number
+          user_id: number
+          resource_type: string
+          resource_id: number
+          deleted_at: string | null
+        } | null
         if (!row || row.deleted_at) return json(c, 404, { error: "Comment not found" })
-        if (row.user_id !== userId) return json(c, 403, { error: "Not your comment" })
+        // a comment on something the caller cannot see does not exist for
+        // them — the 403 is only for comments they can read but did not write
+        if (row.user_id !== userId) {
+          const access = await resolveResource(db, userId, row.resource_type as ResourceKind, row.resource_id)
+          if (!access) return json(c, 404, { error: "Comment not found" })
+          return json(c, 403, { error: "Not your comment" })
+        }
         await db.execute(
           from("comments")
             .where(q => q("id").equals(id))
@@ -171,11 +183,12 @@ export const commentRoutes = (db: Connection, secret: string) => {
 
         // Author can always delete their own. The resource owner can delete
         // anyone's comment on their resource. Editors cannot delete others.
+        // No access to the resource at all (another user's, another team's)
+        // reads as not found, same as a missing id.
         if (row.user_id !== userId) {
           const access = await resolveResource(db, userId, row.resource_type as ResourceKind, row.resource_id)
-          if (!access || access.role !== "owner") {
-            return json(c, 403, { error: "Cannot delete this comment" })
-          }
+          if (!access) return json(c, 404, { error: "Comment not found" })
+          if (access.role !== "owner") return json(c, 403, { error: "Cannot delete this comment" })
         }
         await db.execute(
           from("comments")

@@ -22,7 +22,6 @@ import {
   Folder as FolderIcon,
   FolderOpen,
   FolderPlus,
-  Github,
   HelpCircle,
   Inbox,
   Link2,
@@ -37,12 +36,14 @@ import {
   Plus,
   Search,
   Settings as SettingsIcon,
+  ShieldCheck,
   Smartphone,
   Sun,
   Trash2,
   Upload as UploadIcon,
   UserPlus,
   Users,
+  UsersRound,
   X,
   Zap,
 } from "lucide-react"
@@ -71,7 +72,8 @@ type Route =
   | { kind: "spaces" }
   | { kind: "space"; id: number }
   | { kind: "settings" }
-  | { kind: "admin" }
+  | { kind: "admin"; section?: string }
+  | { kind: "team"; section?: string }
   | { kind: "share"; token: string }
   | { kind: "publicFolder"; username: string; folderId: number }
   | { kind: "oauthAuthorize"; query: string }
@@ -111,7 +113,10 @@ const parseRoute = (loc: { pathname: string; search: string }): Route => {
   const space = path.match(/^\/app\/spaces\/(\d+)$/)
   if (space) return { kind: "space", id: Number(space[1]) }
   if (path === "/app/settings") return { kind: "settings" }
-  if (path === "/app/admin") return { kind: "admin" }
+  const admin = path.match(/^\/app\/admin(?:\/([a-z]+))?$/)
+  if (admin) return { kind: "admin", section: admin[1] }
+  const team = path.match(/^\/app\/team(?:\/([a-z]+))?$/)
+  if (team) return { kind: "team", section: team[1] }
   if (path === "/app/actions") return { kind: "actions" }
   const actEdit = path.match(/^\/app\/actions\/(\d+)\/edit/)
   if (actEdit) return { kind: "actionEdit", id: Number(actEdit[1]) }
@@ -123,6 +128,21 @@ const navigate = (path: string) => {
   history.pushState(null, "", path)
   window.dispatchEvent(new PopStateEvent("popstate"))
 }
+
+// Which tenant this page is on, before there is a session to ask. The web
+// server stamps ROOT_DOMAIN into the document (src/web/serve.ts); the host's
+// extra label is the team slug. null on the root host or when host routing
+// is off. /me gives the real team name once signed in.
+const hostTeamSlug = (): string | null => {
+  const root = document.querySelector('meta[name="stohr-root-domain"]')?.getAttribute("content")?.toLowerCase()
+  if (!root) return null
+  const host = window.location.hostname.toLowerCase()
+  if (host === root || !host.endsWith(`.${root}`)) return null
+  const label = host.slice(0, -(root.length + 1))
+  return label && !label.includes(".") ? label : null
+}
+
+type Tenant = { slug: string; name: string }
 
 const folderHref = (id: number, ownerUsername?: string) =>
   ownerUsername ? `/app/u/${ownerUsername}/f/${id}` : `/app/f/${id}`
@@ -260,7 +280,9 @@ const Auth: React.FC<{
   needsSetup: boolean
   initialMode?: "login" | "signup"
   oauthNext?: string
-}> = ({ onLogin, initialInvite, needsSetup, initialMode, oauthNext }) => {
+  // set on a team host: external login and open signup live on the root only
+  tenant?: Tenant | null
+}> = ({ onLogin, initialInvite, needsSetup, initialMode, oauthNext, tenant = null }) => {
   const [mode, setMode] = useState<"login" | "signup">(
     initialMode ?? (needsSetup || initialInvite ? "signup" : "login"),
   )
@@ -306,7 +328,8 @@ const Auth: React.FC<{
   }, [mode, inviteToken, needsSetup])
 
   useEffect(() => {
-    if (needsSetup) return
+    // the status routes answer "unavailable" on a team host anyway
+    if (needsSetup || tenant) return
     let cancelled = false
     Promise.all([api.oidcStatus(), api.ldapStatus(), api.ssoStatus()])
       .then(([o, l, s]) => {
@@ -319,7 +342,7 @@ const Auth: React.FC<{
     return () => {
       cancelled = true
     }
-  }, [needsSetup])
+  }, [needsSetup, tenant])
 
   const submit = async () => {
     setError("")
@@ -418,12 +441,17 @@ const Auth: React.FC<{
   const heading = needsSetup
     ? "Set up your Stohr"
     : mode === "login"
-      ? "Sign in to your cloud storage"
-      : "Create your account"
+      ? tenant
+        ? `Sign in to ${tenant.name}`
+        : "Sign in to your cloud storage"
+      : tenant
+        ? `Join ${tenant.name}`
+        : "Create your account"
 
   return (
     <div className="auth">
       <Logo className="auth-logo" />
+      {tenant && <div className="auth-team">{tenant.slug}</div>}
       <h2>{heading}</h2>
       {needsSetup && (
         <div
@@ -532,6 +560,7 @@ const Auth: React.FC<{
                 type="button"
                 className="passkey-cta"
                 onClick={() => {
+                  api.markSsoStart()
                   window.location.href = "/auth/sso/login"
                 }}
               >
@@ -550,6 +579,7 @@ const Auth: React.FC<{
                 onClick={() => {
                   const next = oauthNext ?? window.location.pathname + window.location.search
                   const q = next && next !== "/" ? `?redirect_to=${encodeURIComponent(next)}` : ""
+                  api.markSsoStart()
                   window.location.href = `/api/auth/oidc/start${q}`
                 }}
               >
@@ -591,7 +621,9 @@ const Auth: React.FC<{
           <button type="button" className="primary" onClick={submit}>
             {needsSetup ? "Create owner account" : mode === "login" ? "Sign in" : "Create account"}
           </button>
-          {!needsSetup && (
+          {/* a team's members are made by its admins (or come in through
+              an invite link, which lands here in signup mode already) */}
+          {!needsSetup && (mode === "signup" || !tenant) && (
             <div className="toggle" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
               {mode === "login" ? "Have an invite? Create your account" : "Already have an account? Sign in"}
             </div>
@@ -3853,6 +3885,17 @@ const SCOPE_DESCRIPTIONS: Record<string, string> = {
   share: "Create and revoke public share links",
 }
 
+// Only navigate to something a browser opens as a page — never a
+// javascript:/data: URL the server might have been talked into returning.
+const canFollowRedirect = (url: string): boolean => {
+  try {
+    const protocol = new URL(url).protocol.toLowerCase()
+    return !["javascript:", "data:", "vbscript:", "file:", "blob:", "about:"].includes(protocol)
+  } catch {
+    return false
+  }
+}
+
 const OAuthConsent: React.FC<{ query: string }> = ({ query }) => {
   const [info, setInfo] = useState<OAuthInfo | null>(null)
   const [busy, setBusy] = useState(false)
@@ -3879,7 +3922,7 @@ const OAuthConsent: React.FC<{ query: string }> = ({ query }) => {
       setError(res.error_description ?? res.error)
       return
     }
-    if (res.redirect_url) {
+    if (res.redirect_url && canFollowRedirect(res.redirect_url)) {
       window.location.replace(res.redirect_url)
     }
   }
@@ -5807,6 +5850,12 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
 
 const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, route }) => {
   const [userSnapshot, setUserSnapshot] = useState(api.getUser())
+  // the login response has no team fields; /me does
+  useEffect(() => {
+    api.refreshMe().then(u => {
+      if (u) setUserSnapshot(u)
+    })
+  }, [])
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"
@@ -5869,6 +5918,7 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
     | "messages"
     | "spaces"
     | "settings"
+    | "team"
     | "admin" = (() => {
     if (route.kind === "shared") return "shared"
     if (route.kind === "links") return "links"
@@ -5878,6 +5928,7 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
     if (route.kind === "messages" || route.kind === "messageThread") return "messages"
     if (route.kind === "spaces" || route.kind === "space") return "spaces"
     if (route.kind === "settings") return "settings"
+    if (route.kind === "team") return "team"
     if (route.kind === "admin") return "admin"
     return "files"
   })()
@@ -5936,6 +5987,13 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
             <PanelLeft size={16} strokeWidth={1.75} />
           </button>
         </div>
+        {/* only on a team host: the root team is just "Stohr" */}
+        {userSnapshot?.team && userSnapshot.is_root === false && (
+          <div className="sidebar-team" title={`Team ${userSnapshot.team.slug}`}>
+            <UsersRound size={14} strokeWidth={1.75} />
+            <span className="nav-label">{userSnapshot.team.name}</span>
+          </div>
+        )}
         <div className={`nav${activeTab === "files" ? " active" : ""}`} onClick={() => navigate("/")} title="My Files">
           <FolderOpen size={18} strokeWidth={1.75} /> <span className="nav-label">My Files</span>
         </div>
@@ -6027,6 +6085,16 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
         >
           <SettingsIcon size={18} strokeWidth={1.75} /> <span className="nav-label">Settings</span>
         </div>
+        {/* the owner already has all of this under Admin */}
+        {userSnapshot?.team_admin && !userSnapshot.is_owner && (
+          <div
+            className={`nav${activeTab === "team" ? " active" : ""}`}
+            onClick={() => navigate("/app/team")}
+            title="Team"
+          >
+            <ShieldCheck size={18} strokeWidth={1.75} /> <span className="nav-label">Team</span>
+          </div>
+        )}
         {userSnapshot?.is_owner && (
           <div
             className={`nav${activeTab === "admin" ? " active" : ""}`}
@@ -6067,16 +6135,21 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
                 </div>
                 <ExternalLink size={12} strokeWidth={1.75} className="help-menu-ext" />
               </a>
-              <a href="/contact" target="_blank" rel="noreferrer" role="menuitem">
-                <MessageSquare size={14} strokeWidth={1.75} />
-                <div className="help-menu-text">
-                  <div className="help-menu-title">Contact us</div>
-                  <div className="help-menu-sub">Bugs, feature requests, questions</div>
-                </div>
-                <ExternalLink size={12} strokeWidth={1.75} className="help-menu-ext" />
-              </a>
+              {/* the contact form is reviewed on the root host only */}
+              {userSnapshot?.is_root !== false && (
+                <a href="/contact" target="_blank" rel="noreferrer" role="menuitem">
+                  <MessageSquare size={14} strokeWidth={1.75} />
+                  <div className="help-menu-text">
+                    <div className="help-menu-title">Contact us</div>
+                    <div className="help-menu-sub">Bugs, feature requests, questions</div>
+                  </div>
+                  <ExternalLink size={12} strokeWidth={1.75} className="help-menu-ext" />
+                </a>
+              )}
               <a href="https://github.com/wess/stohr" target="_blank" rel="noreferrer" role="menuitem">
-                <Github size={14} strokeWidth={1.75} />
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.37-3.87-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.25 3.33.95.1-.74.4-1.25.72-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.18-3.08-.12-.29-.51-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.62 1.59.23 2.76.11 3.05.74.8 1.18 1.82 1.18 3.08 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
+                </svg>
                 <div className="help-menu-text">
                   <div className="help-menu-title">GitHub</div>
                   <div className="help-menu-sub">Source, issues, releases</div>
@@ -6146,7 +6219,8 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
       {activeTab === "settings" && (
         <Settings onProfileUpdate={() => setUserSnapshot(api.getUser())} onAccountDeleted={onLogout} />
       )}
-      {activeTab === "admin" && <AdminView />}
+      {activeTab === "team" && route.kind === "team" && <TeamView section={route.section} />}
+      {activeTab === "admin" && route.kind === "admin" && <AdminView section={route.section} />}
     </div>
   )
 }
@@ -6545,7 +6619,8 @@ const DeveloperPanel: React.FC = () => {
       <S3KeysSection />
       <AppsSection />
       <WebdavSection />
-      {me?.is_owner && <OAuthClientsSection />}
+      {/* oauth client registration is an instance-level surface: root host only */}
+      {me?.is_owner && me.is_root !== false && <OAuthClientsSection />}
     </section>
   )
 }
@@ -8538,7 +8613,11 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
   const [name, setName] = useState(current?.name ?? "")
   const [username, setUsername] = useState(current?.username ?? "")
   const [email, setEmail] = useState(current?.email ?? "")
+  const [profilePw, setProfilePw] = useState("")
   const [profileMsg, setProfileMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
+  // email and username are login identities; the API wants the current
+  // password before it changes either
+  const identityEdited = email.trim() !== (current?.email ?? "") || username.trim() !== (current?.username ?? "")
 
   const [currentPw, setCurrentPw] = useState("")
   const [newPw, setNewPw] = useState("")
@@ -8562,6 +8641,8 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
   // disabled tab would only show the same "ask the owner" copy anyway.
   const [federationOn, setFederationOn] = useState<boolean>(false)
   useEffect(() => {
+    // federation exists on the root host only; a team host 404s the probe
+    if (api.getUser()?.is_root === false) return
     api
       .federationAvailable()
       .then(setFederationOn)
@@ -8576,7 +8657,7 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
 
   const saveProfile = async () => {
     setProfileMsg(null)
-    const patch: { name?: string; email?: string; username?: string } = {}
+    const patch: { name?: string; email?: string; username?: string; current_password?: string } = {}
     if (name.trim() && name.trim() !== current?.name) patch.name = name.trim()
     if (email.trim() && email.trim() !== current?.email) patch.email = email.trim()
     if (username.trim() && username.trim() !== current?.username) patch.username = username.trim()
@@ -8584,8 +8665,15 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
       setProfileMsg({ kind: "err", text: "Nothing changed" })
       return
     }
+    if (patch.email || patch.username) {
+      if (!profilePw) {
+        return setProfileMsg({ kind: "err", text: "Enter your current password to change email or username" })
+      }
+      patch.current_password = profilePw
+    }
     const res = await api.updateProfile(patch)
     if (res.error) return setProfileMsg({ kind: "err", text: res.error })
+    setProfilePw("")
     setProfileMsg({ kind: "ok", text: "Profile updated" })
     onProfileUpdate()
   }
@@ -8611,13 +8699,15 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
     onAccountDeleted()
   }
 
+  // on a tenant host only team admins mint invites; root members still can
+  const canInvite = current?.is_root !== false || !!current?.team_admin
   const tabs: Array<{ id: SettingsTab; label: string }> = [
     { id: "profile", label: "Profile" },
     { id: "storage", label: "Storage" },
     { id: "security", label: "Security" },
     { id: "developer", label: "Developer" },
     ...(federationOn ? [{ id: "federation" as const, label: "Federation" }] : []),
-    { id: "invites", label: "Invites" },
+    ...(canInvite ? [{ id: "invites" as const, label: "Invites" }] : []),
     { id: "account", label: "Account" },
   ]
 
@@ -8662,6 +8752,17 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
                 />
                 <label>Email</label>
                 <input type="email" value={email} onChange={e => setEmail(e.target.value)} />
+                {identityEdited && (
+                  <>
+                    <label>Current password</label>
+                    <input
+                      type="password"
+                      value={profilePw}
+                      onChange={e => setProfilePw(e.target.value)}
+                      autoComplete="current-password"
+                    />
+                  </>
+                )}
                 {profileMsg && <div className={`msg ${profileMsg.kind}`}>{profileMsg.text}</div>}
                 <div className="settings-actions">
                   <button type="button" className="primary" onClick={saveProfile}>
@@ -8769,11 +8870,26 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
   )
 }
 
-type AdminSection = "users" | "invites" | "stats" | "audit" | "contact" | "settings" | "mcp"
+type AdminSection = "users" | "teams" | "invites" | "stats" | "audit" | "contact" | "settings" | "mcp"
 
-const AdminView: React.FC = () => {
+// rootOnly: instance-level surfaces that a team host does not have (the
+// owner only ever signs in on the root host, so this is belt and braces)
+const ADMIN_SECTIONS: Array<{ id: AdminSection; label: string; rootOnly?: boolean }> = [
+  { id: "users", label: "Users" },
+  { id: "teams", label: "Teams", rootOnly: true },
+  { id: "invites", label: "Invites" },
+  { id: "settings", label: "Settings", rootOnly: true },
+  { id: "mcp", label: "MCP", rootOnly: true },
+  { id: "contact", label: "Contact", rootOnly: true },
+  { id: "stats", label: "Stats", rootOnly: true },
+  { id: "audit", label: "Audit" },
+]
+
+const AdminView: React.FC<{ section?: string }> = ({ section: requested }) => {
   const me = api.getUser()
-  const [section, setSection] = useState<AdminSection>("users")
+  const rootHost = me?.is_root !== false
+  const sections = ADMIN_SECTIONS.filter(s => rootHost || !s.rootOnly)
+  const section: AdminSection = sections.some(s => s.id === requested) ? (requested as AdminSection) : "users"
 
   if (!me?.is_owner) {
     return (
@@ -8801,39 +8917,25 @@ const AdminView: React.FC = () => {
       </div>
       <div className="content">
         <div className="admin-sections">
-          <button type="button" className={section === "users" ? "active" : ""} onClick={() => setSection("users")}>
-            Users
-          </button>
-          <button type="button" className={section === "invites" ? "active" : ""} onClick={() => setSection("invites")}>
-            Invites
-          </button>
-          <button
-            type="button"
-            className={section === "settings" ? "active" : ""}
-            onClick={() => setSection("settings")}
-          >
-            Settings
-          </button>
-          <button type="button" className={section === "mcp" ? "active" : ""} onClick={() => setSection("mcp")}>
-            MCP
-          </button>
-          <button type="button" className={section === "contact" ? "active" : ""} onClick={() => setSection("contact")}>
-            Contact
-          </button>
-          <button type="button" className={section === "stats" ? "active" : ""} onClick={() => setSection("stats")}>
-            Stats
-          </button>
-          <button type="button" className={section === "audit" ? "active" : ""} onClick={() => setSection("audit")}>
-            Audit
-          </button>
+          {sections.map(s => (
+            <button
+              key={s.id}
+              type="button"
+              className={section === s.id ? "active" : ""}
+              onClick={() => navigate(`/app/admin/${s.id}`)}
+            >
+              {s.label}
+            </button>
+          ))}
         </div>
-        {section === "users" && <AdminUsers meId={me.id} />}
-        {section === "invites" && <AdminInvites />}
+        {section === "users" && <AdminUsers meId={me.id} scope="owner" />}
+        {section === "teams" && <AdminTeams />}
+        {section === "invites" && <AdminInvites scope="owner" />}
         {section === "settings" && <AdminSettings />}
         {section === "mcp" && <AdminMcp />}
         {section === "contact" && <AdminContact />}
         {section === "stats" && <AdminStats />}
-        {section === "audit" && <AdminAudit />}
+        {section === "audit" && <AdminAudit scope="owner" />}
       </div>
     </div>
   )
@@ -9265,56 +9367,66 @@ const AdminMcpServerRow: React.FC<{ server: api.McpServer; onChanged: () => void
   )
 }
 
-type AdminUser = {
-  id: number
-  username: string
-  email: string
-  name: string
-  is_owner: boolean
-  storage_quota_bytes: number
-  storage_bytes: number
-  file_count: number
-  suspended_at?: string | null
-  suspended_reason?: string | null
-  created_at: string
-}
+type AdminUser = api.ManagedUser
 
-const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
+// The same list serves the owner (every user, /admin/*) and a team admin
+// (the host's team, /team/*). The scope picks the endpoint base and which
+// actions exist: quota, ownership and broadcast are owner-only, direct
+// member creation is a team route.
+type AdminScope = "owner" | "team"
+const adminBase = (scope: AdminScope): api.UserAdminBase => (scope === "owner" ? "/admin" : "/team")
+
+const AdminUsers: React.FC<{ meId: number; scope: AdminScope }> = ({ meId, scope }) => {
+  const client = useMemo(() => api.userAdminApi(adminBase(scope)), [scope])
   const [users, setUsers] = useState<AdminUser[]>([])
+  const [error, setError] = useState("")
   const [busy, setBusy] = useState<number | null>(null)
   const [editing, setEditing] = useState<AdminUser | null>(null)
   const [messaging, setMessaging] = useState<AdminUser | null>(null)
   const [broadcasting, setBroadcasting] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [tick, setTick] = useState(0)
+  const reload = () => setTick(t => t + 1)
 
-  const load = async () => {
-    const data = await api.adminListUsers()
-    setUsers(Array.isArray(data) ? data : [])
-  }
   useEffect(() => {
-    load()
-  }, [])
+    let cancelled = false
+    client.listUsers().then(data => {
+      if (cancelled) return
+      if (Array.isArray(data)) {
+        setUsers(data)
+        setError("")
+      } else {
+        setUsers([])
+        setError(data?.error ?? "Failed to load users")
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [client, tick])
 
-  const suspend = async (u: AdminUser) => {
+  // one shape for every row action: busy marker, surface the error, refresh
+  const act = async (u: AdminUser, run: () => Promise<any>) => {
+    setBusy(u.id)
+    const res = await run()
+    setBusy(null)
+    if (res?.error) return alert(res.error)
+    reload()
+  }
+
+  const suspend = (u: AdminUser) => {
     const reason = prompt(`Suspend @${u.username}? Optional reason (sent to the user):`, "")
     if (reason === null) return
-    setBusy(u.id)
-    const res = await api.adminSuspendUser(u.id, reason.trim() || undefined)
-    setBusy(null)
-    if ((res as any).error) return alert((res as any).error)
-    await load()
+    act(u, () => client.suspendUser(u.id, reason.trim() || undefined))
   }
-  const unsuspend = async (u: AdminUser) => {
+  const unsuspend = (u: AdminUser) => {
     if (!confirm(`Restore access for @${u.username}?`)) return
-    setBusy(u.id)
-    const res = await api.adminUnsuspendUser(u.id)
-    setBusy(null)
-    if ((res as any).error) return alert((res as any).error)
-    await load()
+    act(u, () => client.unsuspendUser(u.id))
   }
   const resetPassword = async (u: AdminUser) => {
     if (!confirm(`Issue a password reset link for @${u.username}?`)) return
     setBusy(u.id)
-    const res = await api.adminResetUserPassword(u.id)
+    const res = await client.resetUserPassword(u.id)
     setBusy(null)
     if (res.error) return alert(res.error)
     if (res.reset_url) {
@@ -9323,52 +9435,48 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
       alert("Reset link emailed to the user.")
     }
   }
-
-  const toggleOwner = async (u: AdminUser) => {
+  const toggleOwner = (u: AdminUser) => {
     if (u.id === meId) return
     if (!confirm(`${u.is_owner ? "Remove" : "Grant"} owner role ${u.is_owner ? "from" : "to"} @${u.username}?`)) return
-    setBusy(u.id)
-    const res = await api.adminSetOwner(u.id, !u.is_owner)
-    setBusy(null)
-    if (res.error) return alert(res.error)
-    await load()
+    act(u, () => api.adminSetOwner(u.id, !u.is_owner))
   }
-
-  const remove = async (u: AdminUser) => {
+  const remove = (u: AdminUser) => {
     if (u.id === meId) return alert("Use Settings to delete your own account.")
     if (!confirm(`Permanently delete @${u.username}? All their files will be removed.`)) return
-    setBusy(u.id)
-    const res = await api.adminDeleteUser(u.id)
-    setBusy(null)
-    if (res.error) return alert(res.error)
-    await load()
+    act(u, () => client.deleteUser(u.id))
   }
-
-  const setQuota = async (u: AdminUser) => {
+  const setQuota = (u: AdminUser) => {
     const currentGb =
       u.storage_quota_bytes > 0 ? String(Math.round((u.storage_quota_bytes / 1024 ** 3) * 100) / 100) : "0"
     const input = prompt(`Storage cap for @${u.username}, in GB (0 = unlimited):`, currentGb)
     if (input === null) return
     const gb = Number(input.trim())
     if (!Number.isFinite(gb) || gb < 0) return alert("Enter a non-negative number of GB.")
-    setBusy(u.id)
-    const res = await api.adminSetUserQuota(u.id, Math.round(gb * 1024 ** 3))
-    setBusy(null)
-    if (res.error) return alert(res.error)
-    await load()
+    act(u, () => api.adminSetUserQuota(u.id, Math.round(gb * 1024 ** 3)))
   }
+
+  const owner = scope === "owner"
 
   return (
     <section className="settings-card">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>
-          Users <span className="admin-count">({users.length})</span>
+          {owner ? "Users" : "Members"} <span className="admin-count">({users.length})</span>
         </h3>
-        <button type="button" onClick={() => setBroadcasting(true)}>
-          <Mail size={14} strokeWidth={1.75} /> Broadcast
-        </button>
+        {owner ? (
+          <button type="button" onClick={() => setBroadcasting(true)}>
+            <Mail size={14} strokeWidth={1.75} /> Broadcast
+          </button>
+        ) : (
+          <button type="button" className="primary" onClick={() => setAdding(true)}>
+            <UserPlus size={14} strokeWidth={1.75} /> Add member
+          </button>
+        )}
       </div>
-      {users.length === 0 && <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 14 }}>No users yet.</div>}
+      {error && <div className="msg err">{error}</div>}
+      {!error && users.length === 0 && (
+        <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 14 }}>No users yet.</div>
+      )}
       <div className="admin-list">
         {users.map(u => (
           <div key={u.id} className="admin-row">
@@ -9378,6 +9486,7 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
                 <span className="admin-row-name">{u.name}</span>
                 <span className="admin-row-name">· {u.email}</span>
                 {u.is_owner && <span className="admin-pill admin-pill-owner">owner</span>}
+                {u.team_admin && !u.is_owner && <span className="admin-pill admin-pill-owner">team admin</span>}
                 {u.suspended_at && (
                   <span
                     className="admin-pill"
@@ -9400,18 +9509,24 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
               <button type="button" disabled={busy === u.id} onClick={() => setEditing(u)}>
                 Edit
               </button>
-              <button type="button" disabled={busy === u.id} onClick={() => setQuota(u)}>
-                Quota
-              </button>
+              {owner && (
+                <button type="button" disabled={busy === u.id} onClick={() => setQuota(u)}>
+                  Quota
+                </button>
+              )}
               <button type="button" disabled={busy === u.id} onClick={() => setMessaging(u)}>
                 Message
               </button>
-              <button type="button" disabled={busy === u.id || u.id === meId} onClick={() => toggleOwner(u)}>
-                {u.is_owner ? "Revoke owner" : "Make owner"}
-              </button>
-              <button type="button" disabled={busy === u.id} onClick={() => resetPassword(u)}>
-                Reset password
-              </button>
+              {owner && (
+                <button type="button" disabled={busy === u.id || u.id === meId} onClick={() => toggleOwner(u)}>
+                  {u.is_owner ? "Revoke owner" : "Make owner"}
+                </button>
+              )}
+              {!u.is_owner && (
+                <button type="button" disabled={busy === u.id} onClick={() => resetPassword(u)}>
+                  Reset password
+                </button>
+              )}
               {u.id !== meId &&
                 !u.is_owner &&
                 (u.suspended_at ? (
@@ -9423,7 +9538,7 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
                     Suspend
                   </button>
                 ))}
-              {u.id !== meId && (
+              {u.id !== meId && (owner || !u.is_owner) && (
                 <button type="button" className="danger" disabled={busy === u.id} onClick={() => remove(u)}>
                   Delete
                 </button>
@@ -9435,42 +9550,49 @@ const AdminUsers: React.FC<{ meId: number }> = ({ meId }) => {
       {editing && (
         <AdminUserEditModal
           user={editing}
+          client={client}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null)
-            load()
+            reload()
           }}
         />
       )}
-      {messaging && <AdminMessageModal target={messaging} onClose={() => setMessaging(null)} />}
+      {messaging && <AdminMessageModal target={messaging} client={client} onClose={() => setMessaging(null)} />}
       {broadcasting && <AdminBroadcastModal onClose={() => setBroadcasting(false)} />}
+      {adding && <TeamMemberCreateModal onClose={() => setAdding(false)} onCreated={reload} />}
     </section>
   )
 }
 
-const AdminUserEditModal: React.FC<{ user: AdminUser; onClose: () => void; onSaved: () => void }> = ({
-  user,
-  onClose,
-  onSaved,
-}) => {
+type UserAdminClient = ReturnType<typeof api.userAdminApi>
+
+const AdminUserEditModal: React.FC<{
+  user: AdminUser
+  client: UserAdminClient
+  onClose: () => void
+  onSaved: () => void
+}> = ({ user, client, onClose, onSaved }) => {
   const [name, setName] = useState(user.name)
   const [email, setEmail] = useState(user.email)
   const [username, setUsername] = useState(user.username)
+  const [teamAdmin, setTeamAdmin] = useState(!!user.team_admin)
   const [err, setErr] = useState("")
   const [saving, setSaving] = useState(false)
 
   const save = async () => {
     setErr("")
-    const patch: Record<string, string> = {}
+    const patch: { name?: string; email?: string; username?: string; team_admin?: boolean } = {}
     if (name.trim() !== user.name) patch.name = name.trim()
     if (email.trim().toLowerCase() !== user.email) patch.email = email.trim().toLowerCase()
     if (username.trim().toLowerCase() !== user.username) patch.username = username.trim().toLowerCase()
+    if (teamAdmin !== !!user.team_admin) patch.team_admin = teamAdmin
     if (Object.keys(patch).length === 0) {
       onClose()
       return
     }
     setSaving(true)
-    const res = await api.adminEditUser(user.id, patch)
+    const res = await client.editUser(user.id, patch)
     setSaving(false)
     if ((res as any).error) {
       setErr((res as any).error)
@@ -9488,6 +9610,13 @@ const AdminUserEditModal: React.FC<{ user: AdminUser; onClose: () => void; onSav
       <input value={email} onChange={e => setEmail(e.target.value)} type="email" />
       <label style={{ fontSize: 13, color: "var(--muted)" }}>Username</label>
       <input value={username} onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))} />
+      {/* an owner administers root implicitly; the flag is for everyone else */}
+      {!user.is_owner && (
+        <label className="scope-check" style={{ margin: "12px 0 16px" }}>
+          <input type="checkbox" checked={teamAdmin} onChange={e => setTeamAdmin(e.target.checked)} />
+          Team admin — manages this team's members, invites and audit log
+        </label>
+      )}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
         <button type="button" onClick={onClose}>
           Cancel
@@ -9500,7 +9629,123 @@ const AdminUserEditModal: React.FC<{ user: AdminUser; onClose: () => void; onSav
   )
 }
 
-const AdminMessageModal: React.FC<{ target: AdminUser; onClose: () => void }> = ({ target, onClose }) => {
+// A team admin adding someone directly. Without a password the API mints a
+// one-time set-password link on this team's host; it is shown once here
+// (and emailed when the instance can send mail).
+const TeamMemberCreateModal: React.FC<{ onClose: () => void; onCreated: () => void }> = ({ onClose, onCreated }) => {
+  const [email, setEmail] = useState("")
+  const [name, setName] = useState("")
+  const [username, setUsername] = useState("")
+  const [password, setPassword] = useState("")
+  const [teamAdmin, setTeamAdmin] = useState(false)
+  const [err, setErr] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [result, setResult] = useState<{ email: string; set_password_url: string | null; emailed: boolean } | null>(
+    null,
+  )
+
+  const create = async () => {
+    setErr("")
+    if (!email.trim()) return setErr("Email is required")
+    if (password && password.length < 8) return setErr("Password must be at least 8 characters")
+    setSaving(true)
+    const res = await api.teamCreateUser({
+      email: email.trim(),
+      name: name.trim() || undefined,
+      username: username.trim() || undefined,
+      password: password || undefined,
+      team_admin: teamAdmin,
+    })
+    setSaving(false)
+    if (res.error) return setErr(res.error)
+    setResult({ email: res.email, set_password_url: res.set_password_url, emailed: res.emailed })
+    onCreated()
+  }
+
+  if (result) {
+    return (
+      <Modal title="Member added" onClose={onClose}>
+        <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.5, margin: "0 0 12px" }}>
+          <strong style={{ color: "var(--text)" }}>{result.email}</strong> can sign in at{" "}
+          <strong style={{ color: "var(--text)" }}>{window.location.origin}</strong>.
+        </p>
+        {result.set_password_url ? (
+          <div className="msg">
+            <div style={{ fontWeight: 500, marginBottom: 4 }}>
+              {result.emailed
+                ? "Their set-password link, also emailed to them. Shown once."
+                : "Email is off — send them this set-password link. Shown once."}
+            </div>
+            <div className="share-link" style={{ fontSize: 11, wordBreak: "break-all" }}>
+              {result.set_password_url}
+            </div>
+            <div style={{ marginTop: 6 }}>
+              <button type="button" onClick={() => navigator.clipboard.writeText(result.set_password_url ?? "")}>
+                <Copy size={14} strokeWidth={1.75} /> Copy link
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="msg ok">They sign in with the password you set.</div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+          <button type="button" className="primary" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </Modal>
+    )
+  }
+
+  return (
+    <Modal title="Add a member" onClose={onClose}>
+      {err && <div className="msg err">{err}</div>}
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>Email</label>
+      <input
+        type="email"
+        placeholder="alice@example.com"
+        value={email}
+        onChange={e => setEmail(e.target.value)}
+        autoFocus
+        autoCapitalize="off"
+        autoCorrect="off"
+      />
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>Name (optional)</label>
+      <input value={name} onChange={e => setName(e.target.value)} />
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>
+        Username (optional, derived from the email otherwise)
+      </label>
+      <input
+        value={username}
+        onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
+        autoCapitalize="off"
+        autoCorrect="off"
+      />
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>
+        Password (optional — leave blank for a set-password link)
+      </label>
+      <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" />
+      <label className="scope-check" style={{ margin: "12px 0 16px" }}>
+        <input type="checkbox" checked={teamAdmin} onChange={e => setTeamAdmin(e.target.checked)} />
+        Team admin
+      </label>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="button" className="primary" disabled={saving} onClick={create}>
+          {saving ? "Adding…" : "Add member"}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+const AdminMessageModal: React.FC<{ target: AdminUser; client: UserAdminClient; onClose: () => void }> = ({
+  target,
+  client,
+  onClose,
+}) => {
   const [subject, setSubject] = useState("")
   const [body, setBody] = useState("")
   const [err, setErr] = useState("")
@@ -9513,7 +9758,7 @@ const AdminMessageModal: React.FC<{ target: AdminUser; onClose: () => void }> = 
       return
     }
     setSending(true)
-    const res = await api.adminMessageUser(target.id, subject.trim(), body.trim())
+    const res = await client.messageUser(target.id, subject.trim(), body.trim())
     setSending(false)
     if ((res as any).error) {
       setErr((res as any).error)
@@ -9592,44 +9837,84 @@ const AdminBroadcastModal: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   )
 }
 
-type AdminInvite = {
-  id: number
-  email: string | null
-  invited_by: number | null
-  invited_by_username: string | null
-  used_at: string | null
-  used_by: number | null
-  used_by_username: string | null
-  created_at: string
-}
-
-const AdminInvites: React.FC = () => {
+// Owner: every invite for the root team. Team admin: the host team's. The
+// signup link is built on this origin, which is the host the invite redeems on.
+const AdminInvites: React.FC<{ scope: AdminScope }> = ({ scope }) => {
+  const client = useMemo(() => api.userAdminApi(adminBase(scope)), [scope])
   const [filter, setFilter] = useState<"all" | "unused" | "used">("unused")
-  const [invites, setInvites] = useState<AdminInvite[]>([])
+  const [invites, setInvites] = useState<api.ManagedInvite[]>([])
+  const [email, setEmail] = useState("")
+  const [error, setError] = useState("")
+  // the token exists only in the create response; the server keeps a hash
+  const [justCreated, setJustCreated] = useState<{ id: number; token: string } | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
+  const [tick, setTick] = useState(0)
+  const reload = () => setTick(t => t + 1)
 
-  const load = async () => {
-    const data = await api.adminListAllInvites(filter)
-    setInvites(Array.isArray(data) ? data : [])
-  }
   useEffect(() => {
-    load()
-  }, [filter])
+    let cancelled = false
+    client.listInvites(filter).then(data => {
+      if (!cancelled) setInvites(Array.isArray(data) ? data : [])
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [client, filter, tick])
+
+  const inviteLink = (token: string) => `${window.location.origin}/signup?invite=${token}`
+
+  const create = async () => {
+    setError("")
+    const res = await client.createInvite(email.trim() || undefined)
+    if (res.error) return setError(res.error)
+    if (res.token && res.id) setJustCreated({ id: res.id, token: res.token })
+    setEmail("")
+    if (filter === "used") setFilter("unused")
+    else reload()
+  }
 
   const remove = async (id: number) => {
     if (!confirm("Delete this invite?")) return
     setBusy(id)
-    const res = await api.adminDeleteInvite(id)
+    const res = await client.deleteInvite(id)
     setBusy(null)
     if (res.error) return alert(res.error)
-    await load()
+    if (justCreated?.id === id) setJustCreated(null)
+    reload()
   }
 
   return (
     <section className="settings-card">
       <h3>
-        All invites <span className="admin-count">({invites.length})</span>
+        {scope === "owner" ? "All invites" : "Invites"} <span className="admin-count">({invites.length})</span>
       </h3>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+        <input
+          type="email"
+          placeholder="Email (optional, locks the invite to this address)"
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && create()}
+          style={{ flex: 1, minWidth: 220 }}
+        />
+        <button type="button" className="primary" onClick={create}>
+          <Mail size={14} strokeWidth={1.75} /> Create invite
+        </button>
+      </div>
+      {error && <div className="msg err">{error}</div>}
+      {justCreated && (
+        <div className="msg" style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 500, marginBottom: 4 }}>Copy this link now — we don't store it.</div>
+          <div className="share-link" style={{ fontSize: 11, wordBreak: "break-all" }}>
+            {inviteLink(justCreated.token)}
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <button type="button" onClick={() => navigator.clipboard.writeText(inviteLink(justCreated.token))}>
+              <Copy size={14} strokeWidth={1.75} /> Copy link
+            </button>
+          </div>
+        </div>
+      )}
       <div className="admin-tabs">
         <button type="button" className={filter === "unused" ? "active" : ""} onClick={() => setFilter("unused")}>
           Unused
@@ -9682,18 +9967,6 @@ type AdminStatsData = {
   invites_used: number
   invites_unused: number
   requests_pending: number
-}
-
-type AuditEvent = {
-  id: number
-  user_id: number | null
-  event: string
-  metadata: string | null
-  ip: string | null
-  user_agent: string | null
-  created_at: string
-  username?: string | null
-  user_email?: string | null
 }
 
 const AdminContact: React.FC = () => {
@@ -9859,20 +10132,32 @@ const AdminContact: React.FC = () => {
   )
 }
 
-const AdminAudit: React.FC = () => {
-  const [events, setEvents] = useState<AuditEvent[]>([])
+const AdminAudit: React.FC<{ scope: AdminScope }> = ({ scope }) => {
+  const client = useMemo(() => api.userAdminApi(adminBase(scope)), [scope])
+  const [events, setEvents] = useState<api.AuditRow[]>([])
   const [eventFilter, setEventFilter] = useState("")
+  // the filter the list was last loaded with; Refresh applies the typed one
+  const [applied, setApplied] = useState("")
   const [loading, setLoading] = useState(true)
+  const [tick, setTick] = useState(0)
 
-  const load = async () => {
-    setLoading(true)
-    const data = await api.adminListAuditEvents({ event: eventFilter || undefined, limit: 200 })
-    setEvents(Array.isArray(data) ? data : [])
-    setLoading(false)
-  }
   useEffect(() => {
-    load()
-  }, [])
+    let cancelled = false
+    setLoading(true)
+    client.listAudit({ event: applied || undefined, limit: 200 }).then(data => {
+      if (cancelled) return
+      setEvents(Array.isArray(data) ? data : [])
+      setLoading(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [client, applied, tick])
+
+  const load = () => {
+    setApplied(eventFilter)
+    setTick(t => t + 1)
+  }
 
   const tone = (event: string): string => {
     if (
@@ -9901,6 +10186,9 @@ const AdminAudit: React.FC = () => {
     "mfa.enabled",
     "mfa.disabled",
     "signup.ok",
+    ...(scope === "team"
+      ? ["team.user_created", "team.user_deleted", "admin.user_edited", "admin.user_suspended"]
+      : ["admin.team_created", "admin.team_edited", "admin.team_deleted"]),
   ]
 
   return (
@@ -9940,9 +10228,10 @@ const AdminAudit: React.FC = () => {
               <div
                 style={{ fontSize: 11, color: "var(--muted)", marginTop: 2, display: "flex", gap: 8, flexWrap: "wrap" }}
               >
-                {ev.username && <span>@{ev.username}</span>}
-                {!ev.username && ev.user_email && <span>{ev.user_email}</span>}
-                {!ev.username && !ev.user_email && ev.user_id === null && <span>anonymous</span>}
+                {ev.actor && <span>{ev.actor}</span>}
+                {!ev.actor && ev.username && <span>@{ev.username}</span>}
+                {!ev.actor && !ev.username && ev.user_email && <span>{ev.user_email}</span>}
+                {!ev.actor && !ev.username && !ev.user_email && ev.user_id === null && <span>anonymous</span>}
                 {ev.ip && <span>· {ev.ip}</span>}
                 {ev.metadata && <span>· {ev.metadata}</span>}
               </div>
@@ -9998,22 +10287,611 @@ const AdminStats: React.FC = () => {
   )
 }
 
+// Team admin's own team: usage against the team cap, members, invites, audit.
+// Members/invites/audit are the owner's admin components pointed at /team.
+type TeamSection = "overview" | "members" | "invites" | "audit"
+
+const TEAM_SECTIONS: Array<{ id: TeamSection; label: string }> = [
+  { id: "overview", label: "Overview" },
+  { id: "members", label: "Members" },
+  { id: "invites", label: "Invites" },
+  { id: "audit", label: "Audit" },
+]
+
+const TeamView: React.FC<{ section?: string }> = ({ section: requested }) => {
+  const me = api.getUser()
+  const section: TeamSection = TEAM_SECTIONS.some(s => s.id === requested) ? (requested as TeamSection) : "overview"
+
+  if (!me || (!me.team_admin && !me.is_owner)) {
+    return (
+      <div className="main">
+        <div className="toolbar">
+          <div className="crumbs">
+            <span className="current">Team</span>
+          </div>
+        </div>
+        <div className="content">
+          <div className="empty">
+            <div>Team admin access required</div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="main">
+      <div className="toolbar">
+        <div className="crumbs">
+          <span className="current">{me.team?.name ?? "Team"}</span>
+        </div>
+      </div>
+      <div className="content">
+        <div className="admin-sections">
+          {TEAM_SECTIONS.map(s => (
+            <button
+              key={s.id}
+              type="button"
+              className={section === s.id ? "active" : ""}
+              onClick={() => navigate(`/app/team/${s.id}`)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        {section === "overview" && <TeamOverview />}
+        {section === "members" && <AdminUsers meId={me.id} scope="team" />}
+        {section === "invites" && <AdminInvites scope="team" />}
+        {section === "audit" && <AdminAudit scope="team" />}
+      </div>
+    </div>
+  )
+}
+
+const quotaUnlimited = (bytes: number | null | undefined): boolean => bytes == null || bytes <= 0
+
+const TeamOverview: React.FC = () => {
+  const [team, setTeam] = useState<api.TeamInfo | null>(null)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getTeam()
+      .then(t => {
+        if (cancelled) return
+        if (t.error) setError(t.error)
+        else setTeam(t)
+      })
+      .catch(e => {
+        if (!cancelled) setError(e?.message ?? "Failed to load team")
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (!team) {
+    return (
+      <section className="settings-card">
+        <h3>Team</h3>
+        <div style={{ color: "var(--muted)", fontSize: 14 }}>{error || "Loading…"}</div>
+      </section>
+    )
+  }
+
+  const unlimited = quotaUnlimited(team.quota_bytes)
+  const pct = unlimited ? 0 : Math.min(100, (team.usage.total / (team.quota_bytes as number)) * 100)
+
+  return (
+    <>
+      <section className="settings-card">
+        <h3>
+          {team.name} <span className="admin-count">{team.slug}</span>
+        </h3>
+        {team.suspended_at && (
+          <div className="msg err" style={{ marginTop: 0, marginBottom: 12 }}>
+            This team is suspended. Members cannot sign in until the instance owner lifts it.
+          </div>
+        )}
+        <div className="sub-current">
+          <div className="sub-tier-row">
+            <div>
+              <div className="sub-tier">{unlimited ? "No team cap" : "Team storage cap"}</div>
+              <div className="sub-status">
+                {unlimited ? "Bounded only by the server's disk." : "Cap set by the instance owner."}
+              </div>
+            </div>
+            <div className="sub-usage-text">
+              {formatBytes(team.usage.total)}
+              <span style={{ color: "var(--muted)" }}>
+                {unlimited ? " used" : ` of ${formatBytes(team.quota_bytes as number)}`}
+              </span>
+            </div>
+          </div>
+          {!unlimited && (
+            <div className="sub-bar">
+              <div
+                className="sub-fill"
+                style={{ width: `${pct}%`, background: pct > 90 ? "var(--danger)" : "var(--brand)" }}
+              />
+            </div>
+          )}
+          <div className="sub-breakdown">
+            <span>
+              Active <strong>{formatBytes(team.usage.active)}</strong>
+            </span>
+            <span>
+              Trash <strong>{formatBytes(team.usage.trash)}</strong>
+            </span>
+            <span>
+              Versions <strong>{formatBytes(team.usage.versions)}</strong>
+            </span>
+          </div>
+        </div>
+      </section>
+      <section className="settings-card" style={{ marginTop: 16 }}>
+        <h3>At a glance</h3>
+        <div className="admin-stats">
+          <div className="admin-stat">
+            <div className="admin-stat-value">{team.user_count}</div>
+            <div className="admin-stat-label">Members</div>
+          </div>
+          <div className="admin-stat">
+            <div className="admin-stat-value" style={{ fontSize: 15, wordBreak: "break-all" }}>
+              {team.base_url.replace(/^https?:\/\//, "")}
+            </div>
+            <div className="admin-stat-label">Host</div>
+          </div>
+          <div className="admin-stat">
+            <div className="admin-stat-value" style={{ fontSize: 15 }}>
+              {new Date(team.created_at).toLocaleDateString()}
+            </div>
+            <div className="admin-stat-label">Created</div>
+          </div>
+        </div>
+      </section>
+    </>
+  )
+}
+
+// Root owner's control plane: every team on the instance.
+const gbToBytes = (gb: number): number => Math.round(gb * 1024 ** 3)
+const bytesToGb = (bytes: number | null | undefined): string =>
+  quotaUnlimited(bytes) ? "0" : String(Math.round(((bytes as number) / 1024 ** 3) * 100) / 100)
+// team 1 is the owner's own team; it cannot be suspended or deleted
+const ROOT_TEAM_ID = 1
+
+const dangerPill: React.CSSProperties = { background: "var(--danger-bg, #fee)", color: "var(--danger, #c00)" }
+
+const AdminTeams: React.FC = () => {
+  const [filter, setFilter] = useState<"live" | "deleted" | "all">("live")
+  const [teams, setTeams] = useState<api.AdminTeam[]>([])
+  const [error, setError] = useState("")
+  const [busy, setBusy] = useState<number | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [editing, setEditing] = useState<api.AdminTeam | null>(null)
+  const [deleting, setDeleting] = useState<api.AdminTeam | null>(null)
+  const [tick, setTick] = useState(0)
+  const reload = () => setTick(t => t + 1)
+
+  useEffect(() => {
+    let cancelled = false
+    api.adminListTeams(filter).then(data => {
+      if (cancelled) return
+      if (Array.isArray(data)) {
+        setTeams(data)
+        setError("")
+      } else {
+        setTeams([])
+        setError(data?.error ?? "Failed to load teams")
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [filter, tick])
+
+  const act = async (t: api.AdminTeam, run: () => Promise<{ error?: string }>) => {
+    setBusy(t.id)
+    const res = await run()
+    setBusy(null)
+    if (res.error) return alert(res.error)
+    reload()
+  }
+  const suspend = (t: api.AdminTeam) => {
+    if (!confirm(`Suspend ${t.name}? Every request on ${t.base_url} is refused until it is unsuspended.`)) return
+    act(t, () => api.adminUpdateTeam(t.id, { suspended: true }))
+  }
+  const unsuspend = (t: api.AdminTeam) => {
+    if (!confirm(`Unsuspend ${t.name}?`)) return
+    act(t, () => api.adminUpdateTeam(t.id, { suspended: false }))
+  }
+  const restore = (t: api.AdminTeam) => {
+    if (!confirm(`Restore ${t.name}? Its host starts resolving again and the purge is cancelled.`)) return
+    act(t, () => api.adminRestoreTeam(t.id))
+  }
+
+  return (
+    <section className="settings-card">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>
+          Teams <span className="admin-count">({teams.length})</span>
+        </h3>
+        <button type="button" className="primary" onClick={() => setCreating(true)}>
+          <Plus size={14} strokeWidth={1.75} /> New team
+        </button>
+      </div>
+      <div className="admin-tabs" style={{ marginTop: 12 }}>
+        <button type="button" className={filter === "live" ? "active" : ""} onClick={() => setFilter("live")}>
+          Live
+        </button>
+        <button type="button" className={filter === "deleted" ? "active" : ""} onClick={() => setFilter("deleted")}>
+          Deleted
+        </button>
+        <button type="button" className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>
+          All
+        </button>
+      </div>
+      {error && <div className="msg err">{error}</div>}
+      {!error && teams.length === 0 && (
+        <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 14 }}>
+          No {filter === "live" ? "" : `${filter} `}teams.
+        </div>
+      )}
+      <div className="admin-list">
+        {teams.map(t => {
+          const isRoot = t.id === ROOT_TEAM_ID
+          const unlimited = quotaUnlimited(t.quota_bytes)
+          const pct = unlimited ? 0 : Math.min(100, (t.usage.total / (t.quota_bytes as number)) * 100)
+          return (
+            <div key={t.id} className="admin-row">
+              <div className="admin-row-main">
+                <div className="admin-row-line">
+                  <strong>{t.name}</strong>
+                  <code style={{ fontSize: 12 }}>{t.slug}</code>
+                  {isRoot && <span className="admin-pill admin-pill-owner">root</span>}
+                  {t.suspended_at && (
+                    <span className="admin-pill" style={dangerPill}>
+                      suspended
+                    </span>
+                  )}
+                  {t.deleted_at && (
+                    <span className="admin-pill" style={dangerPill}>
+                      deleting
+                    </span>
+                  )}
+                  <span className="admin-row-when">{new Date(t.created_at).toLocaleDateString()}</span>
+                </div>
+                <div className="admin-row-reason">
+                  <a href={t.base_url} target="_blank" rel="noreferrer">
+                    {t.base_url.replace(/^https?:\/\//, "")}
+                  </a>
+                  {" · "}
+                  {t.user_count} user{t.user_count === 1 ? "" : "s"}
+                  {" · "}
+                  {formatBytes(t.usage.total)}
+                  {unlimited ? " used · no cap" : ` of ${formatBytes(t.quota_bytes as number)}`}
+                </div>
+                {!unlimited && (
+                  <div className="sub-bar" style={{ maxWidth: 260, marginTop: 6 }}>
+                    <div
+                      className="sub-fill"
+                      style={{ width: `${pct}%`, background: pct > 90 ? "var(--danger)" : "var(--brand)" }}
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="admin-row-actions">
+                {t.deleted_at ? (
+                  <button type="button" disabled={busy === t.id} onClick={() => restore(t)}>
+                    Restore
+                  </button>
+                ) : (
+                  <>
+                    <button type="button" disabled={busy === t.id} onClick={() => setEditing(t)}>
+                      Edit
+                    </button>
+                    {!isRoot &&
+                      (t.suspended_at ? (
+                        <button type="button" disabled={busy === t.id} onClick={() => unsuspend(t)}>
+                          Unsuspend
+                        </button>
+                      ) : (
+                        <button type="button" disabled={busy === t.id} onClick={() => suspend(t)}>
+                          Suspend
+                        </button>
+                      ))}
+                    {!isRoot && (
+                      <button type="button" className="danger" disabled={busy === t.id} onClick={() => setDeleting(t)}>
+                        Delete
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {creating && <AdminTeamCreateModal onClose={() => setCreating(false)} onCreated={reload} />}
+      {editing && (
+        <AdminTeamEditModal
+          team={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null)
+            reload()
+          }}
+        />
+      )}
+      {deleting && (
+        <AdminTeamDeleteModal
+          team={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            setDeleting(null)
+            reload()
+          }}
+        />
+      )}
+    </section>
+  )
+}
+
+const AdminTeamCreateModal: React.FC<{ onClose: () => void; onCreated: () => void }> = ({ onClose, onCreated }) => {
+  const [slug, setSlug] = useState("")
+  const [name, setName] = useState("")
+  const [quotaGb, setQuotaGb] = useState("0")
+  const [adminEmail, setAdminEmail] = useState("")
+  const [adminName, setAdminName] = useState("")
+  const [adminUsername, setAdminUsername] = useState("")
+  const [err, setErr] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [result, setResult] = useState<{
+    team: api.AdminTeam
+    admin: { email: string }
+    set_password_url: string
+    emailed: boolean
+  } | null>(null)
+
+  const rootDomain =
+    document.querySelector('meta[name="stohr-root-domain"]')?.getAttribute("content") ?? window.location.hostname
+
+  const create = async () => {
+    setErr("")
+    if (!slug.trim()) return setErr("Slug is required")
+    if (!adminEmail.trim()) return setErr("The first admin's email is required")
+    const gb = Number(quotaGb.trim() || "0")
+    if (!Number.isFinite(gb) || gb < 0) return setErr("Storage cap must be a non-negative number of GB (0 = unlimited)")
+    setSaving(true)
+    const res = await api.adminCreateTeam({
+      slug: slug.trim(),
+      name: name.trim() || undefined,
+      quota_bytes: gb > 0 ? gbToBytes(gb) : null,
+      admin_email: adminEmail.trim(),
+      admin_name: adminName.trim() || undefined,
+      admin_username: adminUsername.trim() || undefined,
+    })
+    setSaving(false)
+    if (res.error) return setErr(res.error)
+    setResult(res)
+    onCreated()
+  }
+
+  if (result) {
+    return (
+      <Modal title={`${result.team.name} is ready`} onClose={onClose}>
+        <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.5, margin: "0 0 12px" }}>
+          Lives at{" "}
+          <a href={result.team.base_url} target="_blank" rel="noreferrer">
+            {result.team.base_url}
+          </a>
+          . First admin: <strong style={{ color: "var(--text)" }}>{result.admin.email}</strong>.
+        </p>
+        <div className="msg">
+          <div style={{ fontWeight: 500, marginBottom: 4 }}>
+            {result.emailed
+              ? "Their set-password link, also emailed to them. Shown once."
+              : "Email is off — send them this set-password link. Shown once."}
+          </div>
+          <div className="share-link" style={{ fontSize: 11, wordBreak: "break-all" }}>
+            {result.set_password_url}
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <button type="button" onClick={() => navigator.clipboard.writeText(result.set_password_url)}>
+              <Copy size={14} strokeWidth={1.75} /> Copy link
+            </button>
+          </div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+          <button type="button" className="primary" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </Modal>
+    )
+  }
+
+  return (
+    <Modal title="New team" onClose={onClose}>
+      {err && <div className="msg err">{err}</div>}
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>Slug</label>
+      <input
+        placeholder="acme"
+        value={slug}
+        onChange={e => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+        autoFocus
+        autoCapitalize="off"
+        autoCorrect="off"
+      />
+      <div style={{ fontSize: 12, color: "var(--muted)", margin: "-6px 0 10px" }}>
+        Becomes the host{" "}
+        <code>
+          {slug || "acme"}.{rootDomain}
+        </code>
+        . Lowercase letters, digits and hyphens; it cannot be changed later.
+      </div>
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>Name</label>
+      <input placeholder="Acme Inc" value={name} onChange={e => setName(e.target.value)} />
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>Storage cap in GB (0 = unlimited)</label>
+      <input inputMode="decimal" value={quotaGb} onChange={e => setQuotaGb(e.target.value)} />
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>First admin's email</label>
+      <input
+        type="email"
+        placeholder="jane@acme.example"
+        value={adminEmail}
+        onChange={e => setAdminEmail(e.target.value)}
+        autoCapitalize="off"
+        autoCorrect="off"
+      />
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>Admin name (optional)</label>
+      <input value={adminName} onChange={e => setAdminName(e.target.value)} />
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>Admin username (optional)</label>
+      <input
+        value={adminUsername}
+        onChange={e => setAdminUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
+        autoCapitalize="off"
+        autoCorrect="off"
+      />
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="button" className="primary" disabled={saving} onClick={create}>
+          {saving ? "Creating…" : "Create team"}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+const AdminTeamEditModal: React.FC<{ team: api.AdminTeam; onClose: () => void; onSaved: () => void }> = ({
+  team,
+  onClose,
+  onSaved,
+}) => {
+  const [name, setName] = useState(team.name)
+  const [quotaGb, setQuotaGb] = useState(bytesToGb(team.quota_bytes))
+  const [err, setErr] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  const save = async () => {
+    setErr("")
+    const gb = Number(quotaGb.trim() || "0")
+    if (!Number.isFinite(gb) || gb < 0) return setErr("Storage cap must be a non-negative number of GB (0 = unlimited)")
+    const patch: { name?: string; quota_bytes?: number | null } = {}
+    if (name.trim() && name.trim() !== team.name) patch.name = name.trim()
+    const quota = gb > 0 ? gbToBytes(gb) : null
+    if (quota !== (quotaUnlimited(team.quota_bytes) ? null : team.quota_bytes)) patch.quota_bytes = quota
+    if (Object.keys(patch).length === 0) {
+      onClose()
+      return
+    }
+    setSaving(true)
+    const res = await api.adminUpdateTeam(team.id, patch)
+    setSaving(false)
+    if (res.error) return setErr(res.error)
+    onSaved()
+  }
+
+  return (
+    <Modal title={`Edit ${team.name}`} onClose={onClose}>
+      {err && <div className="msg err">{err}</div>}
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>Name</label>
+      <input value={name} onChange={e => setName(e.target.value)} autoFocus />
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>Storage cap in GB (0 = unlimited)</label>
+      <input inputMode="decimal" value={quotaGb} onChange={e => setQuotaGb(e.target.value)} />
+      <div style={{ fontSize: 12, color: "var(--muted)", margin: "-6px 0 10px" }}>
+        Caps the sum of every member's storage; per-user caps still apply. Currently using{" "}
+        {formatBytes(team.usage.total)}.
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="button" className="primary" disabled={saving} onClick={save}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+const AdminTeamDeleteModal: React.FC<{ team: api.AdminTeam; onClose: () => void; onDeleted: () => void }> = ({
+  team,
+  onClose,
+  onDeleted,
+}) => {
+  const [typed, setTyped] = useState("")
+  const [err, setErr] = useState("")
+  const [busy, setBusy] = useState(false)
+  const matches = typed.trim() === team.slug
+
+  const run = async () => {
+    if (!matches) return
+    setErr("")
+    setBusy(true)
+    const res = await api.adminDeleteTeam(team.id)
+    setBusy(false)
+    if (res.error) return setErr(res.error)
+    onDeleted()
+  }
+
+  return (
+    <Modal title={`Delete ${team.name}`} onClose={onClose}>
+      <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.5, margin: "0 0 12px" }}>
+        <strong style={{ color: "var(--text)" }}>{team.base_url.replace(/^https?:\/\//, "")}</strong> stops resolving
+        immediately. {team.user_count} user{team.user_count === 1 ? "" : "s"} and {formatBytes(team.usage.total)} of
+        files are purged after 24 hours; until then the team can be restored from the Deleted filter.
+      </p>
+      {err && <div className="msg err">{err}</div>}
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>
+        Type <code>{team.slug}</code> to confirm
+      </label>
+      <input
+        value={typed}
+        onChange={e => setTyped(e.target.value)}
+        onKeyDown={e => e.key === "Enter" && run()}
+        autoFocus
+        autoCapitalize="off"
+        autoCorrect="off"
+      />
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="button" className="danger" disabled={!matches || busy} onClick={run}>
+          {busy ? "Deleting…" : "Delete team"}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
 const App: React.FC = () => {
   const [loggedIn, setLoggedIn] = useState(!!api.getToken())
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location))
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null)
+  // which team host this is, for the signed-out screens; the subdomain is the
+  // fallback until the setup probe says
+  const [tenant, setTenant] = useState<Tenant | null>(() => {
+    const slug = hostTeamSlug()
+    return slug ? { slug, name: slug } : null
+  })
 
   // OIDC callback hands the JWT back in the URL fragment so it doesn't end
   // up in the API logs or a redirect-chain Referer. Adopt it once, clear
   // the hash, and fetch /me to populate the user record before flipping
-  // into the logged-in shell.
+  // into the logged-in shell. Only a fragment this tab asked for counts —
+  // see markSsoStart.
   useEffect(() => {
     if (loggedIn) return
     const hash = window.location.hash
     if (!hash.startsWith("#token=")) return
     const t = decodeURIComponent(hash.slice("#token=".length))
-    if (!t) return
     history.replaceState(null, "", window.location.pathname + window.location.search)
+    if (!t || !api.consumeSsoStart()) return
     api.adoptToken(t).then(u => {
       if (u) setLoggedIn(true)
     })
@@ -10032,7 +10910,10 @@ const App: React.FC = () => {
     }
     api
       .getSetupStatus()
-      .then(s => setNeedsSetup(!!s?.needsSetup))
+      .then(s => {
+        setNeedsSetup(!!s?.needsSetup)
+        if (s?.team && s.is_root === false) setTenant({ slug: s.team.slug, name: s.team.name })
+      })
       .catch(() => setNeedsSetup(false))
   }, [loggedIn])
 
@@ -10056,6 +10937,7 @@ const App: React.FC = () => {
           needsSetup={false}
           initialMode="login"
           oauthNext={`/oauth/authorize${route.query}`}
+          tenant={tenant}
         />
       )
     }
@@ -10070,6 +10952,7 @@ const App: React.FC = () => {
           needsSetup={false}
           initialMode="login"
           oauthNext={`/pair${route.query}`}
+          tenant={tenant}
         />
       )
     }
@@ -10092,10 +10975,24 @@ const App: React.FC = () => {
   }
   if (path === "/signup") {
     return (
-      <Auth onLogin={() => setLoggedIn(true)} initialInvite={initialInvite} needsSetup={false} initialMode="signup" />
+      <Auth
+        onLogin={() => setLoggedIn(true)}
+        initialInvite={initialInvite}
+        needsSetup={false}
+        initialMode="signup"
+        tenant={tenant}
+      />
     )
   }
-  return <Auth onLogin={() => setLoggedIn(true)} initialInvite={null} needsSetup={false} initialMode="login" />
+  return (
+    <Auth
+      onLogin={() => setLoggedIn(true)}
+      initialInvite={null}
+      needsSetup={false}
+      initialMode="login"
+      tenant={tenant}
+    />
+  )
 }
 
 createRoot(document.getElementById("app")!).render(<App />)

@@ -11,9 +11,16 @@ import {
 import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
 import { issueSession, revokeAllSessions } from "../security/sessions.ts"
+import { requestBaseUrl, teamFor } from "../teams/request.ts"
 import { requireAuth } from "./guard.ts"
 
+// rpId is ROOT_DOMAIN when host routing is on: it is a registrable suffix of
+// every team host, so one passkey ceremony works on any subdomain. The
+// origin is checked against the host the request resolved to, which
+// withTeams already limited to the root domain and live team subdomains.
 export type RpConfig = { rpId: string; rpName: string; rpOrigin: string }
+
+const expectedOrigin = (req: Request, rp: RpConfig): string => requestBaseUrl(req, rp.rpOrigin)
 
 type CredentialRow = {
   id: number
@@ -178,7 +185,7 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
           verification = await verifyRegistrationResponse({
             response,
             expectedChallenge: challenge,
-            expectedOrigin: rp.rpOrigin,
+            expectedOrigin: expectedOrigin(c.request, rp),
             expectedRPID: rp.rpId,
             requireUserVerification: false,
           })
@@ -330,9 +337,13 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
         const credId = response?.id
         if (typeof credId !== "string") return json(c, 400, { error: "Missing credential id" })
 
-        const cred = (await db.one(
-          from("webauthn_credentials").where(q => q("credential_id").equals(credId)),
-        )) as CredentialRow | null
+        // the credential has to belong to a user of this host's team; a
+        // passkey from another team is unknown here
+        const cred = (await db.one({
+          text: `SELECT wc.* FROM webauthn_credentials wc JOIN users u ON u.id = wc.user_id
+                  WHERE wc.credential_id = $1 AND u.team_id = $2 LIMIT 1`,
+          values: [credId, teamFor(c.request).team.id],
+        })) as CredentialRow | null
         if (!cred) {
           logEvent(db, { event: "login.passkey_fail", metadata: { reason: "unknown_credential" }, ip, userAgent: ua })
           return json(c, 404, { error: "Unknown passkey" })
@@ -343,7 +354,7 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
           verification = await verifyAuthenticationResponse({
             response,
             expectedChallenge: challenge,
-            expectedOrigin: rp.rpOrigin,
+            expectedOrigin: expectedOrigin(c.request, rp),
             expectedRPID: rp.rpId,
             credential: {
               id: cred.credential_id,

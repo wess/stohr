@@ -39,6 +39,9 @@ import { contentSearchRoutes } from "../../src/search/content/routes.ts"
 import { adminUserRoutes } from "../../src/admin/users.ts"
 import { webdavRoutes } from "../../src/webdav/index.ts"
 import { webdavSettingsRoutes } from "../../src/webdav/settings.ts"
+import { adminTeamRoutes, teamRoutes, tlsAllowRoutes, withTeams } from "../../src/teams/index.ts"
+import type { HostConfig } from "../../src/teams/index.ts"
+import type { Cidr } from "../../src/security/proxies.ts"
 import type { StorageHandle } from "../../src/storage/index.ts"
 import type { EmailResult, Emailer, EmailMessage } from "../../src/email/index.ts"
 
@@ -97,8 +100,14 @@ export const fakeEmailer: Emailer = {
 
 export const TEST_APP_URL = "http://test.local"
 
-export const buildApp = (db: Connection, secret: string) => {
-  return router(
+// Host routing is off unless a test asks for it: with no rootDomain every
+// host is the root team, which is what the pre-teams suite assumes.
+export type AppOptions = { rootDomain?: string; trusted?: Cidr[] }
+
+export const buildApp = (db: Connection, secret: string, opts: AppOptions = {}) => {
+  const hosts: HostConfig = { rootDomain: opts.rootDomain ?? null, appUrl: TEST_APP_URL }
+  const routes = router(
+    ...tlsAllowRoutes(db, { ...hosts, trusted: opts.trusted }),
     ...authRoutes(db, secret),
     ...passwordRoutes(db, fakeEmailer, TEST_APP_URL),
     ...mfaRoutes(db, secret),
@@ -113,14 +122,14 @@ export const buildApp = (db: Connection, secret: string) => {
     ...inviteRoutes(db, secret),
     ...collabRoutes(db, secret, fakeEmailer, TEST_APP_URL),
     ...publicRoutes(db, secret, fakeStore),
-    ...adminRoutes(db, secret),
+    ...adminRoutes(db, secret, fakeStore),
     ...s3KeyRoutes(db, secret),
     ...appRoutes(db, secret),
     ...oauthClientRoutes(db, secret),
     ...oauthAuthorizeRoutes(db, secret),
     ...oauthTokenRoutes(db, secret),
     ...oauthRevokeRoutes(db),
-    ...oauthDiscoveryRoutes(),
+    ...oauthDiscoveryRoutes(TEST_APP_URL),
     ...deviceAuthorizeRoutes(db, secret),
     ...adminSettingsRoutes(db, secret),
     ...mcpRoutes(db, secret, fakeStore, TEST_APP_URL),
@@ -137,10 +146,13 @@ export const buildApp = (db: Connection, secret: string) => {
     ...ldapRoutes(db, secret),
     ...adminLdapRoutes(db, secret),
     ...contentSearchRoutes(db, secret),
-    ...adminUserRoutes(db, secret, fakeEmailer, TEST_APP_URL),
+    ...adminUserRoutes(db, secret, fakeEmailer, hosts),
+    ...adminTeamRoutes(db, secret, fakeEmailer, hosts),
+    ...teamRoutes(db, secret, fakeEmailer, fakeStore, hosts),
     ...webdavRoutes(db, fakeStore),
     ...webdavSettingsRoutes(db, secret),
   )
+  return withTeams(db, routes, { ...hosts, trusted: opts.trusted })
 }
 
 type Method = "GET" | "POST" | "PATCH" | "DELETE" | "PUT"
@@ -153,6 +165,23 @@ export type ReqOptions = {
   token?: string
   headers?: Record<string, string>
   ip?: string
+  // Host header (and url authority) the request is addressed to
+  host?: string
+  // socket peer, as Bun.serve would stash it; unset = "unknown" (untrusted)
+  peer?: string
+}
+
+export const TEST_HOST = "test.local"
+
+// Builds a Request the way Bun.serve hands one to the app: the url carries
+// the authority, and the Host header matches it.
+export const makeRequest = (path: string, init: RequestInit & { host?: string; peer?: string } = {}): Request => {
+  const host = init.host ?? TEST_HOST
+  const headers = new Headers(init.headers)
+  headers.set("host", host)
+  const req = new Request(`http://${host}${path}`, { ...init, headers })
+  if (init.peer) (req as { peerIp?: string }).peerIp = init.peer
+  return req
 }
 
 export const callJson = async <T = any>(
@@ -169,10 +198,12 @@ export const callJson = async <T = any>(
   }
   if (opts.token) headers.authorization = `Bearer ${opts.token}`
 
-  const req = new Request(`http://test.local${path}`, {
+  const req = makeRequest(path, {
     method: opts.method ?? "GET",
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    host: opts.host,
+    peer: opts.peer,
   })
   const res = await app(req)
   let body: any = null
@@ -190,6 +221,8 @@ export type RawOptions = {
   body?: string | Uint8Array
   basic?: { user: string; pass: string }
   headers?: Record<string, string>
+  host?: string
+  peer?: string
 }
 
 export const callRaw = async (
@@ -205,10 +238,12 @@ export const callRaw = async (
     const encoded = Buffer.from(`${opts.basic.user}:${opts.basic.pass}`).toString("base64")
     headers.authorization = `Basic ${encoded}`
   }
-  const req = new Request(`http://test.local${path}`, {
+  const req = makeRequest(path, {
     method: opts.method ?? "GET",
     headers,
     body: opts.body,
+    host: opts.host,
+    peer: opts.peer,
   })
   const res = await app(req)
   return { status: res.status, text: await res.text(), headers: res.headers }

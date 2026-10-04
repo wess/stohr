@@ -2,11 +2,15 @@ import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 import { del, get, json, pipeline } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
+import { personalFileSql } from "../permissions/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { drop } from "../storage/index.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
+// The trash is the caller's personal trash. Space rows carry the creator's
+// user_id, but they are not theirs to list, restore or purge from here — a
+// space admin acts on them through /files/:id and /folders/:id directly.
 export const trashRoutes = (db: Connection, secret: string, store: StorageHandle) => {
   const guard = pipeline(requireAuth({ secret, db }))
 
@@ -19,6 +23,7 @@ export const trashRoutes = (db: Connection, secret: string, store: StorageHandle
         const folders = await db.all(
           from("folders")
             .where(q => q("user_id").equals(userId))
+            .where(q => q("space_id").isNull())
             .where(q => q("deleted_at").isNotNull())
             .select("id", "name", "parent_id", "deleted_at", "created_at")
             .orderBy("deleted_at", "DESC"),
@@ -26,7 +31,7 @@ export const trashRoutes = (db: Connection, secret: string, store: StorageHandle
 
         const files = await db.all(
           from("files")
-            .where(q => q("user_id").equals(userId))
+            .where(q => q.raw(personalFileSql(userId)))
             .where(q => q("deleted_at").isNotNull())
             .select("id", "name", "mime", "size", "folder_id", "version", "deleted_at", "created_at")
             .orderBy("deleted_at", "DESC"),
@@ -43,7 +48,7 @@ export const trashRoutes = (db: Connection, secret: string, store: StorageHandle
 
         const files = (await db.all(
           from("files")
-            .where(q => q("user_id").equals(userId))
+            .where(q => q.raw(personalFileSql(userId)))
             .where(q => q("deleted_at").isNotNull())
             .select("id", "storage_key", "thumb_key"),
         )) as Array<{ id: number; storage_key: string; thumb_key: string | null }>
@@ -51,6 +56,7 @@ export const trashRoutes = (db: Connection, secret: string, store: StorageHandle
         const folders = (await db.all(
           from("folders")
             .where(q => q("user_id").equals(userId))
+            .where(q => q("space_id").isNull())
             .where(q => q("deleted_at").isNotNull())
             .select("id"),
         )) as Array<{ id: number }>
@@ -88,14 +94,12 @@ export const trashRoutes = (db: Connection, secret: string, store: StorageHandle
         )
         await db.execute(
           from("files")
-            .where(q => q("user_id").equals(userId))
-            .where(q => q("deleted_at").isNotNull())
+            .where(q => q("id").inList(fileIds))
             .del(),
         )
         await db.execute(
           from("folders")
-            .where(q => q("user_id").equals(userId))
-            .where(q => q("deleted_at").isNotNull())
+            .where(q => q("id").inList(folderIds))
             .del(),
         )
 

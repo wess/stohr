@@ -5,6 +5,53 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-10-02
+
+### Added
+
+- Teams: hard multi-tenancy on one instance. Each team has its own subdomain
+  (`<slug>.ROOT_DOMAIN`), users, admins, quota, invites and audit log, and
+  cannot see, search, message or share with any other team. A credential only
+  works on its own team's host. The root team (`ROOT_DOMAIN` itself) stays the
+  control plane: `/admin/teams`, `scripts/team.ts`, and the SPA Teams page create
+  and manage teams; team admins get `/team/*` and a Team page. Wildcard
+  on-demand TLS via `/internal/tls/allow`. See `docs/TEAMS.md`.
+
+### Security
+
+- OAuth scopes are enforced (read / write / share); an OAuth token can no
+  longer mint a session through `PATCH /me`, and credential-approving routes
+  are `noOAuth`.
+- `redirect_to` in social/OIDC login is resolved against `APP_URL` (the
+  `/\host` bypass leaked the session token); external identities link by email
+  only when verified; the MFA challenge token can no longer pass `requireAuth`
+  and is single-use; SSO no longer links by username.
+- Webhook and federation outbound requests refuse private, loopback and
+  link-local targets and do not follow redirects blindly; webhook response bodies
+  are no longer stored. Federation invites can't be forged against an existing
+  federation, re-PUTs can't destroy hosted blobs, and signed requests are
+  replay-protected.
+- Space creators lose control of space content when removed; folders created in
+  a space inherit it; editors can't publish an owner's folders; WebDAV MOVE
+  cycles are rejected; scan status resets when content is replaced; quota is
+  enforced on WebDAV and chunked uploads; SigV4 enforces clock skew.
+- Unauthenticated JSON routes cap body size; the web proxy sets the real client
+  IP and rate limiting walks `X-Forwarded-For` from the right.
+- Cloud-init no longer exposes the GitHub token and blocks container access to
+  the metadata service.
+
+### Changed
+
+- Dependencies: atlas v0.3.2, ldapts 9, sharp 0.35, lucide-react 1.x, Biome 2.5,
+  React 19.3.
+- Share tokens are 12 characters; existing 7-character tokens keep working.
+
+### Fixed
+
+- Rate-limit buckets collapsed to one IP on body routes (`limitBody` dropped the
+  peer address); `/p/files/:id` never resolved; built SPA asset URLs 404'd on
+  hard loads of nested routes.
+
 ## [0.8.0] - 2026-08-01
 
 ### Security

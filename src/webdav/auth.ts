@@ -28,7 +28,14 @@ const parseBasicAuth = (header: string): { user: string; pass: string } | null =
   }
 }
 
-export const authenticateWebdav = async (db: Connection, authHeader: string | null): Promise<WebdavAuth | null> => {
+// teamId is the host's team: a credential only works on its own team's
+// host, and a mismatch is the same null as a wrong password so a tenant
+// login learns nothing about this host.
+export const authenticateWebdav = async (
+  db: Connection,
+  authHeader: string | null,
+  teamId: number,
+): Promise<WebdavAuth | null> => {
   if (!authHeader) return null
   const parsed = parseBasicAuth(authHeader)
   if (!parsed) return null
@@ -40,9 +47,10 @@ export const authenticateWebdav = async (db: Connection, authHeader: string | nu
       .where(q => q("email").equals(email))
       .where(q => q("deleted_at").isNull())
       .where(q => q("suspended_at").isNull())
-      .select("id", "email", "username"),
-  )) as { id: number; email: string; username: string } | null
+      .select("id", "email", "username", "team_id"),
+  )) as { id: number; email: string; username: string; team_id: number } | null
   if (!user) return null
+  if (Number(user.team_id) !== teamId) return null
 
   // Same hashing requireAuth uses for Bearer PATs — look the row up by hash,
   // then confirm it belongs to the resolved user. A constant-time DB lookup

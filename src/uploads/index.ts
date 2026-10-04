@@ -15,9 +15,10 @@ import type { FolderRow } from "../permissions/index.ts"
 import { canWrite, folderAccess } from "../permissions/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { drop, fetchObject, makeKey, put } from "../storage/index.ts"
-import { checkQuota } from "../usage/index.ts"
-import { CHUNK_SIZE, SESSION_TTL_MS } from "./config.ts"
+import { checkQuota, userQuota } from "../usage/index.ts"
+import { CHUNK_SIZE, MAX_SESSIONS_PER_USER, MAX_UPLOAD_BYTES, SESSION_TTL_MS } from "./config.ts"
 import { finalizeUpload } from "./finalize.ts"
+import { quotaMessage } from "./quota.ts"
 import { abortMultipart, completeMultipart, initiateMultipart, isS3, type PartEtag, s3Store, uploadPart } from "./s3.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -65,12 +66,40 @@ const statusOf = (s: SessionRow) => ({
   complete: Number(s.byte_offset) >= Number(s.total_size),
 })
 
+// Sessions are keyed by the user who opened them. The row's user_id used to be
+// the target folder's owner, so a collaborator uploading into a shared folder
+// could init a session and then 404 on every chunk of it.
 const loadSession = async (db: Connection, id: string, userId: number) =>
   (await db.one(
     from("upload_sessions")
       .where(q => q("id").equals(id))
       .where(q => q("user_id").equals(userId)),
   )) as SessionRow | null
+
+// Bytes already promised to open sessions whose file will land under this
+// owner. Without them in the quota math, N parallel inits each pass the
+// check on their own and the overflow only shows up at finalize.
+const reservedBytes = async (db: Connection, ownerId: number): Promise<number> => {
+  const rows = (await db.execute({
+    text: `
+      SELECT COALESCE(SUM(us.total_size), 0) AS reserved
+        FROM upload_sessions us
+        LEFT JOIN folders fo ON fo.id = us.folder_id
+       WHERE COALESCE(fo.user_id, us.user_id) = $1
+         AND us.expires_at > NOW()
+    `,
+    values: [ownerId],
+  })) as Array<{ reserved: string | number }>
+  return Number(rows[0]?.reserved ?? 0)
+}
+
+const openSessionCount = async (db: Connection, userId: number): Promise<number> => {
+  const rows = (await db.execute({
+    text: `SELECT COUNT(*)::int AS n FROM upload_sessions WHERE user_id = $1 AND expires_at > NOW()`,
+    values: [userId],
+  })) as Array<{ n: number }>
+  return rows[0]?.n ?? 0
+}
 
 // Drops every staged artifact for a session (S3 multipart abort, or local
 // part objects), then deletes the row. Tolerant of partial state.
@@ -123,6 +152,13 @@ export const uploadRoutes = (db: Connection, store: StorageHandle, secret: strin
         if (!Number.isFinite(totalSize) || totalSize <= 0) {
           return json(c, 422, { error: "total_size must be a positive number" })
         }
+        if (totalSize > MAX_UPLOAD_BYTES) {
+          return json(c, 413, { error: "File exceeds the upload size limit", max_bytes: MAX_UPLOAD_BYTES })
+        }
+
+        if ((await openSessionCount(db, userId)) >= MAX_SESSIONS_PER_USER) {
+          return json(c, 429, { error: "Too many uploads in progress", max_sessions: MAX_SESSIONS_PER_USER })
+        }
 
         const mime = (body.mime ?? "application/octet-stream").toString()
         const folderRaw = body.folder_id ?? body.folderId
@@ -141,19 +177,15 @@ export const uploadRoutes = (db: Connection, store: StorageHandle, secret: strin
           targetFolder = access.folder
         }
 
-        const owner = (await db.one(
-          from("users")
-            .where(q => q("id").equals(ownerId))
-            .select("storage_quota_bytes"),
-        )) as { storage_quota_bytes: number | string } | null
-        const quota = Number(owner?.storage_quota_bytes ?? 0)
-        const check = await checkQuota(db, ownerId, quota, totalSize)
+        const quota = await userQuota(db, ownerId)
+        const check = await checkQuota(db, ownerId, quota, totalSize + (await reservedBytes(db, ownerId)))
         if (!check.ok) {
           return json(c, 402, {
-            error: "Storage quota exceeded",
+            error: quotaMessage(check.scope),
+            scope: check.scope,
             quota_bytes: check.quota_bytes,
             used_bytes: check.used_bytes,
-            attempted_bytes: check.attempted_bytes,
+            attempted_bytes: totalSize,
             breakdown: check.breakdown,
           })
         }
@@ -169,7 +201,7 @@ export const uploadRoutes = (db: Connection, store: StorageHandle, secret: strin
         await db.execute(
           from("upload_sessions").insert({
             id,
-            user_id: ownerId,
+            user_id: userId,
             folder_id: folderId,
             file_name: name,
             total_size: totalSize,
@@ -293,6 +325,19 @@ export const uploadRoutes = (db: Connection, store: StorageHandle, secret: strin
           })
         }
 
+        // The folder decides whose file this becomes; re-resolve now rather
+        // than trust init, since access may have been revoked in the meantime.
+        // Staged parts are dropped so a revoked session doesn't leak storage.
+        let ownerId = s.user_id
+        if (s.folder_id != null) {
+          const access = await folderAccess(db, s.user_id, s.folder_id)
+          if (!access || !canWrite(access.role)) {
+            await purgeSession(db, store, s)
+            return json(c, 403, { error: "Folder access was revoked" })
+          }
+          ownerId = access.folder.user_id
+        }
+
         let thumbBytes: Uint8Array | null = null
 
         if (s.s3_upload_id && isS3()) {
@@ -322,13 +367,14 @@ export const uploadRoutes = (db: Connection, store: StorageHandle, secret: strin
         }
 
         const result = await finalizeUpload(db, store, {
-          ownerId: s.user_id,
+          ownerId,
           folderId: s.folder_id,
           name: s.file_name,
           mime: s.mime,
           size: total,
           key: s.storage_key,
           thumbBytes,
+          quotaBytes: await userQuota(db, ownerId),
         })
 
         await db.execute(
@@ -337,7 +383,17 @@ export const uploadRoutes = (db: Connection, store: StorageHandle, secret: strin
             .del(),
         )
 
-        return json(c, 201, result)
+        if (!result.ok) {
+          return json(c, 402, {
+            error: quotaMessage(result.scope),
+            scope: result.scope,
+            quota_bytes: result.quota_bytes,
+            used_bytes: result.used_bytes,
+            attempted_bytes: result.attempted_bytes,
+            breakdown: result.breakdown,
+          })
+        }
+        return json(c, 201, result.file)
       }),
     ),
 
@@ -352,6 +408,20 @@ export const uploadRoutes = (db: Connection, store: StorageHandle, secret: strin
       }),
     ),
   ]
+}
+
+// For account and team purges: the session rows cascade with the user, but
+// the staged bytes behind them — open S3 multipart uploads, local part
+// objects — do not. Call before the users row goes.
+export const purgeUserUploads = async (db: Connection, store: StorageHandle, userId: number): Promise<void> => {
+  const rows = (await db.all(from("upload_sessions").where(q => q("user_id").equals(userId)))) as SessionRow[]
+  for (const s of rows) {
+    try {
+      await purgeSession(db, store, s)
+    } catch (err) {
+      console.error(`[uploads] purge failed for ${s.id}:`, err)
+    }
+  }
 }
 
 // Sweep: abort + delete every session past its TTL. Registered on setInterval

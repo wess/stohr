@@ -9,6 +9,8 @@ import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
 import { issueSession } from "../security/sessions.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { drop } from "../storage/index.ts"
+import { teamFor } from "../teams/request.ts"
+import { purgeUserUploads } from "../uploads/index.ts"
 import { hashToken } from "./guard.ts"
 
 export const ACCOUNT_DELETION_PREFIX = "stohr_acd_"
@@ -20,6 +22,9 @@ const generateCancelToken = (): string => `${ACCOUNT_DELETION_PREFIX}${randomByt
  * Schedule a soft-delete + email the user a cancel link. Called by the
  * `DELETE /me` handler after it has password-verified the request.
  *
+ * `baseUrl` is the host the user's team lives on (requestBaseUrl): the
+ * restore route only honours the token on that host.
+ *
  * Returns true if scheduling succeeded — caller decides what to send back to
  * the client. Idempotent: if the user is already pending deletion, the same
  * token is reused (we have no way to know the plaintext we sent earlier, so
@@ -29,7 +34,7 @@ const generateCancelToken = (): string => `${ACCOUNT_DELETION_PREFIX}${randomByt
 export const scheduleDeletion = async (
   db: Connection,
   emailer: Emailer,
-  appUrl: string,
+  baseUrl: string,
   user: { id: number; email: string; name: string },
   ctx: { ip: string; userAgent: string },
 ): Promise<{ token: string }> => {
@@ -42,7 +47,7 @@ export const scheduleDeletion = async (
       .update({ deleted_at: raw("NOW()"), deletion_token_hash: tokenHash }),
   )
 
-  const cancelUrl = `${appUrl.replace(/\/$/, "")}/account/restore?token=${encodeURIComponent(cancelToken)}`
+  const cancelUrl = `${baseUrl.replace(/\/$/, "")}/account/restore?token=${encodeURIComponent(cancelToken)}`
   const tpl = accountDeletionEmail({ name: user.name, cancelUrl })
   const sent = await emailer.send({
     to: user.email,
@@ -83,10 +88,13 @@ export const deletionRoutes = (db: Connection, secret: string) => {
           return json(c, 429, { error: "Too many attempts. Try again later.", retry_after: ipRate.retryAfterSeconds })
         }
 
+        // a cancel link works on the account's own team host only, like
+        // every other credential
         const tokenHash = hashToken(tokenRaw)
         const user = (await db.one(
           from("users")
             .where(q => q("deletion_token_hash").equals(tokenHash))
+            .where(q => q("team_id").equals(teamFor(c.request).team.id))
             .select("id", "email", "username", "name", "is_owner", "deleted_at"),
         )) as {
           id: number
@@ -155,10 +163,45 @@ export const deletionRoutes = (db: Connection, secret: string) => {
 }
 
 /**
- * Hard-delete users whose grace window has elapsed. Cascades to files,
- * folders, shares, file_versions, and storage objects in that order. Each
- * user is purged in its own try/catch so a single failure doesn't poison
- * the whole sweep.
+ * Hard-delete one user: the row goes first (every FK cascades — files,
+ * folders, shares, file_versions, sessions, ...), then the blobs that
+ * belonged to it are dropped. Storage failures are tolerated; the rows are
+ * already gone. Also used by the team purge sweep.
+ */
+export const purgeUser = async (db: Connection, store: StorageHandle, id: number): Promise<void> => {
+  const fileKeys = (await db.all(
+    from("files")
+      .where(q => q("user_id").equals(id))
+      .select("storage_key", "thumb_key"),
+  )) as Array<{ storage_key: string; thumb_key: string | null }>
+  const versionKeys = (await db.all(
+    from("file_versions")
+      .join("files", raw("files.id = file_versions.file_id"))
+      .where(q => q("files.user_id").equals(id))
+      .select("file_versions.storage_key"),
+  )) as unknown as Array<{ storage_key: string }>
+
+  // staged multipart bytes aren't reachable once the session rows cascade away
+  await purgeUserUploads(db, store, id)
+
+  await db.execute(
+    from("users")
+      .where(q => q("id").equals(id))
+      .del(),
+  )
+
+  const drops: Array<Promise<unknown>> = []
+  for (const f of fileKeys) {
+    drops.push(drop(store, f.storage_key))
+    if (f.thumb_key) drops.push(drop(store, f.thumb_key))
+  }
+  for (const v of versionKeys) drops.push(drop(store, v.storage_key))
+  await Promise.allSettled(drops)
+}
+
+/**
+ * Hard-delete users whose grace window has elapsed. Each user is purged in
+ * its own try/catch so a single failure doesn't poison the whole sweep.
  */
 export const sweepDeletedAccounts = async (db: Connection, store: StorageHandle): Promise<void> => {
   const expired = (await db.all(
@@ -170,31 +213,7 @@ export const sweepDeletedAccounts = async (db: Connection, store: StorageHandle)
 
   for (const { id } of expired) {
     try {
-      const fileKeys = (await db.all(
-        from("files")
-          .where(q => q("user_id").equals(id))
-          .select("storage_key", "thumb_key"),
-      )) as Array<{ storage_key: string; thumb_key: string | null }>
-      const versionKeys = (await db.all(
-        from("file_versions")
-          .join("files", raw("files.id = file_versions.file_id"))
-          .where(q => q("files.user_id").equals(id))
-          .select("file_versions.storage_key"),
-      )) as unknown as Array<{ storage_key: string }>
-
-      await db.execute(
-        from("users")
-          .where(q => q("id").equals(id))
-          .del(),
-      )
-
-      const drops: Array<Promise<unknown>> = []
-      for (const f of fileKeys) {
-        drops.push(drop(store, f.storage_key))
-        if (f.thumb_key) drops.push(drop(store, f.thumb_key))
-      }
-      for (const v of versionKeys) drops.push(drop(store, v.storage_key))
-      await Promise.allSettled(drops)
+      await purgeUser(db, store, id)
     } catch (err) {
       console.error(`[deletion] sweep failed for user ${id}:`, err)
     }

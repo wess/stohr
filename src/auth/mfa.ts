@@ -3,7 +3,7 @@ import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { get, json, parseJson, pipeline, post } from "@atlas/server"
 import { logEvent } from "../security/audit.ts"
-import { clientIp, userAgent } from "../security/ratelimit.ts"
+import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
 import { revokeAllSessions } from "../security/sessions.ts"
 import { generateBackupCodes, generateSecret, otpauthUrl, verifyTotp } from "../security/totp.ts"
 import { requireAuth } from "./guard.ts"
@@ -115,6 +115,14 @@ export const mfaRoutes = (db: Connection, secret: string) => {
         const code = body.code?.trim() ?? ""
         if (!password || !code) return json(c, 422, { error: "password and code required" })
 
+        // Same throttle as /me/password: a stolen session gets a bounded
+        // number of password guesses, and the argon2 verify can't be used
+        // to burn CPU.
+        const rate = await checkRate(db, `mfadisable:user:${userId}`, 10, 900)
+        if (!rate.ok) {
+          return json(c, 429, { error: "Too many attempts. Try again later.", retry_after: rate.retryAfterSeconds })
+        }
+
         const user = (await db.one(
           from("users")
             .where(q => q("id").equals(userId))
@@ -157,6 +165,11 @@ export const mfaRoutes = (db: Connection, secret: string) => {
         const body = c.body as { password?: string }
         const password = body.password ?? ""
         if (!password) return json(c, 422, { error: "password required" })
+
+        const rate = await checkRate(db, `mfacodes:user:${userId}`, 10, 900)
+        if (!rate.ok) {
+          return json(c, 429, { error: "Too many attempts. Try again later.", retry_after: rate.retryAfterSeconds })
+        }
 
         const user = (await db.one(
           from("users")

@@ -24,6 +24,22 @@ const swapExtension = (name: string, ext: string): string => {
   return `${name.slice(0, dot)}.${ext}`
 }
 
+// the schema advertises these bounds but nothing enforced them at run time,
+// so a hand-edited config could ask sharp for a gigapixel canvas
+const MAX_DIM = 8192
+
+const clampDim = (v: unknown): number | undefined => {
+  const n = Number(v)
+  if (!Number.isFinite(n) || n <= 0) return undefined
+  return Math.min(MAX_DIM, Math.round(n))
+}
+
+const clampQuality = (v: unknown): number => {
+  const n = Number(v)
+  if (!Number.isFinite(n) || n <= 0) return 85
+  return Math.max(1, Math.min(100, Math.round(n)))
+}
+
 const transformResize: Primitive = {
   kind: "transform.resize",
   name: "Resize image",
@@ -66,30 +82,29 @@ const transformResize: Primitive = {
       format?: "webp" | "jpeg" | "png"
       quality?: number
     }
-    const widthAbs = Number(cfg.width ?? 0)
+    const widthAbs = clampDim(cfg.width)
     const widthPct = Number(cfg.width_pct ?? 0)
-    const hasAbs = Number.isFinite(widthAbs) && widthAbs > 0
     const hasPct = Number.isFinite(widthPct) && widthPct > 0 && widthPct <= 100
-    if (!hasAbs && !hasPct) {
+    if (widthAbs === undefined && !hasPct) {
       return { kind: "fail", error: "width (px) or width_pct (1-100) is required" }
     }
-    const height = cfg.height && Number(cfg.height) > 0 ? Number(cfg.height) : undefined
+    const height = clampDim(cfg.height)
     const fit = cfg.fit ?? "inside"
     const format = cfg.format
-    const quality = cfg.quality && Number(cfg.quality) > 0 ? Math.min(100, Number(cfg.quality)) : 85
+    const quality = clampQuality(cfg.quality)
 
     const obj = await fetchObject(ctx.store, file.storage_key)
     const sourceBytes = new Uint8Array(await obj.arrayBuffer())
 
     let targetWidth: number
-    if (hasAbs) {
+    if (widthAbs !== undefined) {
       targetWidth = widthAbs
     } else {
       const meta = await sharp(sourceBytes).metadata()
       if (!meta.width || meta.width <= 0) {
         return { kind: "fail", error: "couldn't determine source image width" }
       }
-      targetWidth = Math.max(1, Math.round((meta.width * widthPct) / 100))
+      targetWidth = Math.min(MAX_DIM, Math.max(1, Math.round((meta.width * widthPct) / 100)))
     }
 
     let pipeline = sharp(sourceBytes).resize({ width: targetWidth, height, fit })

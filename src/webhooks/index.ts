@@ -2,20 +2,11 @@ import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
-import { WEBHOOK_EVENTS } from "./dispatch.ts"
+import { checkWebhookUrl, WEBHOOK_EVENTS } from "./dispatch.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
 const VALID_CONTENT_TYPES = ["application/json", "application/x-www-form-urlencoded"]
-
-const isHttpUrl = (value: string): boolean => {
-  try {
-    const u = new URL(value)
-    return u.protocol === "http:" || u.protocol === "https:"
-  } catch {
-    return false
-  }
-}
 
 // Normalize a caller-supplied events list down to the known set. Unknown
 // strings are dropped rather than rejected so a newer client subscribing to
@@ -85,7 +76,10 @@ export const webhookRoutes = (db: Connection, secret: string) => {
         }
 
         const url = body.url?.trim() ?? ""
-        if (!url || !isHttpUrl(url)) return json(c, 422, { error: "A valid http(s) url is required" })
+        const target = url ? await checkWebhookUrl(url) : null
+        if (!target?.ok) {
+          return json(c, 422, { error: `A public http(s) url is required${target ? ` (${target.error})` : ""}` })
+        }
 
         const events = normalizeEvents(body.events)
         if (events.length === 0) return json(c, 422, { error: "At least one valid event is required" })
@@ -136,7 +130,10 @@ export const webhookRoutes = (db: Connection, secret: string) => {
 
         if (body.url !== undefined) {
           const url = body.url?.trim() ?? ""
-          if (!url || !isHttpUrl(url)) return json(c, 422, { error: "A valid http(s) url is required" })
+          const target = url ? await checkWebhookUrl(url) : null
+          if (!target?.ok) {
+            return json(c, 422, { error: `A public http(s) url is required${target ? ` (${target.error})` : ""}` })
+          }
           patchData.url = url
         }
         if (body.events !== undefined) {
@@ -216,7 +213,7 @@ export const webhookRoutes = (db: Connection, secret: string) => {
         const rows = await db.all(
           from("webhook_deliveries")
             .where(q => q("webhook_id").equals(id))
-            .select("id", "event", "status_code", "response_body", "duration_ms", "created_at")
+            .select("id", "event", "status_code", "duration_ms", "created_at")
             .orderBy("created_at", "DESC")
             .limit(limit),
         )

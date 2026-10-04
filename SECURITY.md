@@ -5,7 +5,8 @@ This document describes how Stohr protects authentication, sessions, files, and 
 ## Authentication
 
 - **Passwords** hashed with Argon2id via `@atlas/auth`'s `hash` / `verify`. Plaintext passwords are never logged or stored. The login path runs an Argon2 verify against a fixed decoy hash on a missing-user lookup so response timing doesn't leak account existence.
-- **JWTs** are signed with `SECRET`. In production the API refuses to start if `SECRET` is the default value or shorter than 32 characters. Tokens carry a `jti` claim, live for 7 days, and are server-side revocable via the `sessions` table.
+- **JWTs** are signed with `SECRET`. In production the API refuses to start if `SECRET` is the default value or shorter than 32 characters. Tokens carry a `jti` claim, live for 7 days, and are server-side revocable via the `sessions` table. The guard only accepts the two bearer shapes it issues — a session token (numeric `id`, string `jti`, live session row) or an OAuth access token (`client_id`) — so other JWTs minted with the same secret, such as the MFA challenge, are rejected with 401.
+- **SSO handoff** — external sign-ins return the JWT to the SPA in the URL fragment. The SPA adopts a `#token=` fragment only when the same tab started the sign-in (a one-shot nonce in `sessionStorage`), so a crafted link can't log a victim into an attacker's account.
 - **Personal access tokens (PATs)** for SDKs / mobile apps are 32-byte random values prefixed `stohr_pat_`. Stored as SHA-256 hashes; revealed only at creation time.
 - **WebAuthn passkeys** (FIDO2) — see below.
 - **Password reset** via signed email link — see below.
@@ -25,7 +26,7 @@ Sessions are revoked automatically on:
 - RFC 6238 TOTP, HMAC-SHA1, 30-second window, ±1 window tolerance
 - 160-bit symmetric secret per user, generated server-side, shown once via QR
 - 10 backup codes minted at enable time (Argon2-hashed, single-use, regenerable)
-- Login flow: password → `mfa_required: true` + 5-minute MFA challenge JWT → second call with code or backup code
+- Login flow: password → `mfa_required: true` + 5-minute MFA challenge JWT → second call with code or backup code. The challenge's `jti` is stored and consumed on success, so a captured challenge can't be completed twice; the second step re-checks that the account is neither suspended nor scheduled for deletion.
 
 ## WebAuthn / passkeys
 
@@ -54,7 +55,8 @@ The reset-link URL is built from `APP_URL`. In production this **must** be HTTPS
 - `redirect_uri` is matched **exact-string only** against the registered list — no prefix or wildcard matching.
 - Confidential-client secrets are SHA-256 hashed at rest and compared with `crypto.timingSafeEqual`.
 - Refresh tokens rotate on every use; presenting a previously-revoked refresh token burns the entire chain (reuse-detection per RFC 6749 §10.4).
-- Access tokens are short-lived JWTs (1h) carrying scope + client_id; refresh tokens are 30 days.
+- Access tokens are short-lived JWTs (1h) carrying scope + client_id; refresh tokens are 30 days. Scopes are enforced on every request: safe methods need `read`, `/shares` needs `share`, other methods need `write`; MCP tools need the scope of their category. Consent (`/oauth/authorize/*`, `/oauth/device/*`), profile identity, credential minting and account deletion refuse access tokens outright.
+- Registered `redirect_uri`s may not use `javascript:`, `data:`, `vbscript:`, `file:`, `blob:` or `about:`, and the SPA refuses to follow such a URL even if one were stored. Discovery metadata is built from `APP_URL`, never the `Host` header.
 - Device flow polling is server-rate-limited per RFC 8628.
 
 ## Rate limiting
@@ -70,7 +72,7 @@ Sliding-bucket counters in the `rate_limits` table, keyed by IP and / or identit
 
 Limit hits return **429** with `{ error, retry_after }` (seconds).
 
-The IP used for a bucket comes from `clientIp(req)`, which honors `X-Forwarded-For` / `X-Real-IP` **only** when the socket peer matches a configured `TRUSTED_PROXIES` CIDR. Otherwise the raw socket peer is used. This stops a remote attacker from spoofing IPs in headers to dodge limits or pin a victim's bucket.
+The IP used for a bucket comes from `clientIp(req)`, which honors `X-Forwarded-For` / `X-Real-IP` **only** when the socket peer matches a configured `TRUSTED_PROXIES` CIDR. Otherwise the raw socket peer is used. Even then the header is walked from the right: trusted hops are skipped and the first address that isn't one of ours is the client — the left-most entry is whatever the client typed. This stops a remote attacker from spoofing IPs in headers to dodge limits or pin a victim's bucket.
 
 ## Audit log
 
@@ -134,7 +136,7 @@ JWT secrets, password hashes, TOTP secrets, PAT hashes, invite-token hashes, pas
 
 ## Trusting reverse proxies
 
-`TRUSTED_PROXIES` is a comma-separated list of IPv4 CIDRs that are allowed to set `X-Forwarded-For` / `X-Real-IP`. Behind a load balancer / Caddy / nginx, set this to the proxy's source range (e.g. `172.16.0.0/12` for the Docker bridge that compose creates). Leave it empty if the API receives traffic directly.
+`TRUSTED_PROXIES` is a comma-separated list of IPv4 CIDRs that are allowed to set `X-Forwarded-For` / `X-Real-IP`. Behind a load balancer / Caddy / nginx, set this to the proxy's source range (e.g. `172.16.0.0/12` for the Docker bridge that compose creates). Leave it empty if the API receives traffic directly. The single-container image ships `TRUSTED_PROXIES=127.0.0.1` because its web process proxies to the API over loopback: it rebuilds the forwarding headers on every hop (drops `Host` and hop-by-hop headers, sets `X-Forwarded-For` to the socket peer, appends to an inbound chain only when that peer is itself trusted, drops `X-Real-IP` otherwise). Add your edge proxy to the list so its chain is kept.
 
 Setting it wrong has real consequences:
 

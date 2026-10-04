@@ -48,12 +48,20 @@ export const sendSystem = async (
   }
 }
 
-// Broadcast a system message to every active (non-deleted) user. Used by
-// the owner's "Send announcement" tool — one row per recipient so each
-// user can mark-read / archive independently. Returns count delivered.
-export const broadcastSystem = async (db: Connection, subject: string, body: string): Promise<number> => {
+// Broadcast a system message to every active (non-deleted) user of one
+// team. Used by the owner's "Send announcement" tool — one row per
+// recipient so each user can mark-read / archive independently. Returns
+// count delivered. There is no instance-wide form: an announcement is
+// addressed to a team, root included.
+export const broadcastSystem = async (
+  db: Connection,
+  teamId: number,
+  subject: string,
+  body: string,
+): Promise<number> => {
   const users = (await db.all(
     from("users")
+      .where(q => q("team_id").equals(teamId))
       .where(q => q("deleted_at").isNull())
       .select("id"),
   )) as Array<{ id: number }>

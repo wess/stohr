@@ -200,6 +200,68 @@ describe("MFA login", () => {
     expect(res.status).toBe(401)
   })
 
+  test("a completed MFA challenge cannot be replayed", async () => {
+    const { id } = await signupAlice()
+    const { secret } = await enableMfaFor(id)
+    const challenge = await callJson(app, "/login", {
+      method: "POST",
+      body: { identity: "alice@example.com", password: "password123" },
+    })
+    const mfaToken = challenge.body.mfa_token as string
+    const first = await callJson(app, "/login/mfa", {
+      method: "POST",
+      body: { mfa_token: mfaToken, code: totpAt(secret) },
+    })
+    expect(first.status).toBe(200)
+
+    // same still-valid JWT, same still-valid code: the jti is spent
+    const replay = await callJson(app, "/login/mfa", {
+      method: "POST",
+      body: { mfa_token: mfaToken, code: totpAt(secret) },
+    })
+    expect(replay.status).toBe(401)
+    expect(replay.body.error).toMatch(/already used/)
+  })
+
+  test("a wrong code leaves the challenge usable", async () => {
+    const { id } = await signupAlice()
+    const { secret } = await enableMfaFor(id)
+    const challenge = await callJson(app, "/login", {
+      method: "POST",
+      body: { identity: "alice@example.com", password: "password123" },
+    })
+    const bad = await callJson(app, "/login/mfa", {
+      method: "POST",
+      body: { mfa_token: challenge.body.mfa_token, code: "000000" },
+    })
+    expect(bad.status).toBe(401)
+    const good = await callJson(app, "/login/mfa", {
+      method: "POST",
+      body: { mfa_token: challenge.body.mfa_token, code: totpAt(secret) },
+    })
+    expect(good.status).toBe(200)
+  })
+
+  test("a suspended account cannot finish MFA", async () => {
+    const { id } = await signupAlice()
+    const { secret } = await enableMfaFor(id)
+    const challenge = await callJson(app, "/login", {
+      method: "POST",
+      body: { identity: "alice@example.com", password: "password123" },
+    })
+    await db.execute(
+      from("users")
+        .where(q => q("id").equals(id))
+        .update({ suspended_at: new Date() }),
+    )
+    const res = await callJson(app, "/login/mfa", {
+      method: "POST",
+      body: { mfa_token: challenge.body.mfa_token, code: totpAt(secret) },
+    })
+    expect(res.status).toBe(403)
+    expect(res.body.account_suspended).toBe(true)
+  })
+
   test("backup code consumes a slot", async () => {
     const { id } = await signupAlice()
     const { codes } = await enableMfaFor(id)

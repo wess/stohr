@@ -1,12 +1,17 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
+import { purgeUser } from "../auth/deletion.ts"
 import { requireAuth } from "../auth/guard.ts"
+import { logEvent } from "../security/audit.ts"
 import { ownerOnly } from "../security/owner.ts"
+import type { StorageHandle } from "../storage/index.ts"
+import { unlessLastAdmin } from "../teams/members.ts"
+import { ROOT_TEAM_ID } from "../teams/resolve.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
-export const adminRoutes = (db: Connection, secret: string) => {
+export const adminRoutes = (db: Connection, secret: string, store: StorageHandle) => {
   const ownerCheck = ownerOnly(db)
   const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck)
   const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)
@@ -17,7 +22,17 @@ export const adminRoutes = (db: Connection, secret: string) => {
       guard(async c => {
         const users = (await db.all(
           from("users")
-            .select("id", "username", "email", "name", "is_owner", "storage_quota_bytes", "created_at")
+            .select(
+              "id",
+              "username",
+              "email",
+              "name",
+              "is_owner",
+              "team_id",
+              "team_admin",
+              "storage_quota_bytes",
+              "created_at",
+            )
             .orderBy("created_at", "DESC"),
         )) as Array<{
           id: number
@@ -25,6 +40,8 @@ export const adminRoutes = (db: Connection, secret: string) => {
           email: string
           name: string
           is_owner: boolean
+          team_id: number
+          team_admin: boolean
           storage_quota_bytes: number | string
           created_at: string
         }>
@@ -63,6 +80,18 @@ export const adminRoutes = (db: Connection, secret: string) => {
         if (typeof body.is_owner !== "boolean") return json(c, 422, { error: "is_owner boolean required" })
         if (id === userId && body.is_owner === false)
           return json(c, 422, { error: "Cannot remove owner from yourself" })
+        // owners are the platform admins and live in the root team only
+        if (body.is_owner) {
+          const target = (await db.one(
+            from("users")
+              .where(q => q("id").equals(id))
+              .select("team_id"),
+          )) as { team_id: number } | null
+          if (!target) return json(c, 404, { error: "User not found" })
+          if (Number(target.team_id) !== ROOT_TEAM_ID) {
+            return json(c, 422, { error: "Only root team users can be owners" })
+          }
+        }
 
         await db.execute(
           from("users")
@@ -100,17 +129,41 @@ export const adminRoutes = (db: Connection, secret: string) => {
       }),
     ),
 
+    // Immediate hard delete, the same path as the team admin's and the
+    // grace-window sweep: rows cascade, then blobs and staged uploads go.
+    // A bare row delete left every object behind in the bucket.
     del(
       "/admin/users/:id",
       guard(async c => {
         const userId = authId(c)
         const id = Number(c.params.id)
         if (id === userId) return json(c, 422, { error: "Cannot delete yourself from admin — use Settings" })
-        await db.execute(
+        const found = (await db.one(
           from("users")
             .where(q => q("id").equals(id))
-            .del(),
-        )
+            .select("id", "team_id", "team_admin", "suspended_at", "deleted_at"),
+        )) as {
+          id: number
+          team_id: number
+          team_admin: boolean
+          suspended_at: string | null
+          deleted_at: string | null
+        } | null
+        if (!found) return json(c, 404, { error: "User not found" })
+        // a team must keep someone who can administer it; on root the owner
+        // counts, so this only ever bites for a tenant's last admin
+        if (found.team_admin && !found.deleted_at && !found.suspended_at) {
+          const ok = await unlessLastAdmin(db, Number(found.team_id), id, tx =>
+            tx.execute(
+              from("users")
+                .where(q => q("id").equals(id))
+                .update({ deleted_at: raw("NOW()") }),
+            ),
+          )
+          if (!ok) return json(c, 422, { error: "Cannot delete the last active admin of a team" })
+        }
+        await purgeUser(db, store, id)
+        logEvent(db, { userId, teamId: Number(found.team_id), event: "admin.user_deleted", metadata: { target: id } })
         return json(c, 200, { deleted: id })
       }),
     ),
@@ -121,7 +174,7 @@ export const adminRoutes = (db: Connection, secret: string) => {
         const url = new URL(c.request.url)
         const filter = url.searchParams.get("filter") ?? "all"
         // Plaintext token is never returned on read paths — only at create time.
-        let q = from("invites").select("id", "email", "invited_by", "used_at", "used_by", "created_at")
+        let q = from("invites").select("id", "email", "team_id", "invited_by", "used_at", "used_by", "created_at")
         if (filter === "unused") q = q.where(p => p("used_at").isNull())
         if (filter === "used") q = q.where(p => p("used_at").isNotNull())
 
@@ -221,14 +274,17 @@ export const adminRoutes = (db: Connection, secret: string) => {
       guard(async c => {
         const url = new URL(c.request.url)
         const event = url.searchParams.get("event")
-        const userIdParam = url.searchParams.get("user_id")
+        const userIdParam = url.searchParams.get("user_id") ?? url.searchParams.get("userId")
+        const teamIdParam = url.searchParams.get("team_id") ?? url.searchParams.get("teamId")
         const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit") ?? 100)))
 
+        // the owner sees every team's trail; team_id narrows it to one
         let q = from("audit_events")
           .leftJoin("users", raw("users.id = audit_events.user_id"))
           .select(
             "audit_events.id",
             "audit_events.user_id",
+            "audit_events.team_id",
             "audit_events.event",
             "audit_events.metadata",
             "audit_events.ip",
@@ -244,6 +300,10 @@ export const adminRoutes = (db: Connection, secret: string) => {
         if (userIdParam) {
           const uid = Number(userIdParam)
           if (!Number.isNaN(uid)) q = q.where(qb => qb("audit_events.user_id").equals(uid))
+        }
+        if (teamIdParam) {
+          const tid = Number(teamIdParam)
+          if (!Number.isNaN(tid)) q = q.where(qb => qb("audit_events.team_id").equals(tid))
         }
 
         const rows = await db.all(q)

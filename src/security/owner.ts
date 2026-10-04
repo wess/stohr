@@ -1,11 +1,16 @@
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 import { halt } from "@atlas/server"
+import { ROOT_TEAM_ID } from "../teams/resolve.ts"
 
 /**
  * Pipeline guard that allows only owner accounts. Re-queries `users.is_owner`
  * on every call rather than trusting the JWT claim, because sessions outlive
  * a demotion and access tokens last up to an hour. The DB is authoritative.
+ *
+ * Owners live in the root team only. A tenant user with is_owner set (a bad
+ * import, a stray update) still gets refused here, so the platform-admin
+ * surfaces never open up from a tenant host.
  *
  * One indexed PK lookup per admin request — negligible overhead.
  */
@@ -15,8 +20,8 @@ export const ownerOnly = (db: Connection) => async (c: any) => {
   const row = (await db.one(
     from("users")
       .where(q => q("id").equals(id))
-      .select("is_owner"),
-  )) as { is_owner: boolean } | null
-  if (!row?.is_owner) return halt(c, 403, { error: "Owner access required" })
+      .select("is_owner", "team_id"),
+  )) as { is_owner: boolean; team_id: number } | null
+  if (!row?.is_owner || Number(row.team_id) !== ROOT_TEAM_ID) return halt(c, 403, { error: "Owner access required" })
   return c
 }

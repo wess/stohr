@@ -8,22 +8,23 @@ import { from } from "@atlas/db"
 import type { Conn } from "@atlas/server"
 import { get, json } from "@atlas/server"
 import { ensureSsoStateTable, type IdTokenClaims, mountSso, type SsoConfig } from "@atlas/sso"
+import { uniqueUsername } from "../auth/external.ts"
 import { resolvePendingCollabs } from "../auth/index.ts"
 import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
 import { issueSession, revokeAllSessions } from "../security/sessions.ts"
-import { isValidUsername, normalizeUsername } from "../util/username.ts"
+import { rootOnlyRoutes } from "../teams/guards.ts"
+import { teamFor } from "../teams/request.ts"
+import { ROOT_TEAM_ID } from "../teams/resolve.ts"
+import { normalizeUsername } from "../util/username.ts"
 
 const _SSO_PASSWORD_SENTINEL = "$argon2id$sso$placeholder"
 
+// A starting point only — uniqueUsername makes it valid and unclaimed.
 const claimUsername = (claims: IdTokenClaims): string => {
   const raw = claims.preferred_username ?? (claims.email ? claims.email.split("@")[0] : null)
   if (!raw) throw new Error("ID token lacks preferred_username and email")
-  const normalized = normalizeUsername(String(raw))
-  if (!isValidUsername(normalized)) {
-    throw new Error(`Username '${normalized}' from IdP is invalid`)
-  }
-  return normalized
+  return normalizeUsername(String(raw)).replace(/[^a-z0-9_]/g, "_")
 }
 
 const claimEmail = (claims: IdTokenClaims): string => {
@@ -43,34 +44,33 @@ type SyncedUser = { id: number; username: string; name: string; email: string; i
 
 const upsertUser = async (db: Connection, claims: IdTokenClaims): Promise<SyncedUser> => {
   const email = claimEmail(claims)
-  const username = claimUsername(claims)
-  const name = (claims.name as string | undefined)?.trim() || username
+  const nameClaim = (claims.name as string | undefined)?.trim()
 
+  // Email is the only match key. Matching on username too let anyone who
+  // could pick a preferred_username at the IdP land in an unrelated local
+  // account; it also makes the IdP the authority over local handles. SSO is
+  // a root-team surface, so a tenant account with this address is not a match.
   const byEmail = (await db.one(
     from("users")
       .where(q => q("email").equals(email))
-      .select("id", "is_owner"),
-  )) as { id: number; is_owner: boolean } | null
-  const target =
-    byEmail ??
-    ((await db.one(
-      from("users")
-        .where(q => q("username").equals(username))
-        .select("id", "is_owner"),
-    )) as { id: number; is_owner: boolean } | null)
+      .where(q => q("team_id").equals(ROOT_TEAM_ID))
+      .select("id", "username", "is_owner"),
+  )) as { id: number; username: string; is_owner: boolean } | null
 
-  if (target) {
+  if (byEmail) {
+    // The IdP vouches for the person, not for the local account's identity:
+    // email and username stay as they are, only the display name follows.
+    const name = nameClaim || byEmail.username
     await db.execute(
       from("users")
-        .where(q => q("id").equals(target.id))
-        .update({
-          email,
-          username,
-          name,
-        }),
+        .where(q => q("id").equals(byEmail.id))
+        .update({ name }),
     )
-    return { id: target.id, username, name, email, is_owner: target.is_owner }
+    return { id: byEmail.id, username: byEmail.username, name, email, is_owner: byEmail.is_owner }
   }
+
+  const username = await uniqueUsername(db, claimUsername(claims))
+  const name = nameClaim || username
 
   // First user to land — via SSO or local signup — owns the instance.
   const anyUser = await db.one(from("users").select("id").limit(1))
@@ -78,11 +78,15 @@ const upsertUser = async (db: Connection, claims: IdTokenClaims): Promise<Synced
 
   const password = await placeholderHash()
   const inserted = (await db.execute(
-    from("users").insert({ email, username, name, password, is_owner: isFirstUser }).returning("id", "is_owner"),
+    from("users")
+      .insert({ email, username, name, password, is_owner: isFirstUser, team_id: ROOT_TEAM_ID })
+      .returning("id", "is_owner"),
   )) as Array<{ id: number; is_owner: boolean }>
   const row = inserted[0]
   if (!row) throw new Error("user insert failed")
-  await resolvePendingCollabs(db, row.id, email)
+  // collaborator invites were mailed to the address; only a verified claim
+  // says this account can read that mailbox
+  if (claims.email_verified === true) await resolvePendingCollabs(db, row.id, email)
   return { id: row.id, username, name, email, is_owner: row.is_owner }
 }
 
@@ -163,7 +167,8 @@ export const buildStohrSso = (env: {
 export const ssoStatusRoutes = (cfg: { ssoIssuer: string; ssoClientId: string; ssoClientSecret: string }) => [
   get("/auth/sso/status", async c =>
     json(c, 200, {
-      available: Boolean(cfg.ssoIssuer && cfg.ssoClientId && cfg.ssoClientSecret),
+      // root host only — tenant login pages never show the button
+      available: teamFor(c.request).isRoot && Boolean(cfg.ssoIssuer && cfg.ssoClientId && cfg.ssoClientSecret),
       label: "Castle",
     }),
   ),
@@ -175,5 +180,5 @@ export const setupStohrSso = async (
 ) => {
   await ensureSsoStateTable(db)
   const cfg = buildStohrSso({ db, ...env })
-  return mountSso(cfg)
+  return rootOnlyRoutes(mountSso(cfg))
 }

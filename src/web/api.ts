@@ -1,6 +1,20 @@
 const BASE = "/api"
 
-export type AuthUser = { id: number; email: string; username: string; name: string; is_owner: boolean }
+export type AuthTeam = { id: number; slug: string; name: string }
+
+// team, team_admin and is_root only come from /me (refreshMe); a login
+// response carries the basics, and a snapshot stored before teams existed
+// has none of them, so they stay optional
+export type AuthUser = {
+  id: number
+  email: string
+  username: string
+  name: string
+  is_owner: boolean
+  team_admin?: boolean
+  is_root?: boolean
+  team?: AuthTeam | null
+}
 
 let token: string | null = localStorage.getItem("stohr_token")
 let user: AuthUser | null = (() => {
@@ -36,6 +50,35 @@ export const setToken = (t: string | null, u: AuthUser | null = null) => {
 export const getToken = () => token
 export const getUser = () => user
 
+// the user record any auth-shaped response carries; team fields only when
+// the response has them, so a merge over the stored snapshot keeps them
+const userFrom = (data: any): AuthUser => ({
+  id: data.id,
+  email: data.email,
+  username: data.username,
+  name: data.name,
+  is_owner: !!data.is_owner,
+  ...(data.team_admin !== undefined ? { team_admin: !!data.team_admin } : {}),
+  ...(data.is_root !== undefined ? { is_root: !!data.is_root } : {}),
+  ...(data.team !== undefined ? { team: data.team ?? null } : {}),
+})
+
+// Pull /me into the stored snapshot. Called after sign-in and when the shell
+// mounts: it is the one response that says which team this session is on
+// and whether the host is the root.
+export const refreshMe = async (): Promise<AuthUser | null> => {
+  if (!token) return null
+  try {
+    const data = await jsonReq("GET", "/me")
+    if (!data?.id) return null
+    const u = userFrom(data)
+    setToken(token, u)
+    return u
+  } catch {
+    return null
+  }
+}
+
 export const signup = async (input: {
   name: string
   username: string
@@ -50,27 +93,13 @@ export const signup = async (input: {
     password: input.password,
     invite_token: input.inviteToken,
   })
-  if (data.token)
-    setToken(data.token, {
-      id: data.id,
-      email: data.email,
-      username: data.username,
-      name: data.name,
-      is_owner: !!data.is_owner,
-    })
+  if (data.token) setToken(data.token, userFrom(data))
   return data
 }
 
 export const login = async (identity: string, password: string) => {
   const data = await jsonReq("POST", "/login", { identity, password })
-  if (data.token)
-    setToken(data.token, {
-      id: data.id,
-      email: data.email,
-      username: data.username,
-      name: data.name,
-      is_owner: !!data.is_owner,
-    })
+  if (data.token) setToken(data.token, userFrom(data))
   return data as {
     id?: number
     email?: string
@@ -91,14 +120,7 @@ export const loginMfa = async (mfaToken: string, opts: { code?: string; backupCo
     ...(opts.code ? { code: opts.code } : {}),
     ...(opts.backupCode ? { backup_code: opts.backupCode } : {}),
   })
-  if (data.token)
-    setToken(data.token, {
-      id: data.id,
-      email: data.email,
-      username: data.username,
-      name: data.name,
-      is_owner: !!data.is_owner,
-    })
+  if (data.token) setToken(data.token, userFrom(data))
   return data
 }
 
@@ -284,14 +306,7 @@ export const ldapStatus = async (): Promise<{ available: boolean }> => {
 
 export const loginLdap = async (identity: string, password: string) => {
   const data = await jsonReq("POST", "/auth/ldap/login", { identity, password })
-  if (data.token)
-    setToken(data.token, {
-      id: data.id,
-      email: data.email,
-      username: data.username,
-      name: data.name,
-      is_owner: !!data.is_owner,
-    })
+  if (data.token) setToken(data.token, userFrom(data))
   return data as {
     id?: number
     email?: string
@@ -305,27 +320,36 @@ export const loginLdap = async (identity: string, password: string) => {
   }
 }
 
+// A #token= fragment is only adopted when this tab started the sign-in.
+// Without that, a link to /#token=<attacker's token> logs the victim into
+// the attacker's account (login CSRF). sessionStorage is per-tab and survives
+// the round trip through the IdP; it may be unavailable in private modes, in
+// which case the SSO button still navigates and the fragment is ignored.
+const SSO_NONCE_KEY = "stohr_sso_nonce"
+
+export const markSsoStart = (): void => {
+  try {
+    sessionStorage.setItem(SSO_NONCE_KEY, crypto.randomUUID())
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+export const consumeSsoStart = (): boolean => {
+  try {
+    const present = sessionStorage.getItem(SSO_NONCE_KEY) !== null
+    sessionStorage.removeItem(SSO_NONCE_KEY)
+    return present
+  } catch {
+    return false
+  }
+}
+
 // Pull a fresh /me when we adopted a token from the OIDC fragment so the
 // stored user record matches whatever the IdP just minted/updated.
 export const adoptToken = async (t: string): Promise<AuthUser | null> => {
   setToken(t)
-  try {
-    const data = await jsonReq("GET", "/me")
-    if (data?.id) {
-      const u: AuthUser = {
-        id: data.id,
-        email: data.email,
-        username: data.username,
-        name: data.name,
-        is_owner: !!data.is_owner,
-      }
-      setToken(t, u)
-      return u
-    }
-  } catch {
-    /* fall through */
-  }
-  return null
+  return refreshMe()
 }
 
 export const checkInvite = async (token: string) => {
@@ -385,9 +409,11 @@ export const adminUpdateContact = (id: number, status: ContactMessageStatus) =>
 export const adminDeleteContact = (id: number) =>
   jsonReq("DELETE", `/admin/contact/${id}`) as Promise<{ deleted?: number; error?: string }>
 
+// team / is_root are read when the API includes them; today it does not, and
+// the login screen falls back to the subdomain for the tenant's identity
 export const getSetupStatus = async () => {
   const res = await fetch(`${BASE}/setup`)
-  return res.json() as Promise<{ needsSetup: boolean }>
+  return res.json() as Promise<{ needsSetup: boolean; team?: AuthTeam; is_root?: boolean }>
 }
 
 // Listing endpoints page with limit/offset. The response stays a bare array,
@@ -524,16 +550,15 @@ export const fetchShare = async (token: string, password?: string, inline = fals
   return fetch(url, { headers })
 }
 
-export const updateProfile = async (patch: { name?: string; email?: string; username?: string }) => {
+export const updateProfile = async (patch: {
+  name?: string
+  email?: string
+  username?: string
+  current_password?: string
+}) => {
   const data = await jsonReq("PATCH", "/me", patch)
-  if (data.token)
-    setToken(data.token, {
-      id: data.id,
-      email: data.email,
-      username: data.username,
-      name: data.name,
-      is_owner: !!data.is_owner,
-    })
+  // the fresh row has no team fields; keep the ones /me already gave us
+  if (data.token) setToken(data.token, { ...(user ?? {}), ...userFrom(data) })
   return data
 }
 
@@ -601,19 +626,186 @@ export const removeFolderCollab = (id: number, collabId: number) =>
 export const removeFileCollab = (id: number, collabId: number) =>
   jsonReq("DELETE", `/files/${id}/collaborators/${collabId}`)
 
-export const adminListUsers = () => jsonReq("GET", "/admin/users")
+// The owner's /admin/users and a team admin's /team/users are the same
+// handlers behind different guards (src/admin/users.ts), so one client
+// serves both admin surfaces: the base path is the only difference.
+export type UserAdminBase = "/admin" | "/team"
+
+export type ManagedUser = {
+  id: number
+  username: string
+  email: string
+  name: string
+  is_owner: boolean
+  team_id?: number
+  team_admin: boolean
+  storage_quota_bytes: number
+  storage_bytes: number
+  file_count: number
+  suspended_at?: string | null
+  suspended_reason?: string | null
+  deleted_at?: string | null
+  created_at: string
+}
+
+export type ManagedInvite = {
+  id: number
+  email: string | null
+  invited_by: number | null
+  invited_by_username: string | null
+  used_at: string | null
+  used_by: number | null
+  used_by_username: string | null
+  created_at: string
+}
+
+export type AuditRow = {
+  id: number
+  user_id: number | null
+  event: string
+  metadata: string | null
+  ip: string | null
+  user_agent: string | null
+  created_at: string
+  username?: string | null
+  user_email?: string | null
+  // /team/audit: "Platform admin" when the actor is the instance owner
+  // acting from root, whose identity stays out of a tenant's log
+  actor?: string | null
+}
+
+export const userAdminApi = (base: UserAdminBase) => ({
+  listUsers: () => jsonReq("GET", `${base}/users`) as Promise<ManagedUser[] | { error: string }>,
+  getUser: (id: number) => jsonReq("GET", `${base}/users/${id}`),
+  editUser: (id: number, patch: { name?: string; email?: string; username?: string; team_admin?: boolean }) =>
+    jsonReq("PATCH", `${base}/users/${id}`, patch),
+  suspendUser: (id: number, reason?: string) =>
+    jsonReq("POST", `${base}/users/${id}/suspend`, reason ? { reason } : {}),
+  unsuspendUser: (id: number) => jsonReq("POST", `${base}/users/${id}/unsuspend`, {}),
+  resetUserPassword: (id: number) =>
+    jsonReq("POST", `${base}/users/${id}/reset-password`, {}) as Promise<{
+      id: number
+      emailed: boolean
+      reset_url: string | null
+      error?: string
+    }>,
+  messageUser: (id: number, subject: string, body: string) =>
+    jsonReq("POST", `${base}/users/${id}/message`, { subject, body }),
+  deleteUser: (id: number) => jsonReq("DELETE", `${base}/users/${id}`),
+  listInvites: (filter: "all" | "used" | "unused" = "all") =>
+    jsonReq("GET", `${base}/invites?filter=${filter}`) as Promise<ManagedInvite[] | { error: string }>,
+  createInvite: (email?: string) =>
+    jsonReq("POST", `${base}/invites`, email ? { email } : {}) as Promise<{
+      id?: number
+      token?: string
+      error?: string
+    }>,
+  deleteInvite: (id: number) => jsonReq("DELETE", `${base}/invites/${id}`),
+  listAudit: (filters: { event?: string; userId?: number; limit?: number } = {}) => {
+    const qs = new URLSearchParams()
+    if (filters.event) qs.set("event", filters.event)
+    if (filters.userId !== undefined) qs.set("user_id", String(filters.userId))
+    if (filters.limit !== undefined) qs.set("limit", String(filters.limit))
+    const tail = qs.toString()
+    return jsonReq("GET", `${base}/audit${tail ? `?${tail}` : ""}`) as Promise<AuditRow[] | { error: string }>
+  },
+})
+
+const ownerUsers = userAdminApi("/admin")
+
+export const adminListUsers = ownerUsers.listUsers
 
 export const adminSetOwner = (id: number, isOwner: boolean) =>
   jsonReq("POST", `/admin/users/${id}/owner`, { is_owner: isOwner })
 
-export const adminDeleteUser = (id: number) => jsonReq("DELETE", `/admin/users/${id}`)
+export const adminDeleteUser = ownerUsers.deleteUser
 
-export const adminListAllInvites = (filter: "all" | "used" | "unused" = "all") =>
-  jsonReq("GET", `/admin/invites?filter=${filter}`)
+export const adminListAllInvites = ownerUsers.listInvites
 
-export const adminDeleteInvite = (id: number) => jsonReq("DELETE", `/admin/invites/${id}`)
+export const adminDeleteInvite = ownerUsers.deleteInvite
 
 export const adminGetStats = () => jsonReq("GET", "/admin/stats")
+
+// Team admin: the host's own team. Only members of that team ever reach it,
+// so there is no team id in the path.
+export type TeamUsage = { active: number; trash: number; versions: number; total: number }
+
+export type TeamInfo = {
+  id: number
+  slug: string
+  name: string
+  // null = unlimited
+  quota_bytes: number | null
+  suspended_at: string | null
+  created_at: string
+  base_url: string
+  user_count: number
+  usage: TeamUsage
+}
+
+export const getTeam = () => jsonReq("GET", "/team") as Promise<TeamInfo & { error?: string }>
+
+// Direct member creation; without a password the response carries a
+// one-time set-password link on this team's host.
+export const teamCreateUser = (input: {
+  email: string
+  name?: string
+  username?: string
+  password?: string
+  team_admin?: boolean
+}) =>
+  jsonReq("POST", "/team/users", input) as Promise<{
+    id: number
+    email: string
+    username: string
+    name: string
+    team_id: number
+    team_admin: boolean
+    set_password_url: string | null
+    emailed: boolean
+    error?: string
+  }>
+
+// Root owner: every team on the instance.
+export type AdminTeam = TeamInfo & { deleted_at: string | null }
+
+export const adminListTeams = (filter: "live" | "deleted" | "all" = "live") =>
+  jsonReq("GET", `/admin/teams?filter=${filter}`) as Promise<AdminTeam[] | { error: string }>
+
+export const adminGetTeam = (id: number) =>
+  jsonReq("GET", `/admin/teams/${id}`) as Promise<AdminTeam & { error?: string }>
+
+export const adminCreateTeam = (input: {
+  slug: string
+  name?: string
+  quota_bytes?: number | null
+  admin_email: string
+  admin_name?: string
+  admin_username?: string
+}) =>
+  jsonReq("POST", "/admin/teams", input) as Promise<{
+    team: AdminTeam
+    admin: { id: number; email: string; username: string; name: string }
+    set_password_url: string
+    emailed: boolean
+    error?: string
+  }>
+
+export const adminUpdateTeam = (
+  id: number,
+  patch: { name?: string; quota_bytes?: number | null; suspended?: boolean },
+) => jsonReq("PATCH", `/admin/teams/${id}`, patch) as Promise<AdminTeam & { error?: string }>
+
+export const adminDeleteTeam = (id: number) =>
+  jsonReq("DELETE", `/admin/teams/${id}`) as Promise<{
+    id: number
+    deleted: boolean
+    purge_after_hours: number
+    error?: string
+  }>
+
+export const adminRestoreTeam = (id: number) =>
+  jsonReq("POST", `/admin/teams/${id}/restore`, {}) as Promise<{ id: number; deleted: boolean; error?: string }>
 
 export const oauthAuthorizeInfo = (query: string) =>
   fetch(`${BASE}/oauth/authorize/info${query}`, { headers: headers() }).then(r => r.json())
@@ -648,38 +840,22 @@ export const adminRevokeOAuthClient = (id: number) => jsonReq("DELETE", `/admin/
 export const adminRotateOAuthClientSecret = (id: number) =>
   jsonReq("POST", `/admin/oauth/clients/${id}/rotate-secret`, {})
 
-export const adminListAuditEvents = (filters: { event?: string; userId?: number; limit?: number } = {}) => {
-  const qs = new URLSearchParams()
-  if (filters.event) qs.set("event", filters.event)
-  if (filters.userId !== undefined) qs.set("user_id", String(filters.userId))
-  if (filters.limit !== undefined) qs.set("limit", String(filters.limit))
-  const tail = qs.toString()
-  return jsonReq("GET", `/admin/audit${tail ? `?${tail}` : ""}`)
-}
+export const adminListAuditEvents = ownerUsers.listAudit
 
 export const getMyUsage = () => jsonReq("GET", "/me/usage")
 
 export const adminSetUserQuota = (id: number, quotaBytes: number) =>
   jsonReq("POST", `/admin/users/${id}/quota`, { quota_bytes: quotaBytes })
 
-export const adminGetUser = (id: number) => jsonReq("GET", `/admin/users/${id}`)
-export const adminEditUser = (id: number, patch: { name?: string; email?: string; username?: string }) =>
-  jsonReq("PATCH", `/admin/users/${id}`, patch)
-export const adminSuspendUser = (id: number, reason?: string) =>
-  jsonReq("POST", `/admin/users/${id}/suspend`, reason ? { reason } : {})
-export const adminUnsuspendUser = (id: number) => jsonReq("POST", `/admin/users/${id}/unsuspend`, {})
-export const adminResetUserPassword = (id: number) =>
-  jsonReq("POST", `/admin/users/${id}/reset-password`, {}) as Promise<{
-    id: number
-    emailed: boolean
-    reset_url: string | null
-    error?: string
-  }>
-export const adminMessageUser = (id: number, subject: string, body: string) =>
-  jsonReq("POST", `/admin/users/${id}/message`, { subject, body })
+export const adminGetUser = ownerUsers.getUser
+export const adminEditUser = ownerUsers.editUser
+export const adminSuspendUser = ownerUsers.suspendUser
+export const adminUnsuspendUser = ownerUsers.unsuspendUser
+export const adminResetUserPassword = ownerUsers.resetUserPassword
+export const adminMessageUser = ownerUsers.messageUser
 export const adminBroadcast = (subject: string, body: string) =>
   jsonReq("POST", `/admin/broadcast`, { subject, body }) as Promise<{ delivered: number; error?: string }>
-export const adminCreateInvite = (email?: string) => jsonReq("POST", `/admin/invites`, email ? { email } : {})
+export const adminCreateInvite = ownerUsers.createInvite
 
 export type AdminSetting = {
   key: string
@@ -1066,15 +1242,7 @@ export const beginPasskeyDiscoverableLogin = () => jsonReq("POST", "/login/passk
 
 export const finishPasskeyDiscoverableLogin = async (response: any) => {
   const data = await jsonReq("POST", "/login/passkey/discover/finish", { response })
-  if (data.token) {
-    setToken(data.token, {
-      id: data.id,
-      email: data.email,
-      username: data.username,
-      name: data.name,
-      is_owner: !!data.is_owner,
-    })
-  }
+  if (data.token) setToken(data.token, userFrom(data))
   return data as {
     id?: number
     email?: string

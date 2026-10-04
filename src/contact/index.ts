@@ -4,6 +4,7 @@ import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { ownerOnly } from "../security/owner.ts"
 import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
+import { limitBody } from "../util/limitbody/index.ts"
 import { isEmail } from "../util/username.ts"
 
 type Status = "new" | "read" | "handled" | "spam"
@@ -16,7 +17,7 @@ const MAX_MESSAGE = 10_000
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
 export const contactRoutes = (db: Connection, secret: string) => {
-  const open = pipeline(parseJson)
+  const open = pipeline(limitBody(), parseJson)
   const ownerCheck = ownerOnly(db)
   const adminGuard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck)
   const adminAuthed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)

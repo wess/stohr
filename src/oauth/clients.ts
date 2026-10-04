@@ -5,6 +5,7 @@ import { requireAuth } from "../auth/guard.ts"
 import { logEvent } from "../security/audit.ts"
 import { ownerOnly } from "../security/owner.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
+import { rootOnly } from "../teams/guards.ts"
 import { isScope, randomId, SUPPORTED_SCOPES, sha256, shortId } from "./helpers.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -34,6 +35,11 @@ const parseJsonArray = (v: string | string[] | null | undefined): string[] => {
   }
 }
 
+// Schemes a browser executes instead of navigating to. The SPA follows
+// redirect_url after consent, so a client registered with one of these would
+// turn the consent screen into a script sink for whoever owns the client.
+const FORBIDDEN_REDIRECT_SCHEMES = new Set(["javascript:", "data:", "vbscript:", "file:", "blob:", "about:"])
+
 const validateRedirectUris = (uris: unknown): { ok: true; uris: string[] } | { ok: false; error: string } => {
   if (!Array.isArray(uris) || uris.length === 0) {
     return { ok: false, error: "redirect_uris must be a non-empty array" }
@@ -45,6 +51,19 @@ const validateRedirectUris = (uris: unknown): { ok: true; uris: string[] } | { o
     // Allow http(s) and custom schemes (e.g. butter://callback). Reject obvious garbage.
     if (!/^[a-z][a-z0-9+.-]*:/i.test(uri)) {
       return { ok: false, error: `Invalid redirect_uri: ${uri}` }
+    }
+    let parsed: URL
+    try {
+      parsed = new URL(uri)
+    } catch {
+      return { ok: false, error: `Invalid redirect_uri: ${uri}` }
+    }
+    if (FORBIDDEN_REDIRECT_SCHEMES.has(parsed.protocol.toLowerCase())) {
+      return { ok: false, error: `redirect_uri scheme is not allowed: ${uri}` }
+    }
+    // RFC 6749 §3.1.2 — no fragment component
+    if (parsed.hash) {
+      return { ok: false, error: `redirect_uri must not contain a fragment: ${uri}` }
     }
   }
   return { ok: true, uris: uris as string[] }
@@ -78,8 +97,9 @@ const toPublicClient = (row: ClientRow) => ({
 
 export const oauthClientRoutes = (db: Connection, secret: string) => {
   const ownerCheck = ownerOnly(db)
-  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck)
-  const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)
+  // clients are registered once for the whole instance, from the root host
+  const guard = pipeline(rootOnly, requireAuth({ secret, db, noOAuth: true }), ownerCheck)
+  const authed = pipeline(rootOnly, requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)
 
   return [
     get(

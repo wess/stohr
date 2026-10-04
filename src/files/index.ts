@@ -6,14 +6,14 @@ import { fireEvent } from "../actions/dispatch.ts"
 import { requireAuth } from "../auth/guard.ts"
 import { dropFederationBlob, fetchFederationBytes, isFederationKey } from "../federation/files.ts"
 import type { FileRow, FolderRow } from "../permissions/index.ts"
-import { canWrite, fileAccess, folderAccess } from "../permissions/index.ts"
+import { canWrite, fileAccess, folderAccess, isOwner, trashedFileAccess, visibleFileSql } from "../permissions/index.ts"
 import { clamdConfig } from "../scanning/index.ts"
 import { escapeLike } from "../search/parse.ts"
 import { decideInline } from "../security/inline.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { drop, fetchObject, makeKey, put } from "../storage/index.ts"
 import { generateImageThumb, isThumbable, THUMB_MAX_BYTES, thumbKeyFor } from "../storage/thumb.ts"
-import { checkQuota, computeUsage } from "../usage/index.ts"
+import { checkQuota, computeUsage, teamOverQuota } from "../usage/index.ts"
 import { pagingHeaders, parsePaging } from "../util/paging.ts"
 import { dispatchWebhook } from "../webhooks/dispatch.ts"
 import { parseRange } from "./range.ts"
@@ -61,7 +61,7 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
           const rows = await db.all(
             page(
               from("files")
-                .where(p => p("user_id").equals(userId))
+                .where(p => p.raw(visibleFileSql(userId)))
                 .where(p => p("deleted_at").isNull())
                 .where(p => p("name").ilike(`%${escapeLike(q)}%`))
                 .select("id", "name", "mime", "size", "folder_id", "version", "created_at"),
@@ -239,7 +239,8 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         const check = await checkQuota(db, ownerId, quota, incoming)
         if (!check.ok) {
           return json(c, 402, {
-            error: "Storage quota exceeded",
+            error: check.scope === "team" ? "Team storage quota exceeded" : "Storage quota exceeded",
+            scope: check.scope,
             quota_bytes: check.quota_bytes,
             used_bytes: check.used_bytes,
             attempted_bytes: check.attempted_bytes,
@@ -431,24 +432,41 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         // Post-write quota verification — closes the TOCTOU window where two
         // concurrent uploads from the same user both pass the initial check.
         // Quota of 0 (unlimited) skips this entirely.
+        const rollback = async () => {
+          for (const undo of undoStack.reverse()) {
+            try {
+              await undo()
+            } catch (err) {
+              console.error("[files] quota rollback failed:", err)
+            }
+          }
+        }
         if (quota > 0) {
           const finalUsage = await computeUsage(db, ownerId)
           if (finalUsage.total > quota) {
-            for (const undo of undoStack.reverse()) {
-              try {
-                await undo()
-              } catch (err) {
-                console.error("[files] quota rollback failed:", err)
-              }
-            }
+            await rollback()
             return json(c, 402, {
               error: "Storage quota exceeded",
+              scope: "user",
               quota_bytes: quota,
               used_bytes: finalUsage.total,
               attempted_bytes: incoming,
               breakdown: finalUsage,
             })
           }
+        }
+        // same window, team-wide: two members uploading at once
+        const teamOver = await teamOverQuota(db, ownerId)
+        if (teamOver) {
+          await rollback()
+          return json(c, 402, {
+            error: "Team storage quota exceeded",
+            scope: "team",
+            quota_bytes: teamOver.quota_bytes,
+            used_bytes: teamOver.used_bytes,
+            attempted_bytes: incoming,
+            breakdown: teamOver.breakdown,
+          })
         }
 
         return json(c, 201, result)
@@ -484,11 +502,19 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
             const targetAccess = await folderAccess(db, userId, fid)
             if (!targetAccess) return json(c, 404, { error: "Target folder not found" })
             if (!canWrite(targetAccess.role)) return json(c, 403, { error: "No write access on target folder" })
-            if (targetAccess.folder.user_id !== access.file.user_id) {
+            // A file never changes space (see the folder move rule). Inside a
+            // space user_id is attribution only, so the owner check is for
+            // personal trees.
+            if ((targetAccess.folder.space_id ?? null) !== access.spaceId) {
+              return json(c, 422, { error: "Cannot move file across spaces" })
+            }
+            if (access.spaceId == null && targetAccess.folder.user_id !== access.file.user_id) {
               return json(c, 422, { error: "Cannot move file across owners" })
             }
             targetFolder = targetAccess.folder
           } else {
+            // The root is a personal tree; a space file has no owner to land under.
+            if (access.spaceId != null) return json(c, 422, { error: "Cannot move a space file to the root" })
             if (access.role !== "owner") return json(c, 403, { error: "Only the owner can move a file to the root" })
           }
           patchData.folder_id = fid
@@ -623,12 +649,10 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       guard(async c => {
         const userId = authId(c)
         const id = Number(c.params.id)
-        const row = (await db.one(
-          from("files")
-            .where(p => p("id").equals(id))
-            .where(p => p("user_id").equals(userId)),
-        )) as FileRow | null
-        if (!row) return json(c, 404, { error: "File not found" })
+        const access = await trashedFileAccess(db, userId, id)
+        if (!access) return json(c, 404, { error: "File not found" })
+        if (!canWrite(access.role)) return json(c, 403, { error: "Read-only access" })
+        const row = access.file
         if (!row.deleted_at) return json(c, 200, { id })
 
         let folderId = row.folder_id
@@ -656,12 +680,10 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
       guard(async c => {
         const userId = authId(c)
         const id = Number(c.params.id)
-        const row = (await db.one(
-          from("files")
-            .where(p => p("id").equals(id))
-            .where(p => p("user_id").equals(userId)),
-        )) as FileRow | null
-        if (!row) return json(c, 404, { error: "File not found" })
+        const access = await trashedFileAccess(db, userId, id)
+        if (!access) return json(c, 404, { error: "File not found" })
+        if (!isOwner(access.role)) return json(c, 403, { error: "Only the owner can purge" })
+        const row = access.file
 
         const versions = (await db.all(
           from("file_versions")
@@ -842,6 +864,9 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
 
         await archiveCurrent(db, file, userId)
 
+        // The verdict on the row belongs to the bytes being replaced, not the
+        // ones coming back. Without the reset, upload-clean-then-restore would
+        // revive a flagged version under a 'clean' status.
         const newVersion = file.version + 1
         await db.execute(
           from("files")
@@ -852,6 +877,9 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
               storage_key: target.storage_key,
               thumb_key: newThumbKey,
               version: newVersion,
+              scan_status: clamdConfig() ? "pending" : "skipped",
+              scan_signature: null,
+              scanned_at: null,
             }),
         )
 

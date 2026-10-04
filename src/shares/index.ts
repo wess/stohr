@@ -4,10 +4,12 @@ import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { del, get, json, parseJson, pipeline, post, putHeader, stream } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
+import { fileAccess, isOwner } from "../permissions/index.ts"
 import { decideInline } from "../security/inline.ts"
 import { checkRate, clientIp } from "../security/ratelimit.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { fetchObject } from "../storage/index.ts"
+import { teamFor } from "../teams/request.ts"
 import { dispatchWebhook } from "../webhooks/dispatch.ts"
 
 const APP_TOKEN_PREFIX = "stohr_pat_"
@@ -18,7 +20,15 @@ const authId = (c: any) => (c.assigns.auth as { id: number }).id
 /* Base58 alphabet — drops the visually-ambiguous 0/O/I/l so shared URLs
  * can be read aloud or copied from a screen without errors. */
 const SHORT_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-const SHORT_LEN = 7
+// 58^12 ≈ 2^70. Tokens minted at the old length of 7 keep resolving — the
+// lookup is by value, so nothing here needs to know how long a token is.
+const SHORT_LEN = 12
+
+// Unknown tokens are counted per IP, and an IP that has burned through its
+// budget is turned away before the lookup. Counting alone would not do: a
+// guesser could keep probing and tell hits from misses by the status code.
+const MISS_MAX = 30
+const MISS_WINDOW_SECONDS = 900
 
 const shortToken = (): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(SHORT_LEN))
@@ -30,8 +40,8 @@ const shortToken = (): string => {
 }
 
 const allocShareToken = async (db: Connection): Promise<string> => {
-  // 58^7 ≈ 2.2 trillion possibilities — collisions effectively never happen,
-  // but we retry once on the unique-constraint race just in case.
+  // Collisions effectively never happen, but we retry on the
+  // unique-constraint race just in case.
   for (let i = 0; i < 8; i++) {
     const candidate = shortToken()
     const taken = await db.one(
@@ -156,13 +166,13 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
           return json(c, 422, { error: `expires_in cannot exceed ${MAX_EXPIRES_SECONDS} seconds (30 days)` })
         }
 
-        const file = await db.one(
-          from("files")
-            .where(q => q("id").equals(fileId))
-            .where(q => q("user_id").equals(userId))
-            .where(q => q("deleted_at").isNull()),
-        )
-        if (!file) return json(c, 404, { error: "File not found" })
+        // Owner-level only, resolved through the permissions module: for a
+        // personal file that is its user_id, for a space file a space admin.
+        // Matching on user_id alone let a space folder's creator keep minting
+        // links after being demoted or removed.
+        const access = await fileAccess(db, userId, fileId)
+        if (!access || !isOwner(access.role)) return json(c, 404, { error: "File not found" })
+        const file = access.file
 
         const tok = await allocShareToken(db)
         const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString()
@@ -186,7 +196,7 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
           share_id: rows[0]!.id,
           token: rows[0]!.token,
           file_id: fileId,
-          file_name: (file as any).name,
+          file_name: file.name,
           expires_at: rows[0]!.expires_at,
           burn_on_view: rows[0]!.burn_on_view,
           created_at: rows[0]!.created_at,
@@ -223,15 +233,46 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
 
     get("/s/:token", async c => {
       const tok = c.params.token
-      const share = (await db.one(from("shares").where(q => q("token").equals(tok)))) as {
+      const ip = clientIp(c.request)
+      const missBucket = `share:miss:ip:${ip}`
+
+      const blocked = await db.one({
+        text: `
+          SELECT 1 FROM rate_limits
+           WHERE bucket = $1
+             AND count > $2
+             AND window_started_at > NOW() - ($3 || ' seconds')::interval
+        `,
+        values: [missBucket, MISS_MAX, String(MISS_WINDOW_SECONDS)],
+      })
+      if (blocked) return json(c, 429, { error: "Too many attempts" })
+
+      const share = (await db.one({
+        text: `
+          SELECT s.id, s.file_id, s.user_id, s.expires_at, s.password_hash, s.burn_on_view, u.team_id
+            FROM shares s
+            JOIN users u ON u.id = s.user_id
+           WHERE s.token = $1
+           LIMIT 1
+        `,
+        values: [tok],
+      })) as {
         id: number
         file_id: number
         user_id: number
         expires_at: string | null
         password_hash: string | null
         burn_on_view: boolean
+        team_id: number
       } | null
-      if (!share) return json(c, 404, { error: "Share not found" })
+      // A link only resolves on its owner's team host. Elsewhere it is a miss
+      // like any unknown token, counted the same way, so another team's host
+      // cannot be used to confirm a token exists.
+      if (!share || Number(share.team_id) !== teamFor(c.request).team.id) {
+        const miss = await checkRate(db, missBucket, MISS_MAX, MISS_WINDOW_SECONDS)
+        if (!miss.ok) return json(c, 429, { error: "Too many attempts", retry_after: miss.retryAfterSeconds })
+        return json(c, 404, { error: "Share not found" })
+      }
 
       if (share.expires_at && new Date(share.expires_at).getTime() < Date.now()) {
         await db.execute(
@@ -252,9 +293,12 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
         size: number
         mime: string
         storage_key: string
+        scan_status: string
         created_at: string
       } | null
       if (!file) return json(c, 404, { error: "File missing" })
+      // Same gate as /files/:id/download; a share link is still a download.
+      if (file.scan_status === "infected") return json(c, 403, { error: "File failed malware scan" })
 
       const url = new URL(c.request.url)
       const isMeta = url.searchParams.get("meta") === "1"
@@ -279,7 +323,6 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
         // user-set password isn't trivially brute-forceable. Two buckets so
         // a single IP can't lock out other viewers, and a token-rotating
         // attacker still hits the per-share cap.
-        const ip = clientIp(c.request)
         const ipRate = await checkRate(db, `share:pw:ip:${ip}`, 30, 900)
         if (!ipRate.ok) {
           return json(c, 429, { error: "Too many attempts", retry_after: ipRate.retryAfterSeconds })

@@ -4,7 +4,12 @@ import { get, json, putHeader, stream } from "@atlas/server"
 import { decideInline } from "../security/inline.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { fetchObject } from "../storage/index.ts"
+import { inTeam } from "../teams/members.ts"
+import { teamFor } from "../teams/request.ts"
 import { normalizeUsername } from "../util/username.ts"
+
+// Public links are served only on the owner's team host. Everywhere else the
+// folder is simply not found — nothing says it exists on another host.
 
 type PublicFolder = {
   id: number
@@ -27,34 +32,70 @@ type PublicFile = {
   created_at: string
 }
 
-const isPublicFolder = async (db: Connection, folderId: number): Promise<PublicFolder | null> => {
+const isPublicFolder = async (db: Connection, folderId: number, teamId: number): Promise<PublicFolder | null> => {
   const row = (await db.one(
     from("folders")
       .where(q => q("id").equals(folderId))
       .where(q => q("is_public").equals(true))
-      .where(q => q("deleted_at").isNull()),
+      .where(q => q("deleted_at").isNull())
+      .where(inTeam("user_id", teamId)),
   )) as PublicFolder | null
   return row
 }
 
-const fileInPublicFolder = async (db: Connection, fileId: number): Promise<PublicFile | null> => {
+const fileInPublicFolder = async (db: Connection, fileId: number, teamId: number): Promise<PublicFile | null> => {
   const file = (await db.one(
     from("files")
       .where(q => q("id").equals(fileId))
       .where(q => q("deleted_at").isNull()),
   )) as PublicFile | null
   if (!file || file.folder_id == null) return null
-  const folder = await isPublicFolder(db, file.folder_id)
+  const folder = await isPublicFolder(db, file.folder_id, teamId)
   if (!folder) return null
   return file
 }
 
+// The router takes the first pattern that matches, so the fixed /p/files/...
+// routes go before /p/:username/:folderId — at the same depth the parameter
+// route would otherwise swallow them with username "files".
 export const publicRoutes = (db: Connection, _secret: string, store: StorageHandle) => [
+  get("/p/files/:id", async c => {
+    const id = Number(c.params.id)
+    const file = await fileInPublicFolder(db, id, teamFor(c.request).team.id)
+    if (!file) return json(c, 404, { error: "Not found" })
+    if (file.scan_status === "infected") return json(c, 403, { error: "File failed malware scan" })
+
+    const res = await fetchObject(store, file.storage_key)
+    if (!res.body) return json(c, 500, { error: "Storage returned empty body" })
+
+    const wantInline = new URL(c.request.url).searchParams.get("inline") === "1"
+    const { contentType, disposition } = decideInline(file.mime, file.name, wantInline)
+
+    const withHeaders = putHeader(
+      putHeader(putHeader(c, "content-type", contentType), "content-disposition", disposition),
+      "content-length",
+      String(file.size),
+    )
+    return stream(withHeaders, 200, res.body)
+  }),
+
+  get("/p/files/:id/thumb", async c => {
+    const id = Number(c.params.id)
+    const file = await fileInPublicFolder(db, id, teamFor(c.request).team.id)
+    if (!file?.thumb_key) return json(c, 404, { error: "No thumbnail" })
+
+    const res = await fetchObject(store, file.thumb_key)
+    if (!res.body) return json(c, 404, { error: "No thumbnail" })
+
+    const withHeaders = putHeader(putHeader(c, "content-type", "image/webp"), "cache-control", "public, max-age=3600")
+    return stream(withHeaders, 200, res.body)
+  }),
+
   get("/p/:username/:folderId", async c => {
     const username = normalizeUsername(c.params.username)
     const folderId = Number(c.params.folderId)
 
-    const folder = await isPublicFolder(db, folderId)
+    const folder = await isPublicFolder(db, folderId, teamFor(c.request).team.id)
     if (!folder) return json(c, 404, { error: "Not found" })
 
     const owner = (await db.one(
@@ -85,37 +126,5 @@ export const publicRoutes = (db: Connection, _secret: string, store: StorageHand
       owner,
       files,
     })
-  }),
-
-  get("/p/files/:id", async c => {
-    const id = Number(c.params.id)
-    const file = await fileInPublicFolder(db, id)
-    if (!file) return json(c, 404, { error: "Not found" })
-    if (file.scan_status === "infected") return json(c, 403, { error: "File failed malware scan" })
-
-    const res = await fetchObject(store, file.storage_key)
-    if (!res.body) return json(c, 500, { error: "Storage returned empty body" })
-
-    const wantInline = new URL(c.request.url).searchParams.get("inline") === "1"
-    const { contentType, disposition } = decideInline(file.mime, file.name, wantInline)
-
-    const withHeaders = putHeader(
-      putHeader(putHeader(c, "content-type", contentType), "content-disposition", disposition),
-      "content-length",
-      String(file.size),
-    )
-    return stream(withHeaders, 200, res.body)
-  }),
-
-  get("/p/files/:id/thumb", async c => {
-    const id = Number(c.params.id)
-    const file = await fileInPublicFolder(db, id)
-    if (!file?.thumb_key) return json(c, 404, { error: "No thumbnail" })
-
-    const res = await fetchObject(store, file.thumb_key)
-    if (!res.body) return json(c, 404, { error: "No thumbnail" })
-
-    const withHeaders = putHeader(putHeader(c, "content-type", "image/webp"), "cache-control", "public, max-age=3600")
-    return stream(withHeaders, 200, res.body)
   }),
 ]

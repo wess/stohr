@@ -3,17 +3,20 @@ import { get, json, parseJson, pipeline, post } from "@atlas/server"
 import { logEvent } from "../../security/audit.ts"
 import { checkRate, clientIp, userAgent } from "../../security/ratelimit.ts"
 import { issueSession } from "../../security/sessions.ts"
+import { rootOnly } from "../../teams/guards.ts"
+import { teamFor } from "../../teams/request.ts"
 import { upsertFromExternal } from "../external.ts"
 import { authenticateLdap } from "./client.ts"
 import { isLdapReady, loadLdapConfig } from "./config.ts"
 
 export const ldapRoutes = (db: Connection, secret: string) => {
-  const api = pipeline(parseJson)
+  // external login is a root-team surface; tenant hosts have no such routes
+  const api = pipeline(rootOnly, parseJson)
 
   return [
     get("/auth/ldap/status", async c => {
       const cfg = await loadLdapConfig(db)
-      return json(c, 200, { available: isLdapReady(cfg) })
+      return json(c, 200, { available: teamFor(c.request).isRoot && isLdapReady(cfg) })
     }),
 
     post(
@@ -59,6 +62,9 @@ export const ldapRoutes = (db: Connection, secret: string) => {
               provider: "ldap",
               subject: profile.dn,
               email: profile.email?.toLowerCase() ?? null,
+              // the directory is admin-run; a mail attribute is as verified
+              // as an address gets here
+              email_verified: !!profile.email,
               display_name: profile.display_name,
               preferred_username: profile.username,
             },

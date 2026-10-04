@@ -58,6 +58,26 @@ describe("share creation", () => {
     expect(tooLong.status).toBe(422)
   })
 
+  test("new tokens are 12 characters; old 7-character tokens still resolve", async () => {
+    const { token, fileId, userId } = await setup()
+    const res = await callJson(app, "/shares", {
+      method: "POST",
+      body: { file_id: fileId, expires_in: 3600 },
+      token,
+    })
+    expect(res.status).toBe(201)
+    expect(res.body.token).toHaveLength(12)
+
+    await db.execute(
+      from("shares").insert({
+        file_id: fileId, user_id: userId, token: "abc1234",
+        expires_at: raw("NOW() + INTERVAL '1 hour'"), burn_on_view: false,
+      }),
+    )
+    const legacy = await callJson(app, "/s/abc1234?meta=1")
+    expect(legacy.status).toBe(200)
+  })
+
   test("returns password_required + burn_on_view flags", async () => {
     const { token, fileId } = await setup()
     const res = await callJson(app, "/shares", {
@@ -144,6 +164,32 @@ describe("share viewer (meta + lifecycle)", () => {
       headers: { "x-share-password": "wrong" },
     })
     expect(wrongPw.status).toBe(401)
+  })
+
+  test("an infected file is not served through its share link", async () => {
+    const { token, fileId } = await setup()
+    const create = await callJson(app, "/shares", {
+      method: "POST", body: { file_id: fileId, expires_in: 3600 }, token,
+    })
+    await db.execute(from("files").where(q => q("id").equals(fileId)).update({ scan_status: "infected" }))
+    const res = await callJson(app, `/s/${create.body.token}`)
+    expect(res.status).toBe(403)
+  })
+
+  test("guessing tokens is cut off per IP, including for tokens that exist", async () => {
+    const { token, fileId } = await setup()
+    const create = await callJson(app, "/shares", {
+      method: "POST", body: { file_id: fileId, expires_in: 3600 }, token,
+    })
+    let last = 0
+    for (let i = 0; i < 31; i++) {
+      last = (await callJson(app, `/s/nope${i}`)).status
+    }
+    expect(last).toBe(429)
+    // Saturated: even a real token gets no answer from this IP now, so the
+    // status code cannot be used to tell hits from misses.
+    const real = await callJson(app, `/s/${create.body.token}?meta=1`)
+    expect(real.status).toBe(429)
   })
 
   test("burn_on_view atomic claim — only one non-owner viewer wins", async () => {

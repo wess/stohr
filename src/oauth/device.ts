@@ -4,6 +4,7 @@ import { get, json, parseForm, parseJson, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
+import { teamFor } from "../teams/request.ts"
 import {
   DEVICE_CODE_TTL_SECONDS,
   DEVICE_POLL_INTERVAL_SECONDS,
@@ -42,15 +43,23 @@ type DeviceCodeRow = {
 const findClient = async (db: Connection, clientId: string) =>
   (await db.one(from("oauth_clients").where(q => q("client_id").equals(clientId)))) as ClientRow | null
 
+// The user types this into a browser, so it has to be the team host the
+// device started on — the resolved team's configured url, never the raw Host
+// header. The request origin is the fallback for a bare router with no team
+// resolution in front of it.
 const buildVerificationUri = (req: Request): string => {
+  const base = teamFor(req).baseUrl
+  if (base) return `${base}/pair`
   const u = new URL(req.url)
   return `${u.protocol}//${u.host}/pair`
 }
 
 export const deviceAuthorizeRoutes = (db: Connection, secret: string) => {
   const parseBody = pipeline(parseJson, parseForm)
-  const guard = pipeline(requireAuth({ secret, db }))
-  const authed = pipeline(requireAuth({ secret, db }), parseJson)
+  // Approving a device code mints a grant for another client — first-party
+  // credentials only, same as the browser consent flow.
+  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }))
+  const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), parseJson)
 
   return [
     // Step 1 — desktop client calls this to start the flow.

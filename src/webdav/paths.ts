@@ -5,6 +5,12 @@ import { from } from "@atlas/db"
 // We resolve this to a tree-walked folder ID + optional file row by
 // looking up each segment by name (case-sensitive, since the underlying
 // schema is case-sensitive) under the user's owned folders.
+//
+// WebDAV is the personal tree only. Space folders carry their creator's
+// user_id, so every folder lookup also requires space_id IS NULL — otherwise
+// a space root would mount under its creator for as long as the row exists.
+// Files are only ever looked up under a resolved folder (or the root), so the
+// folder filter covers them.
 
 export type ResolvedFolder = { kind: "folder"; folderId: number | null; name: string }
 export type ResolvedFile = {
@@ -15,6 +21,8 @@ export type ResolvedFile = {
   storage_key: string
   mime: string
   size: number
+  version: number
+  scan_status: string
 }
 export type Resolved = ResolvedFolder | ResolvedFile
 
@@ -28,6 +36,7 @@ const findFolderByName = async (db: Connection, userId: number, parentId: number
   (await db.one(
     from("folders")
       .where(q => q("user_id").equals(userId))
+      .where(q => q("space_id").isNull())
       .where(q => q("deleted_at").isNull())
       .where(q => (parentId == null ? q("parent_id").isNull() : q("parent_id").equals(parentId)))
       .where(q => q("name").equals(name))
@@ -41,8 +50,16 @@ const findFileByName = async (db: Connection, userId: number, folderId: number |
       .where(q => q("deleted_at").isNull())
       .where(q => (folderId == null ? q("folder_id").isNull() : q("folder_id").equals(folderId)))
       .where(q => q("name").equals(name))
-      .select("id", "name", "storage_key", "mime", "size"),
-  )) as { id: number; name: string; storage_key: string; mime: string; size: number } | null
+      .select("id", "name", "storage_key", "mime", "size", "version", "scan_status"),
+  )) as {
+    id: number
+    name: string
+    storage_key: string
+    mime: string
+    size: number
+    version: number
+    scan_status: string
+  } | null
 
 // Resolves a WebDAV path to either a folder (existing or missing) or a
 // file. If `requireExisting` is false, returns the parent folder + name
@@ -86,6 +103,8 @@ export const resolvePath = async (
         storage_key: asFile.storage_key,
         mime: asFile.mime,
         size: Number(asFile.size),
+        version: asFile.version,
+        scan_status: asFile.scan_status,
       },
     }
   }
@@ -116,6 +135,7 @@ export const listChildren = async (
   const folders = (await db.all(
     from("folders")
       .where(q => q("user_id").equals(userId))
+      .where(q => q("space_id").isNull())
       .where(q => q("deleted_at").isNull())
       .where(q => (folderId == null ? q("parent_id").isNull() : q("parent_id").equals(folderId)))
       .select("id", "name", "created_at")

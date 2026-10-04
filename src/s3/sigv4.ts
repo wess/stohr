@@ -113,3 +113,20 @@ export const constantTimeEquals = (a: string, b: string): boolean => {
 }
 
 export const sha256OfBytes = (bytes: Uint8Array): string => sha256hex(bytes)
+
+// x-amz-date is ISO 8601 basic: 20260102T030405Z. Returns epoch ms, or null
+// when the header is not in that shape.
+export const parseAmzDate = (value: string): number | null => {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(value)
+  if (!m) return null
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6]))
+  return Number.isFinite(t) ? t : null
+}
+
+// AWS rejects requests whose signing time is more than 15 minutes off the
+// server clock; a captured request is otherwise replayable for as long as the
+// key lives.
+export const MAX_CLOCK_SKEW_MS = 15 * 60 * 1000
+
+export const UNSIGNED_PAYLOAD = "UNSIGNED-PAYLOAD"
+export const PAYLOAD_HASH_RE = /^[0-9a-f]{64}$/

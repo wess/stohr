@@ -169,6 +169,15 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
 .auth button { width: 100%; margin-top: 8px; }
 .auth .toggle { text-align: center; margin-top: 20px; color: var(--brand); cursor: pointer; font-size: 13px; }
 .auth .error { background: var(--err-bg); color: var(--err-fg); border: 1px solid var(--err-border); padding: 10px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; }
+/* the team slug on a tenant host's sign-in screen */
+.auth-team {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brand);
+  margin: -8px 0 8px;
+}
 
 /* Shell — macOS-inspired with Nord */
 .shell {
@@ -223,6 +232,26 @@ input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus {
   transition: opacity 0.15s, max-width 0.25s cubic-bezier(0.22, 1, 0.36, 1);
   max-width: 140px;
 }
+/* which team this host is, under the logo on tenant hosts */
+.sidebar-team {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 0 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.sidebar-team svg { flex-shrink: 0; color: var(--muted); }
+.sidebar-team .nav-label { text-overflow: ellipsis; }
+.shell.collapsed .sidebar-team { justify-content: center; padding: 8px 0; gap: 0; }
 .sidebar-toggle {
   background: transparent;
   border: 1px solid transparent;

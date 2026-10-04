@@ -48,11 +48,17 @@ RUN apk add --no-cache poppler-utils
 # NODE_ENV=production is mandatory: src/web/serve.ts only bundles the SPA
 # with the production React runtime when it's set, and src/server.ts
 # refuses to boot on the default SECRET outside development.
+#
+# TRUSTED_PROXIES=127.0.0.1: the API only sees the web process, which
+# connects over loopback and stamps X-Forwarded-For with the real peer.
+# Behind an edge proxy add its address too (TRUSTED_PROXIES=127.0.0.1,<edge>)
+# so the web process appends to the chain instead of replacing it.
 ENV NODE_ENV=production \
     PORT=3000 \
     WEB_PORT=3001 \
     API_URL=http://127.0.0.1:3000 \
-    STORAGE_LOCAL_DIR=/data/blobs
+    STORAGE_LOCAL_DIR=/data/blobs \
+    TRUSTED_PROXIES=127.0.0.1
 
 # OCI image metadata. org.opencontainers.image.source is what links the
 # published package back to the GitHub repo — GHCR uses it for repo

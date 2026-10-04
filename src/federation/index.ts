@@ -4,6 +4,7 @@ import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { logEvent } from "../security/audit.ts"
 import { requireSettingEnabled, SETTING_FEDERATION_ENABLED } from "../settings/index.ts"
+import { rootOnlyRoutes } from "../teams/guards.ts"
 import { generateSymmetricKey, sealForX25519 } from "./crypto.ts"
 import { mintInvite, parseInvite } from "./invites.ts"
 import { generateEd25519, getInstanceKeys, pubPemToRaw, randomToken } from "./keys.ts"
@@ -16,8 +17,17 @@ import {
   membersForFederation,
 } from "./membership.ts"
 import { callPair } from "./pairing.ts"
+import { checkPeerUrl } from "./urls.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
+
+const rawKeyOf = (pem: string): string | null => {
+  try {
+    return pubPemToRaw(pem)
+  } catch {
+    return null
+  }
+}
 
 const ALLOWED_TYPES = new Set(["content-sharing", "space-offering"])
 const slugRegex = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/
@@ -42,12 +52,14 @@ type AcceptBody = {
   display_name?: string
 }
 
+// Federation is an instance-level feature of the owner's own team: every
+// route here, in folders.ts, files.ts and pairing.ts is root-host only.
 export const federationRoutes = (db: Connection, secret: string, publicBaseUrl: string) => {
   const gate = requireSettingEnabled(db, SETTING_FEDERATION_ENABLED)
   const guard = pipeline(gate, requireAuth({ secret, db, noOAuth: true }))
   const authed = pipeline(gate, requireAuth({ secret, db, noOAuth: true }), parseJson)
 
-  return [
+  return rootOnlyRoutes([
     get(
       "/me/federations",
       guard(async c => {
@@ -290,11 +302,21 @@ export const federationRoutes = (db: Connection, secret: string, publicBaseUrl: 
         if ("error" in parsed) return json(c, 422, { error: parsed.error })
 
         // If we've already paired with this federation, refuse the duplicate.
+        // The invite verifies against the key embedded in its own header, so
+        // when a federation by this slug is already known the token has to be
+        // signed by the key we already trust for it — otherwise anyone could
+        // mint a lookalike invite and splice a second user onto the row.
         const existing = await federationBySlug(db, parsed.body.slug)
         if (existing) {
           const m = await localMemberFor(db, existing.id, userId)
           if (m) return json(c, 409, { error: "Already a member of this federation" })
+          if (parsed.header.kid !== rawKeyOf(existing.public_key)) {
+            return json(c, 409, { error: "Invite does not match the federation already known by this slug" })
+          }
         }
+
+        const introducerUrl = await checkPeerUrl(parsed.body.introducer)
+        if (!introducerUrl.ok) return json(c, 422, { error: `Invite introducer rejected: ${introducerUrl.error}` })
 
         const instanceKeys = await getInstanceKeys(db)
 
@@ -310,7 +332,23 @@ export const federationRoutes = (db: Connection, secret: string, publicBaseUrl: 
             body.display_name?.trim() || null,
           )
         } catch (err) {
-          return json(c, 502, { error: "Pairing handshake failed", detail: (err as Error).message })
+          console.error(`[federation] accept via ${parsed.body.introducer} failed:`, (err as Error).message)
+          return json(c, 502, { error: "Pairing handshake failed" })
+        }
+
+        // The introducer must hand back the federation identity that signed
+        // the invite, under the slug the invite named. Anything else is a
+        // different federation wearing this one's name.
+        const returnedKey = rawKeyOf(pairResponse.federation?.public_key ?? "")
+        if (!returnedKey || returnedKey !== parsed.header.kid || pairResponse.federation.slug !== parsed.body.slug) {
+          return json(c, 502, { error: "Introducer returned a federation that does not match the invite" })
+        }
+        if (existing && returnedKey !== rawKeyOf(existing.public_key)) {
+          return json(c, 409, { error: "Invite does not match the federation already known by this slug" })
+        }
+        const introducerBase = await checkPeerUrl(pairResponse.introducer?.peer_base_url ?? "")
+        if (!introducerBase.ok) {
+          return json(c, 502, { error: "Introducer advertised an unacceptable peer URL" })
         }
 
         // Persist the federation locally. If we already had a stub row from a
@@ -376,8 +414,11 @@ export const federationRoutes = (db: Connection, secret: string, publicBaseUrl: 
         })
 
         // Other members the introducer told us about. Best-effort, don't
-        // fail the accept if any individual insert hits a constraint.
-        for (const m of pairResponse.members) {
+        // fail the accept if any individual insert hits a constraint. A
+        // member whose URL fails the peer check is skipped — we would never
+        // be allowed to connect to it anyway.
+        for (const m of pairResponse.members ?? []) {
+          if (!m?.peer_pubkey || !(await checkPeerUrl(m.peer_base_url ?? "")).ok) continue
           try {
             await db.execute({
               text: `INSERT INTO federation_members
@@ -463,7 +504,7 @@ export const federationRoutes = (db: Connection, secret: string, publicBaseUrl: 
         })
       }),
     ),
-  ]
+  ])
 }
 
 export { generateEd25519, randomToken }

@@ -1,11 +1,13 @@
 import { createHmac } from "node:crypto"
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
+import { checkUrl, type SafeUrlOpts, safeFetch, type UrlCheck } from "../util/safeurl/index.ts"
 
 // Outbound webhook delivery. Fire-and-forget: we do not block the
 // triggering API response on the HTTP call to the user's endpoint.
-// Each delivery is recorded in `webhook_deliveries` so the SPA's
-// "Recent deliveries" view can surface failures.
+// Each delivery is recorded in `webhook_deliveries` (status + duration,
+// never the receiver's response) so the SPA's "Recent deliveries" view
+// can surface failures.
 //
 // Signing: when the webhook row has a `secret`, we send
 //   X-Stohr-Signature: sha256=<hmac>
@@ -27,6 +29,18 @@ type WebhookRow = {
 
 const DELIVERY_TIMEOUT_MS = 10_000
 
+// Webhook targets are user-supplied, so they get the SSRF guard. Plain http
+// stays allowed (the scheme isn't the risk, the address is); redirects are
+// not followed — point the hook at its final URL. WEBHOOKS_ALLOW_PRIVATE=true
+// is the homelab escape hatch for posting to a LAN service.
+export const webhookUrlOpts = (): SafeUrlOpts => ({
+  allowHttp: true,
+  allowPrivate: /^(1|true|yes)$/i.test((process.env.WEBHOOKS_ALLOW_PRIVATE ?? "").trim()),
+  maxRedirects: 0,
+})
+
+export const checkWebhookUrl = (raw: string): Promise<UrlCheck> => checkUrl(raw, webhookUrlOpts())
+
 export const sign = (secret: string, body: string): string =>
   `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`
 
@@ -46,7 +60,6 @@ const recordDelivery = (
   event: WebhookEvent,
   payloadStr: string,
   status: number | null,
-  responseBody: string | null,
   durationMs: number,
 ) => {
   void db
@@ -56,7 +69,6 @@ const recordDelivery = (
         event,
         payload: payloadStr,
         status_code: status,
-        response_body: responseBody,
         duration_ms: durationMs,
       }),
     )
@@ -78,17 +90,12 @@ const deliverOne = async (db: Connection, hook: WebhookRow, event: WebhookEvent,
   const timer = setTimeout(() => ctrl.abort(), DELIVERY_TIMEOUT_MS)
 
   try {
-    const res = await fetch(hook.url, {
-      method: "POST",
-      headers,
-      body,
-      signal: ctrl.signal,
-    })
-    const responseText = await res.text().catch(() => "")
-    recordDelivery(db, hook.id, event, body, res.status, responseText.slice(0, 4000), Date.now() - started)
+    const res = await safeFetch(hook.url, { method: "POST", headers, body, signal: ctrl.signal }, webhookUrlOpts())
+    await res.body?.cancel().catch(() => {})
+    recordDelivery(db, hook.id, event, body, res.status, Date.now() - started)
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    recordDelivery(db, hook.id, event, body, null, message.slice(0, 4000), Date.now() - started)
+    console.error(`[webhooks] delivery to hook ${hook.id} failed:`, err instanceof Error ? err.message : err)
+    recordDelivery(db, hook.id, event, body, null, Date.now() - started)
   } finally {
     clearTimeout(timer)
   }

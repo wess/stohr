@@ -50,6 +50,8 @@ Boot order matters: `SECRET` is validated **before** the DB connection and migra
 
 `SIGTERM`/`SIGINT` drain in-flight requests via `server.stop(false)` then close the pool, with a 15s forced-exit backstop. Both the API and `src/web/serve.ts` do this.
 
+**Teams (multi-tenancy, `docs/TEAMS.md`).** `withTeams(db, fetch, hosts)` wraps the router inside `withSecurityHeaders` and stashes the host's team on the `Request`; `teamFor(c.request)` reads it, `requireAuth` 401s any credential whose user is in another team, and `c.assigns.auth` carries `teamId` / `teamAdmin` / `isRoot`. With `ROOT_DOMAIN` unset everything is the root team (id 1). Anything that looks up *other* users must stay inside the caller's team — use `inTeam(column, teamId)`, `usersInTeamSql`, `sameTeam`, `userInTeam` from `src/teams/`. Absolute links go through `requestBaseUrl(c.request, appUrl)` (same host) or `teamBaseUrl(team, hosts)` (another team's host), never raw `APP_URL`. Anything that rebuilds a `Request` mid-pipeline must copy its expando props (see `limitBody`) or `clientIp()` and `teamFor()` go blind.
+
 Each feature lives at `src/<feature>/index.ts` (some span multiple files, e.g. `src/auth/*`, `src/oauth/*`) and exports a route-factory — `authRoutes`, `fileRoutes`, `oauthTokenRoutes`, `actionRoutes`, etc. Factory signatures **vary** by what the feature needs: most take `(db, secret)`, some also take `store`, `emailer`, `appUrl`, or a WebAuthn RP config object. Check `src/server.ts` for the exact wiring before adding a new module — write it in the same shape and wire it there.
 
 Handler convention:

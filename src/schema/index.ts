@@ -1,5 +1,18 @@
 import { column, defineSchema } from "@atlas/db"
 
+// A team is a hard tenant boundary reached on its own subdomain. Team 1 is
+// the root team: the owner's own team and the control plane for the rest.
+// quota_bytes NULL means unlimited. See docs/TEAMS.md.
+export const teams = defineSchema("teams", {
+  id: column.serial().primaryKey(),
+  slug: column.text().unique(),
+  name: column.text(),
+  quota_bytes: column.bigint().nullable(),
+  suspended_at: column.timestamp().nullable(),
+  deleted_at: column.timestamp().nullable(),
+  created_at: column.timestamp().default(new Date()),
+})
+
 export const users = defineSchema("users", {
   id: column.serial().primaryKey(),
   email: column.text().unique(),
@@ -7,6 +20,9 @@ export const users = defineSchema("users", {
   name: column.text(),
   password: column.text(),
   is_owner: column.boolean().default(false),
+  team_id: column.integer().default(1).ref("teams", "id"),
+  // manages the users, invites and audit log of their own team only
+  team_admin: column.boolean().default(false),
   // Per-user storage cap in bytes. 0 means unlimited; the owner sets caps
   // from Admin → Users. See src/usage/index.ts#checkQuota.
   storage_quota_bytes: column.bigint().default(0n),
@@ -29,6 +45,7 @@ export const rateLimits = defineSchema("rate_limits", {
 export const auditEvents = defineSchema("audit_events", {
   id: column.serial().primaryKey(),
   user_id: column.integer().nullable().ref("users", "id"),
+  team_id: column.integer().nullable().ref("teams", "id"),
   event: column.text(),
   metadata: column.text().nullable(),
   ip: column.text().nullable(),
@@ -125,6 +142,7 @@ export const invites = defineSchema("invites", {
   id: column.serial().primaryKey(),
   token_hash: column.text().unique(),
   email: column.text().nullable(),
+  team_id: column.integer().default(1).ref("teams", "id"),
   invited_by: column.integer().nullable().ref("users", "id"),
   used_at: column.timestamp().nullable(),
   used_by: column.integer().nullable().ref("users", "id"),
@@ -360,6 +378,12 @@ export const federationInvites = defineSchema("federation_invites", {
   created_at: column.timestamp().default(new Date()),
 })
 
+export const federationNonces = defineSchema("federation_nonces", {
+  peer_pubkey: column.text(),
+  nonce: column.text(),
+  seen_at: column.timestamp().default(new Date()),
+})
+
 export const federationBlobs = defineSchema("federation_blobs", {
   id: column.serial().primaryKey(),
   federation_id: column.integer().ref("federations", "id"),
@@ -558,7 +582,6 @@ export const webhookDeliveries = defineSchema("webhook_deliveries", {
   event: column.text(),
   payload: column.text(),
   status_code: column.integer().nullable(),
-  response_body: column.text().nullable(),
   duration_ms: column.integer(),
   created_at: column.timestamp().default(new Date()),
 })

@@ -21,20 +21,24 @@ All endpoints under `/api`. JSON in/out except where noted. Parameter names acce
   | 500 | unexpected server error |
 
 - **Rate limits**: see [SECURITY.md](../SECURITY.md#rate-limiting) for the per-bucket numbers. The 429 body always includes `retry_after`.
-- **OAuth scopes** (when calling with an OAuth access token): `read` / `write` / `share`. Tokens that lack the required scope return 403 with `error: "Insufficient scope — '<needed>' is required, token has [<granted>]"`.
+- **OAuth scopes** (when calling with an OAuth access token): `read` / `write` / `share`. The guard derives the scope a request needs: `GET` / `HEAD` need `read`, anything under `/shares` needs `share`, every other method needs `write`. Tokens that lack it return 403 with `error: "Insufficient scope — '<needed>' is required, token has [<granted>]"`. Session JWTs and PATs are not scope-checked.
 
 ## Auth
 
 | method | path | body | returns |
 | --- | --- | --- | --- |
-| `GET` | `/setup` | — | `{ needsSetup }` (true if zero users) |
+| `GET` | `/setup` | — | `{ needsSetup }` (true if zero users; always false on a team host) |
 | `POST` | `/signup` | `{ name, email, username, password, invite_token? }` | user + JWT |
 | `POST` | `/login` | `{ identity, password }` (identity = email or username) | user + JWT, or `{ mfa_required, mfa_token }` |
 | `POST` | `/login/mfa` | `{ mfa_token, code? \| backup_code? }` | user + JWT |
 
-The first user — `needsSetup === true` — bypasses `invite_token` and is flagged `is_owner: true`. Login returns a 5-minute MFA challenge JWT when the account has TOTP enabled; finish via `/login/mfa`.
+The first user — `needsSetup === true` — bypasses `invite_token` and is flagged `is_owner: true`. Login returns a 5-minute MFA challenge JWT when the account has TOTP enabled; finish via `/login/mfa`. The challenge is single-use (its `jti` is consumed on success) and is not a bearer credential — presenting it as `Authorization: Bearer` returns 401.
+
+Pending collaborator invites addressed to the signup email are attached to the new account only when `invite_token` was itself bound to that email (i.e. was mailed there); a typed-in address proves nothing.
 
 Login + signup are rate-limited per IP / per identity / per user (see [`SECURITY.md`](../SECURITY.md)).
+
+With `ROOT_DOMAIN` set ([TEAMS.md](TEAMS.md)), every route is served for the team the request host resolves to: an unknown subdomain is `404 {"error":"Unknown team"}`, a suspended team `403`. Login, MFA, password reset, passkey login and invites only match that team's users; a credential issued on one team's host is `401` on any other. Signup on a team host requires an invite for that team.
 
 ## Password reset
 
@@ -65,14 +69,14 @@ Server validates origin, RP ID, signature, and counter regression. Challenges li
 
 | method | path | body | returns |
 | --- | --- | --- | --- |
-| `GET` | `/me` | — | full user |
-| `PATCH` | `/me` | `{ name?, email?, username? }` | fresh user + new JWT (other sessions revoked) |
+| `GET` | `/me` | — | full user plus `team: { id, slug, name }`, `team_admin`, `is_root` |
+| `PATCH` | `/me` | `{ name?, email?, username?, discoverable?, current_password? }` | fresh user; `token` (new JWT) only for session callers when name/email/username changed (other sessions revoked) |
 | `POST` | `/me/password` | `{ current_password, new_password }` | `{ ok, revoked_other_sessions }` |
 | `DELETE` | `/me` | `{ password }` | account + files purged |
 | `GET` | `/users/search?q=` | — | up to 10 user matches (excludes self) |
 | `GET` | `/u/:username` | — | public user record |
 
-Password change and account deletion reject OAuth access tokens — only first-party (web/mobile JWT or PAT) callers allowed.
+Profile changes, password change and account deletion reject OAuth access tokens — only first-party (web/mobile JWT or PAT) callers allowed. Changing `email` or `username` requires `current_password` (422 without it, 401 if wrong; rate-limited 10 / 15 min per user). A PAT caller never receives a `token` — the browser sessions are revoked and the PAT keeps working.
 
 ## Sessions (auth required)
 
@@ -94,7 +98,7 @@ PATs and OAuth tokens cannot reach these routes — only first-party JWTs.
 | `POST` | `/me/mfa/disable` | `{ password, code }` | `{ ok }` |
 | `POST` | `/me/mfa/backup-codes` | `{ password }` | `{ backup_codes }` (regenerated; old set invalidated) |
 
-Enable/disable revokes every other session for the user.
+Enable/disable revokes every other session for the user. `disable` and `backup-codes` verify the password and are rate-limited (10 / 15 min per user) like `/me/password`.
 
 ## Personal access tokens (auth required)
 
@@ -216,11 +220,11 @@ If `identity` is an email and no user has it, the response includes `invite_toke
 | method | path | notes |
 | --- | --- | --- |
 | `GET` | `/invites` | invites the current user has minted (no plaintext token returned) |
-| `POST` | `/invites` | `{ email? }` — bind to an email or leave open. Response includes `token` once; copy immediately |
+| `POST` | `/invites` | `{ email? }` — bind to an email or leave open. Response includes `token` once; copy immediately. On a tenant host (`ROOT_DOMAIN` set, not the root team) only a `team_admin` may call this: 403 otherwise |
 | `DELETE` | `/invites/:id` | revoke if unused |
 | `GET` | `/invites/:token/check` | public — check if a token is valid |
 
-Tokens are stored as SHA-256 hashes; the plaintext is only ever returned in the response to the create call. List/admin views show metadata only.
+Tokens are stored as SHA-256 hashes; the plaintext is only ever returned in the response to the create call. List/admin views show metadata only. An invite is bound to the minter's team and redeems on that team's host only.
 
 ## Action folders
 
@@ -262,10 +266,10 @@ All `/admin/*` routes require `auth.is_owner === true`.
 
 | method | path | notes |
 | --- | --- | --- |
-| `GET` | `/admin/users` | all users + storage usage |
-| `POST` | `/admin/users/:id/owner` | toggle is_owner |
+| `GET` | `/admin/users` | all users (every team) + storage usage, `team_id`, `team_admin` |
+| `POST` | `/admin/users/:id/owner` | toggle is_owner (root team users only) |
 | `POST` | `/admin/users/:id/quota` | set a per-user storage cap in bytes (0 = unlimited) |
-| `DELETE` | `/admin/users/:id` | delete user (cascades) |
+| `DELETE` | `/admin/users/:id` | immediate hard delete: rows cascade, blobs and staged uploads are dropped (same path as `/team/users/:id`). 422 for yourself or a tenant team's last active admin |
 | `GET` | `/admin/invites?filter=` | system-wide invite list (`unused`/`used`/`all`) |
 | `DELETE` | `/admin/invites/:id` | revoke unused |
 | `GET` | `/admin/stats` | aggregate counts |
@@ -275,6 +279,40 @@ All `/admin/*` routes require `auth.is_owner === true`.
 | `PATCH` | `/admin/oauth/clients/:id` | edit name / redirect URIs / scopes / `is_official` |
 | `POST` | `/admin/oauth/clients/:id/rotate-secret` | issue a fresh `client_secret` |
 | `DELETE` | `/admin/oauth/clients/:id` | revoke (existing tokens stop working) |
+
+### Teams (owner only, root host)
+
+See [TEAMS.md](TEAMS.md). `quota_bytes` `null` or `0` means unlimited.
+
+| method | path | body | notes |
+| --- | --- | --- | --- |
+| `GET` | `/admin/teams?filter=live\|deleted\|all` | — | teams with `usage`, `user_count`, `base_url` |
+| `POST` | `/admin/teams` | `{ slug, name?, quota_bytes?, admin_email, admin_name?, admin_username? }` | creates the team + its first admin; returns `{ team, admin, set_password_url, emailed }`. 422 for a reserved/malformed slug or while `ROOT_DOMAIN` is unset, 409 for a taken slug or email |
+| `GET` | `/admin/teams/:id` | — | one team with stats |
+| `PATCH` | `/admin/teams/:id` | `{ name?, quota_bytes?, suspended? }` | root cannot be suspended |
+| `DELETE` | `/admin/teams/:id` | — | soft delete; purged with users, files and blobs after 24h |
+| `POST` | `/admin/teams/:id/restore` | — | undo inside the window |
+
+## Team admin (`team_admin`, own team's host)
+
+The owner-only user tools, pinned to the team the request host resolves to. The instance owner passes on the root host. A team admin cannot see users of other teams (404), cannot touch an owner, cannot set `is_owner`, and the last active admin of a team cannot be demoted, suspended or deleted.
+
+| method | path | body | notes |
+| --- | --- | --- | --- |
+| `GET` | `/team` | — | own team: `quota_bytes`, `usage`, `user_count`, `base_url` |
+| `GET` | `/team/users` | — | members + storage usage |
+| `POST` | `/team/users` | `{ email, name?, username?, password?, team_admin? }` | creates a member; without `password` returns `set_password_url` (one-time link on this host, also emailed). Shares the 30-per-15-min identity budget with `PATCH` |
+| `GET` | `/team/users/:id` | — | same shape as `/admin/users/:id` |
+| `PATCH` | `/team/users/:id` | `{ name?, email?, username?, team_admin? }` | email/username changes are limited to 30 per 15 min per admin (429); a 409 is logged as `admin.identity_conflict` |
+| `POST` | `/team/users/:id/suspend` | `{ reason? }` | revokes sessions |
+| `POST` | `/team/users/:id/unsuspend` | — | |
+| `POST` | `/team/users/:id/reset-password` | — | `{ emailed, reset_url }` as the admin route |
+| `POST` | `/team/users/:id/message` | `{ subject, body }` | system message |
+| `DELETE` | `/team/users/:id` | — | immediate hard delete, blobs dropped |
+| `GET` | `/team/invites?filter=` | — | this team's invites |
+| `POST` | `/team/invites` | `{ email? }` | invite bound to this team; token returned once |
+| `DELETE` | `/team/invites/:id` | — | revoke unused |
+| `GET` | `/team/audit?event=&user_id=&limit=` | — | this team's audit events; rows the instance owner logged against the team carry `actor: "Platform admin"` with `user_id`, `username`, `user_email`, `ip`, `user_agent` nulled |
 
 ## S3-compatible (sigv4 auth)
 

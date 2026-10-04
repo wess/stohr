@@ -2,8 +2,13 @@ import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
 import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
+import { teamFor } from "../teams/request.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
+
+// A space belongs to its owner's team, and so must every member. Membership
+// lookups carry the predicate so a stray cross-team row never grants access.
+const SPACE_IN_CALLER_TEAM = `(SELECT team_id FROM users WHERE id = s.owner_id) = (SELECT team_id FROM users WHERE id = $2)`
 
 type SpaceRole = "admin" | "editor" | "viewer"
 
@@ -54,12 +59,17 @@ const uniqueSlug = async (db: Connection, base: string): Promise<string> => {
 }
 
 export const spaceMembership = async (db: Connection, userId: number, spaceId: number): Promise<SpaceRole | null> => {
-  const row = (await db.one(
-    from("space_members")
-      .where(q => q("space_id").equals(spaceId))
-      .where(q => q("user_id").equals(userId))
-      .select("role"),
-  )) as { role: SpaceRole } | null
+  const row = (await db.one({
+    text: `
+      SELECT m.role
+        FROM space_members m
+        JOIN spaces s ON s.id = m.space_id
+       WHERE m.space_id = $1 AND m.user_id = $2
+         AND ${SPACE_IN_CALLER_TEAM}
+       LIMIT 1
+    `,
+    values: [spaceId, userId],
+  })) as { role: SpaceRole } | null
   return row?.role ?? null
 }
 
@@ -72,17 +82,17 @@ export const spaceRoleAsFolderRole = (role: SpaceRole): "owner" | "editor" | "vi
   return "viewer"
 }
 
-const listMembers = async (db: Connection, spaceId: number) => {
+const listMembers = async (db: Connection, spaceId: number, teamId: number) => {
   return db.execute({
     text: `
       SELECT m.id, m.space_id, m.user_id, m.role, m.added_at,
              u.username, u.name, u.email
         FROM space_members m
-        JOIN users u ON u.id = m.user_id
+        JOIN users u ON u.id = m.user_id AND u.team_id = $2
        WHERE m.space_id = $1
        ORDER BY m.added_at ASC
     `,
-    values: [spaceId],
+    values: [spaceId, teamId],
   }) as Promise<Array<MemberRow & { username: string; name: string; email: string }>>
 }
 
@@ -102,9 +112,10 @@ export const spaceRoutes = (db: Connection, secret: string) => {
             FROM spaces s
             JOIN space_members m ON m.space_id = s.id AND m.user_id = $1
            WHERE s.deleted_at IS NULL
+             AND ${SPACE_IN_CALLER_TEAM}
            ORDER BY s.created_at DESC
         `,
-          values: [userId],
+          values: [userId, userId],
         })) as Array<SpaceRow & { my_role: SpaceRole }>
         return json(c, 200, { spaces: rows })
       }),
@@ -174,6 +185,7 @@ export const spaceRoutes = (db: Connection, secret: string) => {
         const userId = authId(c)
         const id = Number(c.params.id)
         const role = await spaceMembership(db, userId, id)
+        if (!role) return json(c, 404, { error: "Space not found" })
         if (role !== "admin") return json(c, 403, { error: "Admin access required" })
 
         const body = c.body as { name?: string; description?: string | null }
@@ -202,6 +214,11 @@ export const spaceRoutes = (db: Connection, secret: string) => {
       guard(async c => {
         const userId = authId(c)
         const id = Number(c.params.id)
+        // membership first: a space the caller is not in does not exist for
+        // them, same as GET — the owner check alone turned a guessed id into
+        // a 403 that confirmed the space
+        const role = await spaceMembership(db, userId, id)
+        if (!role) return json(c, 404, { error: "Space not found" })
         const space = (await db.one(
           from("spaces")
             .where(q => q("id").equals(id))
@@ -210,17 +227,38 @@ export const spaceRoutes = (db: Connection, secret: string) => {
         if (!space) return json(c, 404, { error: "Space not found" })
         if (space.owner_id !== userId) return json(c, 403, { error: "Only the space owner can delete it" })
 
-        // Soft-delete the space and every folder rooted inside it. Files
-        // tag along via their folder. Hard-deletion can come later (mirror
+        // Soft-delete the space, every folder in it and every file in those
+        // folders. The walk follows parent_id rather than trusting space_id
+        // on every row, so descendants inserted before space_id was
+        // inherited are covered too. Hard-deletion can come later (mirror
         // of the user-account sweep).
         await db.execute(
           from("spaces")
             .where(q => q("id").equals(id))
             .update({ deleted_at: raw("NOW()") }),
         )
+        const tree = (await db.execute({
+          text: `
+            WITH RECURSIVE tree AS (
+              SELECT id, 0 AS depth FROM folders WHERE space_id = $1
+              UNION ALL
+              SELECT f.id, t.depth + 1 FROM folders f JOIN tree t ON f.parent_id = t.id WHERE t.depth < 64
+            )
+            SELECT DISTINCT id FROM tree
+          `,
+          values: [id],
+        })) as Array<{ id: number }>
+        const folderIds = tree.map(r => r.id).concat(-1)
         await db.execute(
           from("folders")
-            .where(q => q("space_id").equals(id))
+            .where(q => q("id").inList(folderIds))
+            .where(q => q("deleted_at").isNull())
+            .update({ deleted_at: raw("NOW()") }),
+        )
+        await db.execute(
+          from("files")
+            .where(q => q("folder_id").inList(folderIds))
+            .where(q => q("deleted_at").isNull())
             .update({ deleted_at: raw("NOW()") }),
         )
         return json(c, 200, { deleted: id })
@@ -234,7 +272,7 @@ export const spaceRoutes = (db: Connection, secret: string) => {
         const id = Number(c.params.id)
         const role = await spaceMembership(db, userId, id)
         if (!role) return json(c, 404, { error: "Space not found" })
-        const members = await listMembers(db, id)
+        const members = await listMembers(db, id, teamFor(c.request).team.id)
         return json(c, 200, {
           members: members.map(m => ({
             id: m.id,
@@ -252,6 +290,7 @@ export const spaceRoutes = (db: Connection, secret: string) => {
         const userId = authId(c)
         const id = Number(c.params.id)
         const role = await spaceMembership(db, userId, id)
+        if (!role) return json(c, 404, { error: "Space not found" })
         if (role !== "admin") return json(c, 403, { error: "Admin access required" })
 
         const body = c.body as {
@@ -271,24 +310,18 @@ export const spaceRoutes = (db: Connection, secret: string) => {
         const targetId = body.user_id ?? body.userId
         const username = body.username
         const email = body.email
+        // the caller is a member, so their team is the space's team; a user
+        // from any other team is not found, by id, username or email alike
+        const teamId = teamFor(c.request).team.id
+        const inTeam = from("users")
+          .where(q => q("team_id").equals(teamId))
+          .select("id", "username", "name", "email")
         if (targetId) {
-          target = (await db.one(
-            from("users")
-              .where(q => q("id").equals(targetId))
-              .select("id", "username", "name", "email"),
-          )) as Target | null
+          target = (await db.one(inTeam.where(q => q("id").equals(targetId)))) as Target | null
         } else if (username) {
-          target = (await db.one(
-            from("users")
-              .where(q => q("username").equals(username.toLowerCase()))
-              .select("id", "username", "name", "email"),
-          )) as Target | null
+          target = (await db.one(inTeam.where(q => q("username").equals(username.toLowerCase())))) as Target | null
         } else if (email) {
-          target = (await db.one(
-            from("users")
-              .where(q => q("email").equals(email.toLowerCase()))
-              .select("id", "username", "name", "email"),
-          )) as Target | null
+          target = (await db.one(inTeam.where(q => q("email").equals(email.toLowerCase())))) as Target | null
         } else {
           return json(c, 422, { error: "user_id, username, or email required" })
         }
@@ -331,6 +364,7 @@ export const spaceRoutes = (db: Connection, secret: string) => {
         const id = Number(c.params.id)
         const memberId = Number(c.params.memberId)
         const role = await spaceMembership(db, userId, id)
+        if (!role) return json(c, 404, { error: "Space not found" })
         if (role !== "admin") return json(c, 403, { error: "Admin access required" })
         const body = c.body as { role?: SpaceRole }
         if (!body.role || !VALID_ROLES.has(body.role)) {
@@ -368,6 +402,7 @@ export const spaceRoutes = (db: Connection, secret: string) => {
         const id = Number(c.params.id)
         const memberId = Number(c.params.memberId)
         const role = await spaceMembership(db, userId, id)
+        if (!role) return json(c, 404, { error: "Space not found" })
 
         const target = (await db.one(
           from("space_members")
@@ -430,7 +465,8 @@ export const spaceRoutes = (db: Connection, secret: string) => {
         const userId = authId(c)
         const id = Number(c.params.id)
         const role = await spaceMembership(db, userId, id)
-        if (!role || role === "viewer") return json(c, 403, { error: "Editor access required" })
+        if (!role) return json(c, 404, { error: "Space not found" })
+        if (role === "viewer") return json(c, 403, { error: "Editor access required" })
         const body = c.body as { name?: string }
         const name = body.name?.trim()
         if (!name) return json(c, 422, { error: "name required" })

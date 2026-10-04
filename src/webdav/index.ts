@@ -3,15 +3,34 @@ import { from } from "@atlas/db"
 import type { Conn, PipeFn, Route } from "@atlas/server"
 import { halt, pipeline, putHeader, setStatus, stream, text } from "@atlas/server"
 import { dropFederationBlob, fetchFederationBytes, isFederationKey } from "../federation/files.ts"
+import { clamdConfig } from "../scanning/index.ts"
 import { requireSettingEnabledBasic, SETTING_WEBDAV_ENABLED, webdavEnabled } from "../settings/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { drop, fetchObject, makeKey, put } from "../storage/index.ts"
+import { teamFor } from "../teams/request.ts"
+import { quotaAfterWrite, quotaMessage } from "../uploads/quota.ts"
+import type { QuotaDenied } from "../usage/index.ts"
+import { checkQuota, userQuota } from "../usage/index.ts"
 import { authenticateWebdav } from "./auth.ts"
+import type { ResolvedFile } from "./paths.ts"
 import { decodeSegments, listChildren, resolvePath } from "./paths.ts"
 import type { PropfindEntry } from "./xml.ts"
 import { renderLockResponse, renderMultistatus } from "./xml.ts"
 
 const WEBDAV_PREFIX = "/webdav"
+
+// Fresh bytes get a fresh verdict — see src/files/index.ts.
+const initialScanStatus = () => (clamdConfig() ? "pending" : "skipped")
+
+// WebDAV answers on the SPA's origin. The stored MIME is client-supplied, so a
+// text/html upload fetched through here would otherwise render as a page with
+// access to that origin's storage. Clients that mount a share ignore the
+// disposition; browsers honor it.
+const downloadHeaders = (c: Conn, f: ResolvedFile): Conn => {
+  let h = putHeader(c, "content-type", f.mime)
+  h = putHeader(h, "content-disposition", `attachment; filename="${encodeURIComponent(f.name)}"`)
+  return putHeader(h, "x-content-type-options", "nosniff")
+}
 
 // Custom helpers for WebDAV verbs not in the standard router exports.
 // Accept any PipeFn so the standard pipeline() wrappers slot in directly.
@@ -27,7 +46,7 @@ const webdavRoute = (method: string, pattern: string, handler: PipeFn): Route =>
 const requireBasic =
   (db: Connection) =>
   async (conn: Conn): Promise<Conn> => {
-    const auth = await authenticateWebdav(db, conn.request.headers.get("authorization"))
+    const auth = await authenticateWebdav(db, conn.request.headers.get("authorization"), teamFor(conn.request).team.id)
     if (!auth) {
       return halt(putHeader(conn, "www-authenticate", 'Basic realm="Stohr WebDAV"'), 401, { error: "Unauthorized" })
     }
@@ -35,6 +54,27 @@ const requireBasic =
   }
 
 const webdavUser = (c: Conn): { userId: number; email: string; username: string } => (c.assigns as any).webdav_user
+
+// 507 is the DAV status for a full store (RFC 4918 §11.5); the body says
+// which cap, the user's own or the team's.
+const quotaExceeded = (c: Conn, denied: QuotaDenied): Conn =>
+  halt(c, 507, {
+    error: quotaMessage(denied.scope),
+    scope: denied.scope,
+    quota_bytes: denied.quota_bytes,
+    used_bytes: denied.used_bytes,
+  })
+
+// the columns PUT touches on a replaced file, so an overflow can put them back
+type PriorVersion = {
+  mime: string
+  size: number
+  storage_key: string
+  version: number
+  scan_status: string
+  scan_signature: string | null
+  scanned_at: string | null
+}
 
 const pathFromConn = (c: Conn): string[] => {
   const url = new URL(c.request.url)
@@ -52,15 +92,29 @@ const collectSubtreeFolderIds = async (db: Connection, rootId: number): Promise<
   const rows = (await db.execute({
     text: `
       WITH RECURSIVE sub AS (
-        SELECT id FROM folders WHERE id = $1
+        SELECT id, 0 AS depth FROM folders WHERE id = $1
         UNION ALL
-        SELECT f.id FROM folders f JOIN sub s ON f.parent_id = s.id
+        SELECT f.id, s.depth + 1 FROM folders f JOIN sub s ON f.parent_id = s.id WHERE s.depth < 64
       )
       SELECT id FROM sub
     `,
     values: [rootId],
   })) as Array<{ id: number }>
   return rows.map(r => r.id)
+}
+
+// RFC 4918: the Destination's parent collection must already exist. Resolving
+// the full destination path alone can't tell "leaf missing" from "an
+// intermediate segment missing", and the latter used to land the resource
+// under whichever ancestor did resolve.
+const resolveDestination = async (
+  db: Connection,
+  userId: number,
+  destSegments: string[],
+): Promise<{ parentId: number | null } | null> => {
+  const parent = await resolvePath(db, userId, destSegments.slice(0, -1))
+  if (!parent.exists || parent.file) return null
+  return { parentId: parent.folderId }
 }
 
 export const webdavRoutes = (db: Connection, store: StorageHandle): Route[] => {
@@ -159,11 +213,12 @@ export const webdavRoutes = (db: Connection, store: StorageHandle): Route[] => {
         const resolved = await resolvePath(db, u.userId, segments)
         if (!resolved.file) return halt(c, 404, { error: "Not found" })
         const f = resolved.file
+        if (f.scan_status === "infected") return halt(c, 403, { error: "File failed malware scan" })
 
         if (isFederationKey(f.storage_key)) {
           const bytes = await fetchFederationBytes(db, store, f.storage_key)
           if (!bytes) return halt(c, 502, { error: "Federation blob unrecoverable" })
-          const headered = putHeader(putHeader(c, "content-type", f.mime), "content-length", String(bytes.length))
+          const headered = putHeader(downloadHeaders(c, f), "content-length", String(bytes.length))
           const rs = new ReadableStream<Uint8Array>({
             start(ctrl) {
               ctrl.enqueue(bytes)
@@ -175,7 +230,7 @@ export const webdavRoutes = (db: Connection, store: StorageHandle): Route[] => {
 
         const res = await fetchObject(store, f.storage_key)
         if (!res.body) return halt(c, 500, { error: "Storage returned empty body" })
-        const headered = putHeader(putHeader(c, "content-type", f.mime), "content-length", String(f.size))
+        const headered = putHeader(downloadHeaders(c, f), "content-length", String(f.size))
         return stream(headered, 200, res.body)
       }),
     ),
@@ -189,11 +244,7 @@ export const webdavRoutes = (db: Connection, store: StorageHandle): Route[] => {
         const resolved = await resolvePath(db, u.userId, segments)
         if (!resolved.exists) return halt(c, 404, { error: "Not found" })
         if (resolved.file) {
-          const headered = putHeader(
-            putHeader(c, "content-type", resolved.file.mime),
-            "content-length",
-            String(resolved.file.size),
-          )
+          const headered = putHeader(downloadHeaders(c, resolved.file), "content-length", String(resolved.file.size))
           return setStatus(headered, 200)
         }
         return setStatus(c, 200)
@@ -230,48 +281,99 @@ export const webdavRoutes = (db: Connection, store: StorageHandle): Route[] => {
           }
         }
 
+        // Same caps every other upload path enforces.
+        const quota = await userQuota(db, u.userId)
+        const quotaCheck = await checkQuota(db, u.userId, quota, bytes.length)
+        if (!quotaCheck.ok) return quotaExceeded(c, quotaCheck)
+
         const key = makeKey(u.userId, fileName)
         await put(store, key, bytes, mime)
 
+        // The pre-check raced with every other write since, so the row is
+        // written and usage re-read; `undo` puts things back on overflow.
+        let undo: () => Promise<void>
+        let status: number
         if (resolved.file) {
-          // Replace: archive the current version, update the row.
+          // Replace: archive the current version, update the row. The scan
+          // verdict goes with the old bytes.
+          const fileId = resolved.file.fileId
+          const prior = (await db.one(
+            from("files")
+              .where(q => q("id").equals(fileId))
+              .select("mime", "size", "storage_key", "version", "scan_status", "scan_signature", "scanned_at"),
+          )) as PriorVersion | null
+          if (!prior) return halt(c, 404, { error: "Not found" })
           await db.execute(
             from("file_versions").insert({
-              file_id: resolved.file.fileId,
-              version: 1,
-              mime: resolved.file.mime,
-              size: resolved.file.size,
-              storage_key: resolved.file.storage_key,
+              file_id: fileId,
+              version: prior.version,
+              mime: prior.mime,
+              size: prior.size,
+              storage_key: prior.storage_key,
               uploaded_by: u.userId,
             }),
           )
           await db.execute(
             from("files")
-              .where(q => q("id").equals(resolved.file!.fileId))
+              .where(q => q("id").equals(fileId))
               .update({
                 mime,
                 size: bytes.length,
                 storage_key: key,
+                version: prior.version + 1,
+                scan_status: initialScanStatus(),
+                scan_signature: null,
+                scanned_at: null,
               }),
           )
-          if (!isFederationKey(resolved.file.storage_key)) {
-            await drop(store, resolved.file.storage_key).catch(() => {})
+          status = 204
+          undo = async () => {
+            await db.execute(
+              from("file_versions")
+                .where(q => q("file_id").equals(fileId))
+                .where(q => q("version").equals(prior.version))
+                .del(),
+            )
+            await db.execute(
+              from("files")
+                .where(q => q("id").equals(fileId))
+                .update({ ...prior }),
+            )
+            await drop(store, key).catch(() => {})
           }
-          return setStatus(c, 204)
         } else {
-          await db.execute(
-            from("files").insert({
-              user_id: u.userId,
-              folder_id: folderId,
-              name: fileName,
-              mime,
-              size: bytes.length,
-              storage_key: key,
-              version: 1,
-            }),
-          )
-          return setStatus(c, 201)
+          const inserted = (await db.execute(
+            from("files")
+              .insert({
+                user_id: u.userId,
+                folder_id: folderId,
+                name: fileName,
+                mime,
+                size: bytes.length,
+                storage_key: key,
+                version: 1,
+                scan_status: initialScanStatus(),
+              })
+              .returning("id"),
+          )) as Array<{ id: number }>
+          const newId = inserted[0]!.id
+          status = 201
+          undo = async () => {
+            await db.execute(
+              from("files")
+                .where(q => q("id").equals(newId))
+                .del(),
+            )
+            await drop(store, key).catch(() => {})
+          }
         }
+
+        const over = await quotaAfterWrite(db, u.userId, quota, bytes.length)
+        if (over) {
+          await undo().catch(err => console.error("[webdav] quota rollback failed:", err))
+          return quotaExceeded(c, over)
+        }
+        return setStatus(c, status)
       }),
     ),
 
@@ -394,6 +496,8 @@ export const webdavRoutes = (db: Connection, store: StorageHandle): Route[] => {
         const src = await resolvePath(db, u.userId, segments)
         if (!src.exists && !src.file) return halt(c, 404, { error: "Source not found" })
 
+        const dstParent = await resolveDestination(db, u.userId, destSegments)
+        if (!dstParent) return halt(c, 409, { error: "Destination parent collection does not exist" })
         const dst = await resolvePath(db, u.userId, destSegments)
         const overwrite = (c.request.headers.get("overwrite") ?? "T").toUpperCase() !== "F"
         if (dst.exists && !overwrite) return halt(c, 412, { error: "Destination exists and Overwrite is F" })
@@ -411,23 +515,27 @@ export const webdavRoutes = (db: Connection, store: StorageHandle): Route[] => {
             else await drop(store, dst.file.storage_key).catch(() => {})
           }
           const newName = destSegments[destSegments.length - 1]!
-          const newFolderId = dst.parentId
           await db.execute(
             from("files")
               .where(q => q("id").equals(src.file!.fileId))
-              .update({ name: newName, folder_id: newFolderId }),
+              .update({ name: newName, folder_id: dstParent.parentId }),
           )
           return setStatus(c, dst.exists ? 204 : 201)
         }
 
-        // Folder move/rename. Disallow moving a folder into its own subtree.
+        // Folder move/rename. The new parent must not be the folder itself
+        // or anything below it. This compared against the destination's own
+        // id (null whenever the destination didn't exist yet), so MOVE /a to
+        // /a/c/a went through and left a.parent_id pointing into a's subtree.
         if (src.folderId == null) return halt(c, 403, { error: "Cannot move root" })
-        const subtreeIds = await collectSubtreeFolderIds(db, src.folderId)
-        if (dst.folderId != null && subtreeIds.includes(dst.folderId)) {
-          return halt(c, 409, { error: "Cannot move folder into its own subtree" })
+        const newParentId = dstParent.parentId
+        if (newParentId != null) {
+          const subtreeIds = await collectSubtreeFolderIds(db, src.folderId)
+          if (subtreeIds.includes(newParentId)) {
+            return halt(c, 409, { error: "Cannot move folder into its own subtree" })
+          }
         }
         const newName = destSegments[destSegments.length - 1]!
-        const newParentId = dst.parentId
         await db.execute(
           from("folders")
             .where(q => q("id").equals(src.folderId!))
@@ -460,9 +568,16 @@ export const webdavRoutes = (db: Connection, store: StorageHandle): Route[] => {
 
         const f = src.file
         const newName = destSegments[destSegments.length - 1]!
+        const dstParent = await resolveDestination(db, u.userId, destSegments)
+        if (!dstParent) return halt(c, 409, { error: "Destination parent collection does not exist" })
         const dst = await resolvePath(db, u.userId, destSegments)
         const overwrite = (c.request.headers.get("overwrite") ?? "T").toUpperCase() !== "F"
         if (dst.exists && !overwrite) return halt(c, 412, { error: "Destination exists" })
+
+        // A copy is a second full-size object; check before pulling the bytes.
+        const quota = await userQuota(db, u.userId)
+        const quotaCheck = await checkQuota(db, u.userId, quota, f.size)
+        if (!quotaCheck.ok) return quotaExceeded(c, quotaCheck)
 
         let bytes: Uint8Array
         if (isFederationKey(f.storage_key)) {
@@ -475,17 +590,34 @@ export const webdavRoutes = (db: Connection, store: StorageHandle): Route[] => {
         }
         const key = makeKey(u.userId, newName)
         await put(store, key, bytes, f.mime)
-        await db.execute(
-          from("files").insert({
-            user_id: u.userId,
-            folder_id: dst.parentId,
-            name: newName,
-            mime: f.mime,
-            size: bytes.length,
-            storage_key: key,
-            version: 1,
-          }),
-        )
+        const inserted = (await db.execute(
+          from("files")
+            .insert({
+              user_id: u.userId,
+              folder_id: dstParent.parentId,
+              name: newName,
+              mime: f.mime,
+              size: bytes.length,
+              storage_key: key,
+              version: 1,
+              scan_status: initialScanStatus(),
+            })
+            .returning("id"),
+        )) as Array<{ id: number }>
+
+        // same race as PUT: re-read after the row exists
+        const over = await quotaAfterWrite(db, u.userId, quota, bytes.length)
+        if (over) {
+          await db
+            .execute(
+              from("files")
+                .where(q => q("id").equals(inserted[0]!.id))
+                .del(),
+            )
+            .catch(err => console.error("[webdav] quota rollback failed:", err))
+          await drop(store, key).catch(() => {})
+          return quotaExceeded(c, over)
+        }
         return setStatus(c, dst.exists ? 204 : 201)
       }),
     ),

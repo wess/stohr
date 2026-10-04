@@ -42,6 +42,10 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       APP_URL: ${APP_URL:-http://localhost:3001}
+      # Multi-tenancy: <slug>.ROOT_DOMAIN is a team, ROOT_DOMAIN itself is
+      # the root team. Leave blank for a single-tenant instance. Must match
+      # DOMAIN below so caddy's wildcard block and the api agree.
+      ROOT_DOMAIN: ${ROOT_DOMAIN:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM: ${RESEND_FROM:-Stohr <onboarding@resend.dev>}
       RESEND_API_URL: ${RESEND_API_URL:-https://api.resend.com}
@@ -92,6 +96,9 @@ services:
       WEB_PORT: "3001"
       API_URL: http://api:3000
       IDLE_TIMEOUT: ${IDLE_TIMEOUT:-120}
+      # The SPA reads the tenant off the subdomain before sign-in, so the web
+      # process needs the same ROOT_DOMAIN the api resolves hosts with.
+      ROOT_DOMAIN: ${ROOT_DOMAIN:-}
     depends_on:
       - api
     restart: unless-stopped
@@ -118,6 +125,8 @@ services:
       - "443:443"
     environment:
       DOMAIN: ${DOMAIN}
+      # wildcard site block for team subdomains (on-demand tls, see caddyfile)
+      ROOT_DOMAIN: ${ROOT_DOMAIN:-}
     volumes:
       - ./caddyfile:/etc/caddy/Caddyfile:ro
       - caddydata:/data

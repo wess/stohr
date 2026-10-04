@@ -9,6 +9,7 @@ import { logEvent } from "../security/audit.ts"
 import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
 import { issueSession, revokeAllSessions } from "../security/sessions.ts"
 import type { StorageHandle } from "../storage/index.ts"
+import { requestBaseUrl, teamFor } from "../teams/request.ts"
 import { computeUsage } from "../usage/index.ts"
 import { isEmail, isValidUsername, normalizeUsername } from "../util/username.ts"
 
@@ -17,9 +18,9 @@ const authJti = (c: any): string | null => (c.assigns.auth as { jti?: string | n
 
 export const userRoutes = (db: Connection, secret: string, _store: StorageHandle, emailer: Emailer, appUrl: string) => {
   const guard = pipeline(requireAuth({ secret, db }))
-  const authed = pipeline(requireAuth({ secret, db }), parseJson)
-  // Routes that change credentials or destroy the account must reject OAuth
-  // access tokens — only first-party (web/mobile JWT or PAT) callers allowed.
+  // Routes that change identity or credentials, or destroy the account, must
+  // reject OAuth access tokens — only first-party (web/mobile JWT or PAT)
+  // callers allowed.
   const protectedAuthed = pipeline(requireAuth({ secret, db, noOAuth: true }), parseJson)
 
   return [
@@ -27,13 +28,19 @@ export const userRoutes = (db: Connection, secret: string, _store: StorageHandle
       "/me",
       guard(async c => {
         const userId = authId(c)
-        const user = await db.one(
+        const user = (await db.one(
           from("users")
             .where(q => q("id").equals(userId))
-            .select("id", "email", "username", "name", "is_owner", "discoverable", "created_at"),
-        )
+            .select("id", "email", "username", "name", "is_owner", "team_admin", "discoverable", "created_at"),
+        )) as Record<string, unknown> | null
         if (!user) return json(c, 404, { error: "User not found" })
-        return json(c, 200, user)
+        // requireAuth already proved the user belongs to the host's team
+        const { team, isRoot } = teamFor(c.request)
+        return json(c, 200, {
+          ...user,
+          team: { id: team.id, slug: team.slug, name: team.name },
+          is_root: isRoot,
+        })
       }),
     ),
 
@@ -60,15 +67,21 @@ export const userRoutes = (db: Connection, secret: string, _store: StorageHandle
       }),
     ),
 
+    // Email and username are the account's login identities, so changing
+    // them is a credential operation: first-party callers only, current
+    // password required, and the replacement JWT goes only to a session.
     patch(
       "/me",
-      authed(async c => {
+      protectedAuthed(async c => {
         const userId = authId(c)
+        const auth = c.assigns.auth as { via?: string }
         const body = c.body as {
           name?: string
           email?: string
           username?: string
           discoverable?: boolean
+          current_password?: string
+          currentPassword?: string
         }
         const name = body.name?.trim()
         const email = body.email?.trim().toLowerCase()
@@ -82,8 +95,37 @@ export const userRoutes = (db: Connection, secret: string, _store: StorageHandle
 
         const updates: Record<string, unknown> = {}
         if (name) updates.name = name
+        if (email && !isEmail(email)) return json(c, 422, { error: "Invalid email format" })
+        if (username && !isValidUsername(username)) {
+          return json(c, 422, { error: "Username must be 3-32 chars, lowercase letters, digits, and underscores" })
+        }
+        if (discoverable !== undefined) updates.discoverable = discoverable
+
+        if (email || username) {
+          const current = body.current_password ?? body.currentPassword
+          if (!current) return json(c, 422, { error: "current_password is required to change email or username" })
+
+          // Same throttle as /me/password — a stolen session gets a bounded
+          // number of guesses at the password that would let it take over
+          // the account's login identity. The password gate also sits in
+          // front of the uniqueness checks below: emails and usernames are
+          // unique across every team, so the 409 would otherwise tell any
+          // signed-in user whether an address exists on another tenant.
+          const rate = await checkRate(db, `profile:user:${userId}`, 10, 900)
+          if (!rate.ok) {
+            return json(c, 429, { error: "Too many attempts. Try again later.", retry_after: rate.retryAfterSeconds })
+          }
+          const row = (await db.one(
+            from("users")
+              .where(q => q("id").equals(userId))
+              .select("password"),
+          )) as { password: string } | null
+          if (!row) return json(c, 404, { error: "User not found" })
+          const ok = await verify(current, row.password).catch(() => false)
+          if (!ok) return json(c, 401, { error: "Current password is incorrect" })
+        }
+
         if (email) {
-          if (!isEmail(email)) return json(c, 422, { error: "Invalid email format" })
           const existing = (await db.one(
             from("users")
               .where(q => q("email").equals(email))
@@ -93,9 +135,6 @@ export const userRoutes = (db: Connection, secret: string, _store: StorageHandle
           updates.email = email
         }
         if (username) {
-          if (!isValidUsername(username)) {
-            return json(c, 422, { error: "Username must be 3-32 chars, lowercase letters, digits, and underscores" })
-          }
           const existing = (await db.one(
             from("users")
               .where(q => q("username").equals(username))
@@ -104,7 +143,6 @@ export const userRoutes = (db: Connection, secret: string, _store: StorageHandle
           if (existing && existing.id !== userId) return json(c, 409, { error: "Username already in use" })
           updates.username = username
         }
-        if (discoverable !== undefined) updates.discoverable = discoverable
 
         await db.execute(
           from("users")
@@ -126,9 +164,12 @@ export const userRoutes = (db: Connection, secret: string, _store: StorageHandle
           created_at: string
         }
 
-        // Identity changes (email/username) invalidate every session — the JWT
-        // payload carries those claims. A privacy-only toggle (discoverable)
-        // doesn't, so don't churn the user's tokens for it.
+        // Identity changes (email/username/name) invalidate every session —
+        // the JWT payload carries those claims. A privacy-only toggle
+        // (discoverable) doesn't, so don't churn the user's tokens for it.
+        // Only a session caller gets a replacement: a PAT has no session to
+        // replace, and handing one a JWT would upgrade it to a first-party
+        // login.
         const identityChanged = !!email || !!username || !!name
         const out: Record<string, unknown> = {
           id: fresh.id,
@@ -140,12 +181,16 @@ export const userRoutes = (db: Connection, secret: string, _store: StorageHandle
           created_at: fresh.created_at,
         }
         if (identityChanged) {
-          const sess = await issueSession(db, fresh, secret, {
-            ip: clientIp(c.request),
-            userAgent: userAgent(c.request),
-          })
-          await revokeAllSessions(db, userId, sess.jti)
-          out.token = sess.token
+          if (auth.via === "session") {
+            const sess = await issueSession(db, fresh, secret, {
+              ip: clientIp(c.request),
+              userAgent: userAgent(c.request),
+            })
+            await revokeAllSessions(db, userId, sess.jti)
+            out.token = sess.token
+          } else {
+            await revokeAllSessions(db, userId)
+          }
         }
         return json(c, 200, out)
       }),
@@ -240,8 +285,9 @@ export const userRoutes = (db: Connection, secret: string, _store: StorageHandle
 
         // Soft-delete: 24h grace window, plaintext cancel token emailed once.
         // The actual purge (DB rows + storage objects) happens on the periodic
-        // sweep after the grace window expires.
-        await scheduleDeletion(db, emailer, appUrl, user, {
+        // sweep after the grace window expires. The cancel link lands on the
+        // host the account lives on.
+        await scheduleDeletion(db, emailer, requestBaseUrl(c.request, appUrl), user, {
           ip: clientIp(c.request),
           userAgent: userAgent(c.request),
         })
@@ -267,10 +313,12 @@ export const userRoutes = (db: Connection, secret: string, _store: StorageHandle
         const pattern = `%${qParam.replace(/[%_]/g, m => `\\${m}`)}%`
         // Email is intentionally NOT searchable — substring queries on the
         // email column would let any authenticated user enumerate addresses
-        // (e.g. "@acme.com"). Username and display name are public-by-design.
+        // (e.g. "@acme.com"). Username and display name are public-by-design,
+        // inside the caller's team only.
         const rows = (await db.all(
           from("users")
             .where(q => q.or(q("username").ilike(pattern), q("name").ilike(pattern)))
+            .where(q => q("team_id").equals(teamFor(c.request).team.id))
             .where(q => q("deleted_at").isNull())
             .where(q => q("discoverable").equals(true))
             .select("id", "username", "name")
@@ -286,9 +334,11 @@ export const userRoutes = (db: Connection, secret: string, _store: StorageHandle
       guard(async c => {
         const userId = authId(c)
         const username = normalizeUsername(c.params.username)
+        // another team's user is not found, same as a nonexistent one
         const row = (await db.one(
           from("users")
             .where(q => q("username").equals(username))
+            .where(q => q("team_id").equals(teamFor(c.request).team.id))
             .select("id", "username", "name", "discoverable", "deleted_at"),
         )) as { id: number; username: string; name: string; discoverable: boolean; deleted_at: string | null } | null
         if (!row || row.deleted_at) return json(c, 404, { error: "User not found" })

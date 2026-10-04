@@ -2,6 +2,7 @@ import { SQL } from "bun"
 import type { Connection } from "@atlas/db"
 import { connect } from "@atlas/db"
 import { migrate } from "@atlas/migrate"
+import { clearTeamCache } from "../src/teams/resolve.ts"
 
 const ADMIN_URL = process.env.TEST_ADMIN_URL ?? "postgres://postgres:postgres@localhost:5432/postgres"
 const TEST_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/stohr_test"
@@ -54,6 +55,7 @@ const TABLES = [
   "instance_settings",
   "mcp_servers",
   "users",
+  "teams",
 ]
 
 export const truncateAll = async () => {
@@ -61,6 +63,14 @@ export const truncateAll = async () => {
     text: `TRUNCATE TABLE ${TABLES.join(", ")} RESTART IDENTITY CASCADE`,
     values: [],
   })
+  // the root team is seeded by the migration; put it back after the wipe
+  // (an explicit id does not advance the sequence, so bump it past 1)
+  await db.execute({
+    text: `INSERT INTO teams (id, slug, name) VALUES (1, 'root', 'Stohr');
+           SELECT setval(pg_get_serial_sequence('teams', 'id'), 1)`,
+    values: [],
+  })
+  clearTeamCache()
 }
 
 export const TEST_SECRET = "test-secret-do-not-use-in-prod"

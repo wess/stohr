@@ -1,7 +1,8 @@
 import { from } from "@atlas/db"
 import { canWrite, fileAccess, folderAccess } from "../../permissions/index.ts"
 import { drop, makeKey, put } from "../../storage/index.ts"
-import { checkQuota, computeUsage } from "../../usage/index.ts"
+import { quotaAfterWrite, quotaMessage } from "../../uploads/quota.ts"
+import { checkQuota } from "../../usage/index.ts"
 import { asError, asText, type Tool, type ToolContext } from "./index.ts"
 
 const archiveCurrent = async (
@@ -76,7 +77,7 @@ const writeFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const check = await checkQuota(ctx.db, ownerId, quota, incoming)
   if (!check.ok) {
     return asError(
-      `Storage quota exceeded (quota=${check.quota_bytes}, used=${check.used_bytes}, attempted=${check.attempted_bytes})`,
+      `${quotaMessage(check.scope)} (quota=${check.quota_bytes}, used=${check.used_bytes}, attempted=${check.attempted_bytes})`,
     )
   }
 
@@ -119,9 +120,14 @@ const writeFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
           thumb_key: string | null
         } | null)
 
+  // The pre-check raced with every other write since; the row is written,
+  // usage re-read, and `undo` puts things back on overflow. A replaced file
+  // gets its previous version back rather than being deleted outright.
   let fileId: number
   let isNew: boolean
+  let undo: () => Promise<void>
   if (existing) {
+    const snapshot = { ...existing }
     await archiveCurrent(ctx, existing, ctx.userId)
     const newVersion = existing.version + 1
     await ctx.db.execute(
@@ -129,9 +135,28 @@ const writeFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
         .where(q => q("id").equals(existing.id))
         .update({ mime, size: incoming, storage_key: key, thumb_key: null, version: newVersion }),
     )
-    if (existing.thumb_key) await Promise.allSettled([drop(ctx.store, existing.thumb_key)])
     fileId = existing.id
     isNew = false
+    undo = async () => {
+      await ctx.db.execute(
+        from("file_versions")
+          .where(q => q("file_id").equals(snapshot.id))
+          .where(q => q("version").equals(snapshot.version))
+          .del(),
+      )
+      await ctx.db.execute(
+        from("files")
+          .where(q => q("id").equals(snapshot.id))
+          .update({
+            mime: snapshot.mime,
+            size: snapshot.size,
+            storage_key: snapshot.storage_key,
+            thumb_key: snapshot.thumb_key,
+            version: snapshot.version,
+          }),
+      )
+      await Promise.allSettled([drop(ctx.store, key)])
+    }
   } else {
     const rows = (await ctx.db.execute(
       from("files")
@@ -149,20 +174,23 @@ const writeFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
     )) as Array<{ id: number }>
     fileId = rows[0]!.id
     isNew = true
-  }
-
-  if (quota > 0) {
-    const finalUsage = await computeUsage(ctx.db, ownerId)
-    if (finalUsage.total > quota) {
+    undo = async () => {
       await ctx.db.execute(
         from("files")
           .where(q => q("id").equals(fileId))
           .del(),
       )
       await Promise.allSettled([drop(ctx.store, key)])
-      return asError("Storage quota exceeded after upload — change rolled back")
     }
   }
+
+  const over = await quotaAfterWrite(ctx.db, ownerId, quota, incoming)
+  if (over) {
+    await undo().catch(err => console.error("[mcp] quota rollback failed:", err))
+    return asError(`${quotaMessage(over.scope)} after upload — change rolled back`)
+  }
+  // only now is the old thumbnail unreferenced for good
+  if (existing?.thumb_key) await Promise.allSettled([drop(ctx.store, existing.thumb_key)])
 
   const fresh = await ctx.db.one(
     from("files")

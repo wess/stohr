@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { securityHeaders } from "../security/headers.ts"
+import { isTrustedProxy, normalizeIp } from "../security/proxies.ts"
 
 const API = process.env.API_URL ?? "http://localhost:3000"
 const PORT = Number(process.env.WEB_PORT ?? 3001)
@@ -46,7 +47,26 @@ await buildSpa()
 // execute the module, and falls back to a "do you want to download this"
 // prompt for the bundle file. Strip the attribute so Safari treats them
 // as ordinary same-origin loads.
-const indexHtml = (await Bun.file(join(DIST, "index.html")).text()).replace(/ crossorigin(?=[\s>])/g, "")
+// Before anyone is signed in the SPA can only tell which tenant it is on
+// from the subdomain, and for that it needs ROOT_DOMAIN (login copy, hiding
+// the root-only entry points). Stamped into the document rather than
+// fetched: it is fixed for the life of the process.
+const ROOT_DOMAIN = (process.env.ROOT_DOMAIN ?? "").trim().toLowerCase()
+const stampRootDomain = (html: string): string => {
+  if (!ROOT_DOMAIN) return html
+  const safe = ROOT_DOMAIN.replace(/[&<>"]/g, "")
+  return html.replace(/<head([^>]*)>/i, `<head$1>\n  <meta name="stohr-root-domain" content="${safe}">`)
+}
+
+// Bun.build writes asset urls relative to index.html (`./chunk-x.js`). The
+// document is served for every SPA path, so on a hard load of a nested
+// route like /app/admin/teams the browser resolved that to
+// /app/admin/chunk-x.js, got a 404 and showed a blank page. Root them.
+const absoluteAssets = (html: string): string => html.replace(/\b(src|href)="\.\//g, '$1="/')
+
+const indexHtml = stampRootDomain(
+  absoluteAssets((await Bun.file(join(DIST, "index.html")).text()).replace(/ crossorigin(?=[\s>])/g, "")),
+)
 
 // The theme-init snippet in index.html must run before first paint, so it
 // stays inline. Hash whatever is actually in the shipped HTML and allowlist
@@ -97,7 +117,45 @@ const looksLikeAsset = (path: string): boolean => {
   return last.includes(".")
 }
 
-const proxy = async (req: Request, target: string): Promise<Response> => {
+// Headers that describe this hop rather than the request (RFC 7230 §6.1), plus
+// Host, which fetch() sets for the upstream itself.
+const HOP_HEADERS = [
+  "host",
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]
+
+// The API only believes X-Forwarded-For when the request comes from a
+// TRUSTED_PROXIES address — in the single-container image that is us, over
+// loopback — so what we send has to be the truth: the socket peer, appended
+// to the inbound chain only when that peer is itself a proxy we trust.
+// Otherwise the inbound header is whatever the client typed, and X-Real-IP
+// goes with it.
+const upstreamHeaders = (req: Request, peer: string | null): Headers => {
+  const headers = new Headers(req.headers)
+  for (const h of HOP_HEADERS) headers.delete(h)
+  // The API picks the tenant from the host the browser asked for. fetch()
+  // rewrites Host to the upstream, so it travels in X-Forwarded-Host — always
+  // our own value, never one the client sent, since the API trusts it from us.
+  headers.set("x-forwarded-host", req.headers.get("host") ?? new URL(req.url).host)
+  const inbound = headers.get("x-forwarded-for")
+  const peerTrusted = peer !== null && isTrustedProxy(peer)
+  if (peer === null) {
+    headers.delete("x-forwarded-for")
+  } else {
+    headers.set("x-forwarded-for", inbound && peerTrusted ? `${inbound}, ${peer}` : peer)
+  }
+  if (!peerTrusted) headers.delete("x-real-ip")
+  return headers
+}
+
+const proxy = async (req: Request, target: string, peer: string | null): Promise<Response> => {
   // redirect: "manual" so 3xx from the API is forwarded to the browser rather
   // than followed server-side. The SSO login route returns a 302 to Castle's
   // /oauth/authorize — following it here would hand the browser Castle's page
@@ -105,7 +163,7 @@ const proxy = async (req: Request, target: string): Promise<Response> => {
   try {
     const res = await fetch(target, {
       method: req.method,
-      headers: req.headers,
+      headers: upstreamHeaders(req, peer),
       body: req.body,
       redirect: "manual",
     })
@@ -130,11 +188,25 @@ const server = Bun.serve({
   // upload or download is never cut off. 0 meant a stalled peer could hold a
   // connection open indefinitely.
   idleTimeout: Number(process.env.IDLE_TIMEOUT ?? 120),
-  async fetch(req) {
+  async fetch(req, server) {
     const url = new URL(req.url)
+    const peerAddr = server.requestIP(req)?.address
+    const peer = peerAddr ? normalizeIp(peerAddr) : null
+
+    // /internal/* on the API (the on-demand TLS allow-list) is for the edge
+    // alone, which asks the API port directly. It is never proxied: through
+    // here it would arrive from a peer the API trusts and answer anyone.
+    if (url.pathname === "/api/internal" || url.pathname.startsWith("/api/internal/")) {
+      return withSecurity(
+        new Response(JSON.stringify({ error: "Not found" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+    }
 
     if (url.pathname.startsWith("/api/")) {
-      return proxy(req, `${API}${url.pathname.replace("/api", "")}${url.search}`)
+      return proxy(req, `${API}${url.pathname.replace("/api", "")}${url.search}`, peer)
     }
 
     // WebDAV pass-through. OS-level WebDAV clients (Finder, Explorer) connect
@@ -143,7 +215,7 @@ const server = Bun.serve({
     // Authorization off the request, so we forward headers verbatim. Methods
     // include PROPFIND, MKCOL, MOVE, COPY in addition to GET/PUT/DELETE.
     if (url.pathname === "/webdav" || url.pathname.startsWith("/webdav/")) {
-      return proxy(req, `${API}${url.pathname}${url.search}`)
+      return proxy(req, `${API}${url.pathname}${url.search}`, peer)
     }
 
     // S3-compatible API pass-through. S3 SDKs / rclone / s3cmd connect to the
@@ -151,7 +223,7 @@ const server = Bun.serve({
     // SigV4 handler reads the Authorization + x-amz-* headers verbatim, so we
     // forward as-is (no /api strip). Same shape as the WebDAV pass-through.
     if (url.pathname === "/s3" || url.pathname.startsWith("/s3/")) {
-      return proxy(req, `${API}${url.pathname}${url.search}`)
+      return proxy(req, `${API}${url.pathname}${url.search}`, peer)
     }
 
     // Castle SSO browser pass-through. The OIDC browser routes (login /
@@ -161,7 +233,7 @@ const server = Bun.serve({
     // Without this /auth/sso/login falls through to index.html and the OIDC
     // redirect never starts.
     if (url.pathname === "/auth" || url.pathname.startsWith("/auth/")) {
-      return proxy(req, `${API}${url.pathname}${url.search}`)
+      return proxy(req, `${API}${url.pathname}${url.search}`, peer)
     }
 
     const asset = await serveAsset(url.pathname)

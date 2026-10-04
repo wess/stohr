@@ -3,6 +3,7 @@ import { from, raw } from "@atlas/db"
 import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { ownerOnly } from "../security/owner.ts"
+import { rootOnly } from "../teams/guards.ts"
 import { type RemoteServer, remoteInitialize, remoteListTools } from "./client.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -53,8 +54,9 @@ const isHttpUrl = (s: string): boolean => {
 
 export const mcpServerRoutes = (db: Connection, secret: string) => {
   const ownerCheck = ownerOnly(db)
-  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck)
-  const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)
+  // outbound servers are instance configuration: root host only
+  const guard = pipeline(rootOnly, requireAuth({ secret, db, noOAuth: true }), ownerCheck)
+  const authed = pipeline(rootOnly, requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)
 
   return [
     get(

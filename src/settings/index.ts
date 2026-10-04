@@ -4,11 +4,13 @@ import type { Conn } from "@atlas/server"
 import { get, halt, json, parseJson, patch, pipeline } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { ownerOnly } from "../security/owner.ts"
+import { rootOnly } from "../teams/guards.ts"
 
 // Owner-controlled feature toggles. Stored as JSON-encoded strings so the
 // same table can hold booleans, ints, or small objects. Routes that gate on
 // a setting do so at request time (not at boot) so the owner can flip
-// toggles in the admin UI without restarting the API.
+// toggles in the admin UI without restarting the API. The toggles are
+// instance-wide — they apply on every team host but are managed from root.
 
 export const SETTING_WEBDAV_ENABLED = "webdav_enabled"
 export const SETTING_FEDERATION_ENABLED = "federation_enabled"
@@ -126,8 +128,8 @@ export const requireSettingEnabledBasic =
 
 export const adminSettingsRoutes = (db: Connection, secret: string) => {
   const ownerCheck = ownerOnly(db)
-  const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck)
-  const authed = pipeline(requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)
+  const guard = pipeline(rootOnly, requireAuth({ secret, db, noOAuth: true }), ownerCheck)
+  const authed = pipeline(rootOnly, requireAuth({ secret, db, noOAuth: true }), ownerCheck, parseJson)
 
   return [
     get(

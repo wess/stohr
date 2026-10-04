@@ -5,10 +5,13 @@ import { get, halt, json, pipeline, putHeader } from "@atlas/server"
 import { logEvent } from "../../security/audit.ts"
 import { clientIp, userAgent } from "../../security/ratelimit.ts"
 import { issueSession } from "../../security/sessions.ts"
+import { rootOnly } from "../../teams/guards.ts"
+import { teamFor } from "../../teams/request.ts"
 import { randomToken } from "../../util/token.ts"
 import { upsertFromExternal } from "../external.ts"
 import { fetchDiscovery } from "../oidc/discovery.ts"
 import { verifyIdToken } from "../oidc/jwks.ts"
+import { safeRedirectPath } from "../redirect.ts"
 import { configFor, enabledProviders, type SocialProvider, type SocialProviderConfig } from "./config.ts"
 import { exchangeGithubCode, fetchGithubProfile, githubAuthorizeUrl } from "./github.ts"
 
@@ -44,9 +47,6 @@ const renderRedirect = (c: Conn, toUrl: string, token: string): Conn => {
   const url = `${toUrl}#token=${encodeURIComponent(token)}`
   return putHeader(halt(c, 302, ""), "location", url)
 }
-
-const safeRedirect = (requested: string | null): string =>
-  requested?.startsWith("/") && !requested.startsWith("//") ? requested : "/"
 
 // Encode the originating provider into the stored state's nonce slot so the
 // callback can tell google/github apart without a second column.
@@ -91,7 +91,13 @@ const finishLogin = async (
   db: Connection,
   secret: string,
   cfg: SocialProviderConfig,
-  profile: { subject: string; email: string | null; display_name: string | null; preferred_username: string | null },
+  profile: {
+    subject: string
+    email: string | null
+    email_verified: boolean
+    display_name: string | null
+    preferred_username: string | null
+  },
   redirectTo: string,
 ): Promise<Conn> => {
   let user: Awaited<ReturnType<typeof upsertFromExternal>>["user"]
@@ -102,6 +108,7 @@ const finishLogin = async (
         provider: cfg.provider,
         subject: profile.subject,
         email: profile.email?.toLowerCase() ?? null,
+        email_verified: profile.email_verified,
         display_name: profile.display_name,
         preferred_username: profile.preferred_username,
       },
@@ -150,7 +157,7 @@ const googleStart =
     const codeVerifier = randomToken(48)
     const codeChallenge = await sha256B64u(codeVerifier)
     const url = new URL(c.request.url)
-    const redirect = safeRedirect(url.searchParams.get("redirect_to"))
+    const redirect = safeRedirectPath(url.searchParams.get("redirect_to"), appUrl)
     await insertState(db, state, "google", codeVerifier, redirect)
 
     const params = new URLSearchParams({
@@ -235,10 +242,11 @@ const googleCallback =
       {
         subject: claims.sub,
         email: (claims.email as string | undefined) ?? null,
+        email_verified: claims.email_verified === true,
         display_name: (claims.name as string | undefined) ?? null,
         preferred_username: (claims.preferred_username as string | undefined) ?? null,
       },
-      stateRow.redirect_to ?? "/",
+      safeRedirectPath(stateRow.redirect_to, appUrl),
     )
   }
 
@@ -252,7 +260,7 @@ const githubStart =
 
     const state = randomToken(24)
     const url = new URL(c.request.url)
-    const redirect = safeRedirect(url.searchParams.get("redirect_to"))
+    const redirect = safeRedirectPath(url.searchParams.get("redirect_to"), appUrl)
     // GitHub has no PKCE; we still persist a state row to bind the callback.
     await insertState(db, state, "github", "", redirect)
 
@@ -302,18 +310,21 @@ const githubCallback =
       return renderError(c, (err as Error).message)
     }
 
-    return finishLogin(c, db, secret, cfg, profile, stateRow.redirect_to ?? "/")
+    return finishLogin(c, db, secret, cfg, profile, safeRedirectPath(stateRow.redirect_to, appUrl))
   }
 
 export const socialRoutes = (db: Connection, opts: { secret: string; appUrl: string }) => {
-  const pre = pipeline()
+  // external login is a root-team surface; tenant hosts have no such routes
+  const pre = pipeline(rootOnly)
   const { secret, appUrl } = opts
 
   return [
     // Lets the SPA render only the buttons for providers whose env is set.
     get("/auth/social/providers", async c =>
       json(c, 200, {
-        providers: enabledProviders().map(p => ({ provider: p.provider, label: p.label })),
+        providers: teamFor(c.request).isRoot
+          ? enabledProviders().map(p => ({ provider: p.provider, label: p.label }))
+          : [],
       }),
     ),
 

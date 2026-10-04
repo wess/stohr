@@ -133,7 +133,9 @@ For disk-backed storage instead of S3, swap the `S3_*` vars for a mounted volume
   -e STORAGE_DRIVER=local -v stohr-blobs:/data/blobs \
 ```
 
-`NODE_ENV=production`, `PORT`, `WEB_PORT`, `API_URL`, and `STORAGE_LOCAL_DIR` are already baked into the image — you don't pass them. Put a reverse proxy (Caddy, nginx, your PaaS edge) in front for TLS, point it at `:3001`, and set `TRUSTED_PROXIES` to that proxy's address so `X-Forwarded-For` is honored. The container ships a `HEALTHCHECK` that hits `GET /api/setup` through the web proxy.
+`NODE_ENV=production`, `PORT`, `WEB_PORT`, `API_URL`, `STORAGE_LOCAL_DIR`, and `TRUSTED_PROXIES=127.0.0.1` are already baked into the image — you don't pass them. Inside the container the API only ever sees the web process, which connects over loopback and sets `X-Forwarded-For` to the real socket peer, so rate-limit buckets and audit logs get the client address without any extra configuration when the container is exposed directly.
+
+Put a reverse proxy (Caddy, nginx, your PaaS edge) in front for TLS and point it at `:3001`. Then **add the edge to the list** — `-e TRUSTED_PROXIES=127.0.0.1,<edge address or CIDR>` — so the web process appends the edge's `X-Forwarded-For` chain instead of replacing it with the edge's own address. Without that every client collapses onto the edge's IP and one abusive user locks everyone out. The API walks the chain from the right, skipping trusted hops, and takes the first address it doesn't trust; what the client itself put in the header is never used. The container ships a `HEALTHCHECK` that hits `GET /api/setup` through the web proxy.
 
 Update by rebuilding and recreating:
 
@@ -170,6 +172,23 @@ docker compose logs -f api
 
 The `caddyfile` shipped in the repo reads `{$DOMAIN}` and proxies to `web:3001`. Caddy auto-provisions Let's Encrypt for that domain.
 
+## Teams (multi-tenant) at the edge
+
+Each team is reached on its own subdomain (`acme.your.tld`), so the edge needs two things beyond the single-tenant setup — see [TEAMS.md](TEAMS.md) for the model.
+
+1. **Wildcard DNS.** Add `*.your.tld` (A/AAAA, or a CNAME to the apex) pointing at the host, next to the `your.tld` record.
+2. **On-demand TLS.** Set `ROOT_DOMAIN=your.tld` (same value as `DOMAIN`) in `.env`. The shipped `caddyfile` has a second site block, `*.{$ROOT_DOMAIN}`, with `tls { on_demand }` and a global `on_demand_tls { ask http://api:3000/internal/tls/allow }`. Caddy issues one certificate per team host on its first visit, and only after the API answers `200` for that name — `ROOT_DOMAIN` itself and live team slugs; anything else (including reserved labels such as `root.your.tld`) is `404` and gets no certificate, so stray names pointed at your box cannot exhaust Let's Encrypt rate limits. The API answers the ask only for loopback or `TRUSTED_PROXIES` peers, at most 60 asks a minute per peer; in compose Caddy is on the bridge, which `TRUSTED_PROXIES=172.16.0.0/12` covers.
+
+   The ask goes to the api container directly, never through the web proxy: both Caddy site blocks answer `/api/internal/*` with `404`, and the web process refuses that prefix too, so the allow-list is unreachable from the public hostname. Keep it that way if you edit the `caddyfile`.
+
+Then `docker compose up -d --force-recreate api caddy`. Create the first team from the root host (`POST /admin/teams` as the owner); the response carries a one-time set-password link on the new team's host for its first admin.
+
+No wildcard certificate is involved — DNS-challenge credentials are not needed. If you front Stohr with something other than Caddy, terminate TLS for `*.your.tld` however that proxy does it and make sure it forwards the original `Host` (the web proxy turns it into `X-Forwarded-Host` for the API).
+
+**Single container.** The image publishes only `:3001` (the web process), and that process refuses `/api/internal/*`, so an edge doing on-demand TLS must ask the API port itself: publish it to the edge only (for example `-p 127.0.0.1:3000:3000`, or on the docker network the edge shares), point the ask at `http://<api>:3000/internal/tls/allow`, and list the edge's address in `TRUSTED_PROXIES` (`127.0.0.1,<edge>`). Never publish `:3000` to the internet.
+
+Passkeys: leave `RP_ID` unset so it defaults to `ROOT_DOMAIN`; a credential registered on one team host then verifies against that team's origin.
+
 ## Troubleshooting
 
 **The API exits immediately with `FATAL: SECRET is set to its default value`.**
@@ -185,7 +204,10 @@ The Postgres role needs `CREATE` on the database (managed Postgres providers usu
 `TRUSTED_PROXIES` isn't set, so the API treats Caddy/web's container IP as the client and collapses every bucket onto that one IP. Set `TRUSTED_PROXIES=172.16.0.0/12` in `.env` and recreate the api container.
 
 **Passkey registration fails with "Invalid origin".**
-`RP_ID` / `RP_ORIGIN` don't match your actual domain, or you're on HTTP (browsers refuse passkeys over plain HTTP). Make sure `RP_ORIGIN=https://your.tld` and `RP_ID=your.tld` (no protocol, no port).
+`RP_ID` / `RP_ORIGIN` don't match your actual domain, or you're on HTTP (browsers refuse passkeys over plain HTTP). Make sure `RP_ORIGIN=https://your.tld` and `RP_ID=your.tld` (no protocol, no port). With teams, `RP_ID` must be `ROOT_DOMAIN` (the default when unset).
+
+**A team subdomain returns `404 {"error":"Unknown team"}` or Caddy won't issue its certificate.**
+The API does not know the slug: the team was deleted, the name has more than one label under `ROOT_DOMAIN`, it is a reserved label (`root`, `www`, `api`, ...), or `ROOT_DOMAIN` is not set on the api container. For the certificate specifically, Caddy asked `http://api:3000/internal/tls/allow` and got a `404` (unknown name), `403` (the API did not trust the asking peer — check `TRUSTED_PROXIES` covers the docker bridge) or `429` (more than 60 asks a minute from that peer; wait it out). `docker compose logs caddy` shows the ask result. An ask pointed at `web:3001/api/internal/...` is always `404`: the web proxy does not forward that prefix.
 
 ## Updates
 

@@ -2,11 +2,15 @@ import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 import { json, parseJson, pipeline, post } from "@atlas/server"
 import { requireSettingEnabled, SETTING_FEDERATION_ENABLED } from "../settings/index.ts"
+import { rootOnlyRoutes } from "../teams/guards.ts"
+import { limitBody } from "../util/limitbody/index.ts"
+import { safeFetch } from "../util/safeurl/index.ts"
 import { aesGcmDecrypt, openSealedX25519, sealForX25519 } from "./crypto.ts"
 import { markInviteUsed, mintInvite, parseInvite } from "./invites.ts"
 import { getInstanceKeys } from "./keys.ts"
 import { federationById, federationBySlug, fedPublicKeyRaw, remoteMembersForFederation } from "./membership.ts"
 import { peerFetch } from "./transport.ts"
+import { checkPeerUrl, peerUrlOpts } from "./urls.ts"
 
 // Body of the inbound /federation/pair request from a joining instance.
 type PairRequest = {
@@ -55,9 +59,9 @@ type PairResponse = {
 // signature (Ed25519 by federation key, verified inline) is the only thing
 // authenticating the request.
 export const pairingReceiverRoutes = (db: Connection, publicBaseUrl: string) => {
-  const open = pipeline(requireSettingEnabled(db, SETTING_FEDERATION_ENABLED), parseJson)
+  const open = pipeline(requireSettingEnabled(db, SETTING_FEDERATION_ENABLED), limitBody(), parseJson)
 
-  return [
+  return rootOnlyRoutes([
     post(
       "/federation/pair",
       open(async c => {
@@ -68,6 +72,11 @@ export const pairingReceiverRoutes = (db: Connection, publicBaseUrl: string) => 
 
         const parsed = parseInvite(body.invite)
         if ("error" in parsed) return json(c, 422, { error: parsed.error })
+
+        // we will connect to this URL for every blob push; refuse before the
+        // invite is burned so a typo doesn't cost the joiner their token
+        const peerUrl = await checkPeerUrl(body.peer_base_url)
+        if (!peerUrl.ok) return json(c, 422, { error: `peer_base_url rejected: ${peerUrl.error}` })
 
         const fed = await federationById(db, parsed.body.fed_id)
         if (!fed) return json(c, 404, { error: "Federation not found on this introducer" })
@@ -170,7 +179,7 @@ export const pairingReceiverRoutes = (db: Connection, publicBaseUrl: string) => 
         return json(c, 200, response)
       }),
     ),
-  ]
+  ])
 }
 
 // Client-side: this instance accepting an invite token. Returns the pairing
@@ -191,14 +200,20 @@ export const callPair = async (
     peer_base_url: peerBaseUrl,
     display_name: displayName ?? undefined,
   }
-  const res = await fetch(`${trimmed}/federation/pair`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  })
+  const res = await safeFetch(
+    `${trimmed}/federation/pair`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    peerUrlOpts(),
+  )
   if (!res.ok) {
-    const errBody = await res.text()
-    throw new Error(`Pairing failed (${res.status}): ${errBody}`)
+    // the introducer's body stays in our log; the caller gets the status only
+    const errBody = await res.text().catch(() => "")
+    console.error(`[federation] pairing with ${trimmed} failed (${res.status}): ${errBody.slice(0, 500)}`)
+    throw new Error(`Pairing failed (${res.status})`)
   }
   return (await res.json()) as PairResponse
 }

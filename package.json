@@ -1,6 +1,6 @@
 {
   "name": "stohr",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "type": "module",
   "private": true,
   "scripts": {
@@ -19,24 +19,24 @@
     "connect": "bun scripts/connect.ts"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.10",
+    "@biomejs/biome": "^2.5.15",
+    "@types/bun": "latest",
     "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "@types/bun": "latest"
+    "@types/react-dom": "latest"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^13.3.0",
-    "@simplewebauthn/server": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.3",
     "@types/qrcode": "^1.5.6",
-    "atlas": "github:wess/atlas#v0.3.0",
-    "ldapts": "^7.2.1",
-    "lucide-react": "^0.468.0",
+    "atlas": "github:wess/atlas#v0.3.2",
+    "ldapts": "^9.2.0",
+    "lucide-react": "^1.50.0",
     "qrcode": "^1.5.4",
-    "react": "^19",
-    "react-dom": "^19",
-    "sharp": "^0.34.5"
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "sharp": "^0.35.5"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^5.9.3"
   }
 }

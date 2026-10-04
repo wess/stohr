@@ -6,7 +6,7 @@ Stohr is an OAuth 2.0 provider supporting the **Authorization Code flow with PKC
 
 ## Endpoints
 
-Discoverable at `/.well-known/oauth-authorization-server` (RFC 8414):
+Discoverable at `/.well-known/oauth-authorization-server` (RFC 8414). The `issuer` and every endpoint URL there are built from the instance's `APP_URL`, not from the request's `Host` header:
 
 | Endpoint                              | Purpose                                       |
 |---------------------------------------|-----------------------------------------------|
@@ -24,14 +24,16 @@ Discoverable at `/.well-known/oauth-authorization-server` (RFC 8414):
 | `write` | Create / modify / delete folders and files              |
 | `share` | Create and revoke public share links                    |
 
-Routes that **mint further credentials** (PATs, MFA setup, OAuth client registration, password change, account deletion) are *not* accessible via OAuth tokens — only via the user's own JWT or a PAT.
+Scopes are flat (no scope implies another) and enforced on every request made with an access token. The required scope is derived from the request unless a route declares its own: `GET` / `HEAD` → `read`; anything under `/shares` → `share`; every other method → `write`. A token without the scope gets `403 { error: "Insufficient scope — '<needed>' is required, token has [...]" }`. `POST /mcp` needs `read` to connect, and each MCP tool then needs the scope of its category (`read`, `write` for write and delete tools, `share`) — tools the token can't call are left out of `tools/list`.
+
+Routes that **mint further credentials or change identity** (PATs, MFA setup, OAuth client registration, the `/oauth/authorize/*` and `/oauth/device/*` consent endpoints, profile email/username/name, password change, account deletion) are *not* accessible via OAuth tokens — only via the user's own JWT or a PAT.
 
 ## Client registration
 
 The Stohr operator (the owner) registers your app under **Settings → Developer → OAuth applications**.
 
 - **Name**: shown on the consent screen.
-- **Redirect URIs**: exact-match list. For desktop apps use a custom scheme: `butter://oauth/callback`. For SPAs use a localhost URL during dev: `http://localhost:5173/callback`.
+- **Redirect URIs**: exact-match list. For desktop apps use a custom scheme: `butter://oauth/callback`. For SPAs use a localhost URL during dev: `http://localhost:5173/callback`. `javascript:`, `data:`, `vbscript:`, `file:`, `blob:` and `about:` are refused, as is any URI with a fragment.
 - **Scopes**: the maximum scopes the client can ever ask for. The user can grant a subset.
 - **First-party** (`is_official: true`): skips the consent screen — only flag this for apps the operator owns.
 - **Public client**: default. Issues no `client_secret` — relies on PKCE for proof-of-possession. Required for native/SPA apps; storing a secret in compiled binaries or browser bundles is meaningless.
