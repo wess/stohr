@@ -75,8 +75,10 @@ COPY --chown=bun:bun package.json bun.lock tsconfig.json ./
 COPY --chown=bun:bun migrations/ ./migrations/
 COPY --chown=bun:bun src/ ./src/
 # `bun run connect` mints an S3 connection token from inside the container
-# (docs/S3.md). The rest of scripts/ is deploy tooling and stays out.
+# (docs/S3.md) and team.ts to provision client teams from the box
+# (docs/TEAMS.md). The rest of scripts/ is deploy tooling and stays out.
 COPY --chown=bun:bun scripts/connect.ts ./scripts/connect.ts
+COPY --chown=bun:bun scripts/team.ts ./scripts/team.ts
 
 # Blob store for STORAGE_DRIVER=local — mount a volume here to persist it
 # (`-v stohr-blobs:/data/blobs`). Unused/empty when STORAGE_DRIVER=s3.
