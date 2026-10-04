@@ -5,12 +5,19 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - 2026-10-04
+
+### Fixed
+
+- `.dockerignore` now lets `scripts/team.ts` into the build context; 0.9.2 could
+  not build without it.
+
 ## [0.9.2] - 2026-10-04
 
 ### Fixed
 
-- The image ships `scripts/team.ts`, so client teams can be provisioned with
-  `docker exec` on the box.
+- The image ships `scripts/team.ts` (the Dockerfile copy and the `.dockerignore`
+  allowlist), so client teams can be provisioned with `docker exec` on the box.
 
 ## [0.9.1] - 2026-10-04
 

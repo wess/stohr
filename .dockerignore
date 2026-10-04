@@ -26,6 +26,7 @@ apps/
 # connect script ships.
 scripts/*
 !scripts/connect.ts
+!scripts/team.ts
 biome.json
 
 # Deploy / tooling files (not part of the app)
