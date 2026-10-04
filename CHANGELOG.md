@@ -5,6 +5,15 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-10-04
+
+### Fixed
+
+- Passkeys on team hosts: the WebAuthn RP ID is now chosen per host. Hosts
+  covered by `RP_ID` keep it, so passkeys already registered there still work,
+  and team hosts use `ROOT_DOMAIN`. A single fixed RP ID could never match a
+  team subdomain.
+
 ## [0.9.0] - 2026-10-02
 
 ### Added

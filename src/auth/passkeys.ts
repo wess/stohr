@@ -18,9 +18,19 @@ import { requireAuth } from "./guard.ts"
 // every team host, so one passkey ceremony works on any subdomain. The
 // origin is checked against the host the request resolved to, which
 // withTeams already limited to the root domain and live team subdomains.
-export type RpConfig = { rpId: string; rpName: string; rpOrigin: string }
+export type RpConfig = { rpId: string; rpName: string; rpOrigin: string; rootDomain?: string }
 
 const expectedOrigin = (req: Request, rp: RpConfig): string => requestBaseUrl(req, rp.rpOrigin)
+
+// the configured rpId wins on the hosts it covers (app.stohr.io keeps the
+// passkeys already registered there); team hosts fall back to ROOT_DOMAIN
+export const rpIdFor = (req: Request, rp: RpConfig): string => {
+  if (!rp.rootDomain || rp.rootDomain === rp.rpId) return rp.rpId
+  const host = new URL(expectedOrigin(req, rp)).hostname
+  const under = (d: string) => host === d || host.endsWith(`.${d}`)
+  if (under(rp.rpId)) return rp.rpId
+  return under(rp.rootDomain) ? rp.rootDomain : rp.rpId
+}
 
 type CredentialRow = {
   id: number
@@ -139,7 +149,7 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
 
         const options = await generateRegistrationOptions({
           rpName: rp.rpName,
-          rpID: rp.rpId,
+          rpID: rpIdFor(c.request, rp),
           userID: userIdToHandle(auth.id),
           userName: auth.email || auth.username,
           userDisplayName: auth.name || auth.username,
@@ -186,7 +196,7 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
             response,
             expectedChallenge: challenge,
             expectedOrigin: expectedOrigin(c.request, rp),
-            expectedRPID: rp.rpId,
+            expectedRPID: rpIdFor(c.request, rp),
             requireUserVerification: false,
           })
         } catch (e) {
@@ -308,7 +318,7 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
       "/login/passkey/discover/start",
       open(async c => {
         const options = await generateAuthenticationOptions({
-          rpID: rp.rpId,
+          rpID: rpIdFor(c.request, rp),
           userVerification: "preferred",
           // No allowCredentials → browser handles credential discovery
         })
@@ -355,7 +365,7 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
             response,
             expectedChallenge: challenge,
             expectedOrigin: expectedOrigin(c.request, rp),
-            expectedRPID: rp.rpId,
+            expectedRPID: rpIdFor(c.request, rp),
             credential: {
               id: cred.credential_id,
               publicKey: b64ToBytes(cred.public_key),

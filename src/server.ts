@@ -213,7 +213,7 @@ const baseFetch = router(
   ...authRoutes(db, config.secret),
   ...passwordRoutes(db, emailer, config.appUrl),
   ...mfaRoutes(db, config.secret),
-  ...passkeyRoutes(db, config.secret, { rpId, rpName: config.rpName, rpOrigin: config.rpOrigin }),
+  ...passkeyRoutes(db, config.secret, { rpId, rpName: config.rpName, rpOrigin: config.rpOrigin, rootDomain: hosts.rootDomain || undefined }),
   ...sessionRoutes(db, config.secret),
   ...oidcRoutes(db, config.secret, config.appUrl),
   ...socialRoutes(db, { secret: config.secret, appUrl: config.appUrl }),
