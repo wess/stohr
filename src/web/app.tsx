@@ -26,7 +26,9 @@ import {
   HelpCircle,
   Inbox,
   KeyRound,
+  LayoutGrid,
   Link2,
+  List,
   Mail,
   Menu,
   MessageSquare,
@@ -1247,6 +1249,12 @@ const Files: React.FC<{
   const [currentOwner, setCurrentOwner] = useState<{ id: number; username: string; name: string } | null>(null)
   const [currentKind, setCurrentKind] = useState<string>("standard")
   const [currentIsPublic, setCurrentIsPublic] = useState<boolean>(false)
+  const [preferredView, setPreferredView] = useState<"grid" | "list" | "gallery" | null>(() => {
+    const saved = localStorage.getItem("stohr_file_view")
+    return saved === "grid" || saved === "list" || saved === "gallery" ? saved : null
+  })
+  const view = preferredView ?? (currentKind === "photos" || currentKind === "screenshots" ? "gallery" : "grid")
+  const mediaFiles = files.filter(f => f.mime.startsWith("image/") || f.mime.startsWith("video/"))
   const [showFolderSettings, setShowFolderSettings] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState("")
@@ -1779,7 +1787,30 @@ const Files: React.FC<{
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
       >
-        <div className="path-bar">{pathCrumbs}</div>
+        <div className="path-bar">
+          {pathCrumbs}
+          <div className="view-switch" role="group" aria-label="File view">
+            {(
+              [
+                { value: "grid", label: "Grid", icon: LayoutGrid },
+                { value: "list", label: "List", icon: List },
+                { value: "gallery", label: "Gallery", icon: FileImage },
+              ] as const
+            ).map(option => (
+              <button
+                type="button"
+                key={option.value}
+                aria-pressed={view === option.value}
+                onClick={() => {
+                  setPreferredView(option.value)
+                  localStorage.setItem("stohr_file_view", option.value)
+                }}
+              >
+                <option.icon size={15} /> {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
         {operationError && !creatingFolder && !renaming && (
           <div className="msg err" role="alert">
             {operationError}
@@ -1851,7 +1882,7 @@ const Files: React.FC<{
               </div>
             )}
 
-            <div className="grid">
+            <div className={view === "list" ? "file-list" : "grid"}>
               {folders.map(f => {
                 const key = `fo-${f.id}`
                 const sel = selected.has(key)
@@ -1903,15 +1934,16 @@ const Files: React.FC<{
                     <div className="name" title={f.name}>
                       {f.name}
                     </div>
+                    {view === "list" && <div className="file-date">{new Date(f.created_at).toLocaleDateString()}</div>}
                     <div className="meta">
                       {f.kind === "photos" ? "Photos" : f.kind === "screenshots" ? "Screenshots" : "Folder"}
                     </div>
                   </article>
                 )
               })}
-              {currentKind !== "photos" &&
-                currentKind !== "screenshots" &&
-                files.map(f => {
+              {files
+                .filter(f => view !== "gallery" || (!f.mime.startsWith("image/") && !f.mime.startsWith("video/")))
+                .map(f => {
                   const key = `fi-${f.id}`
                   const sel = selected.has(key)
                   return (
@@ -1953,6 +1985,9 @@ const Files: React.FC<{
                       <div className="name" title={f.name}>
                         {f.name}
                       </div>
+                      {view === "list" && (
+                        <div className="file-date">{new Date(f.created_at).toLocaleDateString()}</div>
+                      )}
                       <div className="meta">
                         {formatBytes(f.size)}
                         {f.version > 1 && <span className="badge">v{f.version}</span>}
@@ -1962,13 +1997,20 @@ const Files: React.FC<{
                 })}
             </div>
 
-            {(currentKind === "photos" || currentKind === "screenshots") && (
-              <PhotosGallery
-                files={files}
-                thumbUrl={(id, version) => `/api/files/${id}/thumb?v=${version}`}
-                fullUrl={id => `${api.downloadUrl(id)}?inline=1`}
-                authHeader
-              />
+            {view === "gallery" && mediaFiles.length > 0 && (
+              <section className="gallery-section" aria-label="Images and videos">
+                <h3 className="page-title">Images and videos</h3>
+                <PhotosGallery
+                  files={mediaFiles}
+                  thumbUrl={(id, version) => `/api/files/${id}/thumb?v=${version}`}
+                  fullUrl={id => `${api.downloadUrl(id)}?inline=1`}
+                  authHeader
+                />
+              </section>
+            )}
+
+            {view === "gallery" && mediaFiles.length === 0 && (folders.length > 0 || files.length > 0) && (
+              <p className="field-help">No images or videos in this folder. Your other files are shown above.</p>
             )}
 
             {(moreFiles || moreFolders) && (
@@ -3683,7 +3725,8 @@ const PhotosGallery: React.FC<{
             aria-label={`Preview ${p.name}`}
             onClick={() => setActive(i)}
           >
-            <AuthedImage src={thumbUrl(p.id, p.version)} alt={p.name} useAuth={!!authHeader} />
+            <AuthedImage src={thumbUrl(p.id, p.version)} alt="" useAuth={!!authHeader} />
+            <span className="gallery-name">{p.name}</span>
           </button>
         ))}
       </div>

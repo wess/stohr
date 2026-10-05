@@ -3758,3 +3758,27 @@ dialog::backdrop { background: transparent; }
 }
 .card .thumb .thumb-wrap { position: relative; width: 100%; height: 100%; display: grid; place-items: center; }
 .card:not(.image-card) .thumb { height: 72px; margin-bottom: 10px; border-radius: 4px; overflow: hidden; }
+
+.path-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.view-switch { display: inline-flex; padding: 3px; gap: 2px; background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.view-switch button { display: inline-flex; align-items: center; gap: 6px; border: 0; box-shadow: none; background: transparent; color: var(--muted); padding: 7px 10px; }
+.view-switch button[aria-pressed="true"] { background: var(--brand); color: var(--brand-fg); }
+.file-list { display: flex; flex-direction: column; gap: 6px; }
+.file-list .card { display: grid; grid-template-columns: 40px minmax(0, 1fr) 100px 120px; gap: 14px; align-items: center; padding: 12px 50px; }
+.file-list .card:hover { transform: none; }
+.file-list .card .icon, .file-list .card:not(.image-card) .thumb { grid-column: 1; grid-row: 1; margin: 0; height: 40px; }
+.file-list .name { grid-column: 2; grid-row: 1; }
+.file-list .card .meta { grid-column: 3; grid-row: 1; margin: 0; }
+.file-list .file-date { grid-column: 4; grid-row: 1; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.file-list .card .check { top: 50%; left: 3px; transform: translateY(-50%); opacity: 1; width: 40px; height: 40px; justify-content: center; }
+.file-list .kebab { top: 50%; transform: translateY(-50%); }
+@media (max-width: 768px) {
+  .view-switch button { min-height: 40px; }
+  .file-list .card { grid-template-columns: 28px minmax(0, 1fr) 52px; gap: 8px; padding: 12px 44px; }
+  .file-list .file-date { display: none; }
+  .file-list .card .icon svg { width: 24px; }
+  .file-list .card .meta { font-size: 11px; }
+}
+.gallery-section { margin-top: 24px; }
+.gallery-section .page-title { margin-bottom: 12px; }
+.gallery-name { position: absolute; bottom: 0; left: 0; right: 0; padding: 8px 10px; background: var(--panel-elev); color: var(--text); border-top: 1px solid var(--border); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
