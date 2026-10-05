@@ -10451,7 +10451,163 @@ const TeamOverview: React.FC = () => {
           </div>
         </div>
       </section>
+      {team.id !== 1 && <TeamDomainSettings />}
     </>
+  )
+}
+
+const TeamDomainSettings: React.FC = () => {
+  const [state, setState] = useState<api.TeamDomain | null>(null)
+  const [domain, setDomain] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const data = await api.getTeamDomain()
+        if (cancelled) return
+        if (data.error) setError(data.error)
+        else {
+          setState(data)
+          setDomain(data.domain ?? "")
+        }
+      } catch {
+        if (!cancelled) setError("Could not load domain settings. Reload to try again.")
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const act = async (run: () => Promise<api.TeamDomain>, removing = false) => {
+    setBusy(true)
+    setError("")
+    try {
+      const data = await run()
+      if (data.error) {
+        setError(data.error)
+        return
+      }
+      const oldDomain = state?.domain
+      const fallback = state?.default_url
+      setState({ ...data, enabled: state?.enabled })
+      setDomain(data.domain ?? "")
+      if (removing && oldDomain === window.location.hostname && fallback) {
+        window.location.assign(`${fallback}/app/team/overview`)
+      }
+    } catch {
+      setError("Could not update the domain. Try again.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="settings-card" style={{ marginTop: 16 }}>
+      <h3>Custom domain</h3>
+      <p className="sub-status" style={{ textTransform: "none" }}>
+        Use your own address for this team. Your Stohr address stays available.
+      </p>
+      {error && (
+        <div className="msg err" role="alert">
+          {error}
+        </div>
+      )}
+      {!state ? (
+        <p>{error ? "" : "Loading domain settings…"}</p>
+      ) : !state.enabled ? (
+        <p>Custom domains are unavailable on this instance.</p>
+      ) : (
+        <>
+          <label htmlFor="team-domain">Domain</label>
+          <input
+            id="team-domain"
+            value={domain}
+            placeholder="files.yourcompany.com"
+            disabled={busy || !!state.domain}
+            onChange={e => setDomain(e.target.value)}
+            autoCapitalize="none"
+            spellCheck={false}
+            style={{ width: "100%", margin: "8px 0 12px" }}
+          />
+          {!state.domain ? (
+            <button
+              type="button"
+              className="primary"
+              disabled={busy || !domain.trim()}
+              onClick={() => act(() => api.setTeamDomain(domain))}
+            >
+              {busy ? "Saving…" : "Add domain"}
+            </button>
+          ) : (
+            <>
+              <p role="status">
+                {state.verified
+                  ? "Ownership verified. HTTPS is issued on the first visit once DNS points here."
+                  : "Waiting for DNS verification."}
+              </p>
+              <p className="sub-status" style={{ textTransform: "none" }}>
+                Add these records with your DNS provider. For a root domain, use A/AAAA records pointing to this server
+                instead of CNAME.
+              </p>
+              <div style={{ overflowX: "auto" }}>
+                <table className="shares-table" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th scope="col">Type</th>
+                      <th scope="col">Name</th>
+                      <th scope="col">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>CNAME</td>
+                      <td>{state.domain}</td>
+                      <td>{state.target}</td>
+                    </tr>
+                    <tr>
+                      <td>TXT</td>
+                      <td>{state.verification_name}</td>
+                      <td style={{ overflowWrap: "anywhere" }}>{state.verification_value}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="sub-status" style={{ textTransform: "none" }}>
+                Sign in again on your custom domain. Register a new passkey there; passkeys from your Stohr address stay
+                on that address.
+              </p>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 16 }}>
+                {!state.verified && (
+                  <button type="button" className="primary" disabled={busy} onClick={() => act(api.verifyTeamDomain)}>
+                    {busy ? "Checking DNS…" : "Verify DNS"}
+                  </button>
+                )}
+                {state.verified && (
+                  <a href={`https://${state.domain}`} target="_blank" rel="noreferrer">
+                    Open domain
+                  </a>
+                )}
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    if (confirm("Remove this custom domain? Members can still use the team's Stohr address."))
+                      act(api.removeTeamDomain, true)
+                  }}
+                >
+                  Remove domain
+                </button>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </section>
   )
 }
 

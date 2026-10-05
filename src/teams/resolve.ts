@@ -13,6 +13,8 @@ export type Team = {
   id: number
   slug: string
   name: string
+  custom_domain?: string | null
+  domain_verified_at?: string | null
   quota_bytes: number | null
   suspended_at: string | null
   deleted_at: string | null
@@ -33,6 +35,8 @@ export const teamFromRow = (row: Record<string, unknown>): Team => ({
   id: Number(row.id),
   slug: String(row.slug),
   name: String(row.name),
+  custom_domain: row.custom_domain == null ? null : String(row.custom_domain),
+  domain_verified_at: iso(row.domain_verified_at),
   quota_bytes: row.quota_bytes == null ? null : Number(row.quota_bytes),
   suspended_at: iso(row.suspended_at),
   deleted_at: iso(row.deleted_at),
@@ -104,3 +108,11 @@ const ROOT_SENTINEL: Team = {
 export const rootTeam = async (db: Connection): Promise<Team> => (await teamById(db, ROOT_TEAM_ID)) ?? ROOT_SENTINEL
 
 export const rootSentinel = (): Team => ROOT_SENTINEL
+
+export const teamByDomain = async (db: Connection, domain: string): Promise<Team | null> => {
+  const row = (await db.one({
+    text: "SELECT * FROM teams WHERE custom_domain = $1 AND domain_verified_at IS NOT NULL AND deleted_at IS NULL",
+    values: [domain],
+  })) as Record<string, unknown> | null
+  return row ? teamFromRow(row) : null
+}

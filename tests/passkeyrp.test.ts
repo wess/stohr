@@ -10,6 +10,16 @@ const onTeam = (baseUrl: string): Request => {
 }
 
 describe("passkey rp id", () => {
+  test("verified custom hosts use their own RP id even when root and configured id match", () => {
+    const req = onTeam("https://files.customer.com")
+    ;(req as unknown as Record<string, unknown>).stohrTeam = {
+      team: { id: 2, custom_domain: "files.customer.com", domain_verified_at: "now" },
+      isRoot: false, baseUrl: "https://files.customer.com",
+    }
+    expect(rpIdFor(req, rp)).toBe("files.customer.com")
+    expect(rpIdFor(req, { ...rp, rpId: rp.rootDomain })).toBe("files.customer.com")
+  })
+
   test("root hosts keep the configured rp id", () => {
     expect(rpIdFor(new Request("https://app.stohr.io/"), rp)).toBe("app.stohr.io")
   })

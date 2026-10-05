@@ -74,7 +74,7 @@ src/
     owner.ts            — DB-backed `is_owner` guard
   permissions/          — unified folder/file access resolver (incl. Space membership lookup)
   usage/                — storage-usage + quota-check helpers (per-user and per-team caps)
-  teams/                — multi-tenancy (see TEAMS.md): host → team resolver + cache (resolve.ts, request.ts), slug rules, guards (rootOnly, teamAdminOnly), membership helpers, team urls, /admin/teams + purge sweep (admin.ts), /team/* (routes.ts), caddy on-demand tls allow-list (tls.ts)
+  teams/                — multi-tenancy (see TEAMS.md): host → team resolver + cache (resolve.ts, request.ts), slug rules, guards (rootOnly, teamAdminOnly), membership helpers, team urls, /admin/teams + purge sweep (admin.ts), /team/* (routes.ts), caddy on-demand tls allow-list and private custom-host routing (tls.ts), DNS-verified team custom domains (domains.ts)
   storage/              — pluggable blob backends (s3/, local/) behind a StorageDriver interface
   email/                — Resend integration + transactional templates
   federation/           — invite-gated peer networks; pairing, signed transport, placement, erasure coding, drain (see FEDERATION.md)
@@ -117,7 +117,7 @@ post("/folders", authed(async (c) => {
 }))
 ```
 
-Before the router runs, `withTeams` (`src/teams/request.ts`) resolves the request host to a team — `ROOT_DOMAIN` or any host not under it is the root team, `<slug>.ROOT_DOMAIN` a tenant — answers 404 for an unknown slug and 403 for a suspended team, and stashes the result on the `Request`. `teamFor(c.request)` reads it anywhere; with `ROOT_DOMAIN` unset everything is root. See [TEAMS.md](TEAMS.md).
+Before the router runs, `withTeams` (`src/teams/request.ts`) resolves the request host to a team — `ROOT_DOMAIN` and the `APP_URL` host are the root team, `<slug>.ROOT_DOMAIN` or a DNS-verified custom domain a tenant — answers 404 for an unknown slug and 403 for a suspended team, and stashes the result on the `Request`. `teamFor(c.request)` reads it anywhere; with `ROOT_DOMAIN` unset everything is root. See [TEAMS.md](TEAMS.md).
 
 `requireAuth` puts the verified caller on `c.assigns.auth` (including `teamId`, `teamAdmin`, `isRoot`) and refuses, with a generic 401, any credential whose user is not in the host's team. It accepts three credential types:
 

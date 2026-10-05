@@ -409,8 +409,7 @@ export const adminUpdateContact = (id: number, status: ContactMessageStatus) =>
 export const adminDeleteContact = (id: number) =>
   jsonReq("DELETE", `/admin/contact/${id}`) as Promise<{ deleted?: number; error?: string }>
 
-// team / is_root are read when the API includes them; today it does not, and
-// the login screen falls back to the subdomain for the tenant's identity
+// the setup probe identifies tenant hosts, including verified custom domains
 export const getSetupStatus = async () => {
   const res = await fetch(`${BASE}/setup`)
   return res.json() as Promise<{ needsSetup: boolean; team?: AuthTeam; is_root?: boolean }>
@@ -1253,3 +1252,18 @@ export const finishPasskeyDiscoverableLogin = async (response: any) => {
     error?: string
   }
 }
+
+export type TeamDomain = {
+  domain: string | null
+  verified: boolean
+  verification_name: string | null
+  verification_value: string | null
+  target: string | null
+  default_url: string | null
+  enabled?: boolean
+  error?: string
+}
+export const getTeamDomain = () => jsonReq("GET", "/team/domain") as Promise<TeamDomain>
+export const setTeamDomain = (domain: string) => jsonReq("PUT", "/team/domain", { domain }) as Promise<TeamDomain>
+export const verifyTeamDomain = () => jsonReq("POST", "/team/domain/verify") as Promise<TeamDomain>
+export const removeTeamDomain = () => jsonReq("DELETE", "/team/domain") as Promise<TeamDomain>

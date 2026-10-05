@@ -117,12 +117,13 @@ describe("withTeams resolution", () => {
     expect(deep.status).toBe(404)
   })
 
-  test("root domain and foreign hosts serve the root team", async () => {
+  test("root domain and localhost serve root; unknown public hosts are refused", async () => {
     const root = await callJson(app, "/setup", { host: ROOT })
     expect(root.status).toBe(200)
     expect(root.body.needsSetup).toBe(true)
     const foreign = await callJson(app, "/setup", { host: "localhost" })
     expect(foreign.status).toBe(200)
+    expect((await callJson(app, "/setup", { host: "unknown.customer.com" })).status).toBe(404)
   })
 
   test("a live team host resolves and only its own users see setup done", async () => {

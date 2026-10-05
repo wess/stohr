@@ -16,9 +16,13 @@ export type HostConfig = {
 
 const strip = (url: string): string => url.replace(/\/$/, "")
 
-export const teamBaseUrl = (team: Pick<Team, "id" | "slug">, cfg: HostConfig): string => {
+export const teamBaseUrl = (
+  team: Pick<Team, "id" | "slug" | "custom_domain" | "domain_verified_at">,
+  cfg: HostConfig,
+): string => {
   const app = strip(cfg.appUrl)
   if (team.id === ROOT_TEAM_ID || !cfg.rootDomain) return app
+  if (team.custom_domain && team.domain_verified_at) return `https://${team.custom_domain}`
   let scheme = "https:"
   let port = ""
   try {
@@ -33,7 +37,10 @@ export const teamBaseUrl = (team: Pick<Team, "id" | "slug">, cfg: HostConfig): s
 
 // hostname (no scheme, no port) a team answers on; null when the team has
 // no host of its own
-export const teamHostname = (team: Pick<Team, "id" | "slug">, cfg: HostConfig): string | null => {
+export const teamHostname = (
+  team: Pick<Team, "id" | "slug" | "custom_domain" | "domain_verified_at">,
+  cfg: HostConfig,
+): string | null => {
   if (team.id === ROOT_TEAM_ID) {
     if (cfg.rootDomain) return cfg.rootDomain.toLowerCase()
     try {
@@ -42,5 +49,6 @@ export const teamHostname = (team: Pick<Team, "id" | "slug">, cfg: HostConfig): 
       return null
     }
   }
+  if (cfg.rootDomain && team.custom_domain && team.domain_verified_at) return team.custom_domain
   return cfg.rootDomain ? `${team.slug}.${cfg.rootDomain.toLowerCase()}` : null
 }

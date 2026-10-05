@@ -102,7 +102,7 @@ export const TEST_APP_URL = "http://test.local"
 
 // Host routing is off unless a test asks for it: with no rootDomain every
 // host is the root team, which is what the pre-teams suite assumes.
-export type AppOptions = { rootDomain?: string; trusted?: Cidr[] }
+export type AppOptions = { rootDomain?: string; trusted?: Cidr[]; domainTxt?: import("../../src/teams/domains.ts").TxtLookup }
 
 export const buildApp = (db: Connection, secret: string, opts: AppOptions = {}) => {
   const hosts: HostConfig = { rootDomain: opts.rootDomain ?? null, appUrl: TEST_APP_URL }
@@ -148,7 +148,7 @@ export const buildApp = (db: Connection, secret: string, opts: AppOptions = {}) 
     ...contentSearchRoutes(db, secret),
     ...adminUserRoutes(db, secret, fakeEmailer, hosts),
     ...adminTeamRoutes(db, secret, fakeEmailer, hosts),
-    ...teamRoutes(db, secret, fakeEmailer, fakeStore, hosts),
+    ...teamRoutes(db, secret, fakeEmailer, fakeStore, hosts, opts.domainTxt),
     ...webdavRoutes(db, fakeStore),
     ...webdavSettingsRoutes(db, secret),
   )

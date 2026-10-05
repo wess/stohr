@@ -25,6 +25,14 @@ const expectedOrigin = (req: Request, rp: RpConfig): string => requestBaseUrl(re
 // the configured rpId wins on the hosts it covers (app.stohr.io keeps the
 // passkeys already registered there); team hosts fall back to ROOT_DOMAIN
 export const rpIdFor = (req: Request, rp: RpConfig): string => {
+  const team = teamFor(req).team
+  if (
+    team.custom_domain &&
+    team.domain_verified_at &&
+    new URL(expectedOrigin(req, rp)).hostname === team.custom_domain
+  ) {
+    return team.custom_domain
+  }
   if (!rp.rootDomain || rp.rootDomain === rp.rpId) return rp.rpId
   const host = new URL(expectedOrigin(req, rp)).hostname
   const under = (d: string) => host === d || host.endsWith(`.${d}`)

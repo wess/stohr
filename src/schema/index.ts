@@ -6,6 +6,9 @@ import { column, defineSchema } from "@atlas/db"
 export const teams = defineSchema("teams", {
   id: column.serial().primaryKey(),
   slug: column.text().unique(),
+  custom_domain: column.text().unique().nullable(),
+  domain_token: column.text().nullable(),
+  domain_verified_at: column.timestamp().nullable(),
   name: column.text(),
   quota_bytes: column.bigint().nullable(),
   suspended_at: column.timestamp().nullable(),

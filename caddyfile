@@ -57,3 +57,19 @@
 		}
 	}
 }
+
+# Verified team custom domains; the ask endpoint refuses every unverified name.
+https:// {
+	encode gzip zstd
+	tls {
+		on_demand
+	}
+	handle /api/internal/* {
+		respond 404
+	}
+	handle {
+		reverse_proxy web:3001 {
+			header_up X-Real-IP {remote_host}
+		}
+	}
+}

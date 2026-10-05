@@ -14,6 +14,8 @@ import { logEvent } from "../security/audit.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { randomToken, sha256Hex } from "../util/token.ts"
 import { isEmail } from "../util/username.ts"
+import type { TxtLookup } from "./domains.ts"
+import { domainRoutes } from "./domains.ts"
 import { teamAdminOnly } from "./guards.ts"
 import { computeTeamUsage, countTeamUsers, unlessLastAdmin } from "./members.ts"
 import { teamFor } from "./request.ts"
@@ -28,6 +30,7 @@ export const teamRoutes = (
   emailer: Emailer,
   store: StorageHandle,
   hosts: HostConfig,
+  txt?: TxtLookup,
 ) => {
   const adminCheck = teamAdminOnly(db)
   const guard = pipeline(requireAuth({ secret, db, noOAuth: true }), adminCheck)
@@ -35,6 +38,7 @@ export const teamRoutes = (
   const h = userAdminHandlers(db, emailer, hosts, TEAM_SCOPE)
 
   return [
+    ...domainRoutes(db, secret, hosts, txt),
     // own team: identity, quota and how much of it is used
     get(
       "/team",

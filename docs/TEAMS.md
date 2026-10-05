@@ -39,7 +39,8 @@ tenant, everything is the root team (existing behaviour, nothing changes).
 
 Per request, from the effective host:
 
-- host == `ROOT_DOMAIN`, or not under it (localhost, an IP, health checks) -> root team
+- host == `ROOT_DOMAIN` or the `APP_URL` hostname, localhost, an IP, or an internal single-label host -> root team
+- verified custom hostname -> its team; other public hostnames -> 404
 - host == `<slug>.ROOT_DOMAIN` -> that team; unknown/deleted/reserved slug -> 404
 - anything deeper (`a.b.ROOT_DOMAIN`) or malformed -> 404
 - suspended team -> 403 on every route except the infra paths
@@ -154,7 +155,7 @@ Wildcard DNS `*.storage.wess.dev` to the host. Caddy issues certificates on
 demand, asking the api container directly — `GET
 http://api:3000/internal/tls/allow?domain=<host>` (loopback or
 `TRUSTED_PROXIES` peers only, 60 asks a minute per peer; 200 only for
-`ROOT_DOMAIN`, the `APP_URL` host, and live team subdomains) — so nobody can
+`ROOT_DOMAIN`, the `APP_URL` host, live team subdomains, and verified custom domains) — so nobody can
 burn certificates on arbitrary names. The route is unreachable from the
 public hostname: the `caddyfile` answers `/api/internal/*` with 404 in both
 site blocks and the web proxy (`src/web/serve.ts`) refuses the prefix
@@ -171,3 +172,52 @@ before it would forward anything. See `caddyfile` and
   any subdomain; the expected origin is the resolved team's base URL, never
   the raw `Host` header. Credentials are still looked up per user — and on
   passkey login only among the host team's users — so they do not cross teams.
+
+## Custom domains
+
+A tenant admin can add one hostname in **Team → Overview → Custom domain**.
+The team's `<slug>.ROOT_DOMAIN` address stays available. Root cannot claim a
+custom domain; its aliases are configured through the edge and `APP_URL`.
+
+1. Add a hostname such as `files.customer.com` (no scheme, path or port).
+2. Add the displayed CNAME pointing to `<slug>.ROOT_DOMAIN`. For an apex domain,
+   use A/AAAA records pointing to the instance instead. DNS must route directly
+   to the edge, or a proxy in front must be configured to serve the hostname.
+3. Add the TXT record at `_stohr.files.customer.com` with the exact displayed
+   `stohr-verification=…` value. Keep the TXT record while the domain is connected.
+4. Click **Verify DNS**. Ownership verification activates the hostname and allows
+   the edge to issue HTTPS on its first visit. DNS ownership verification does
+   not test traffic routing or certify that HTTPS is already ready.
+
+`GET /team/domain` returns the hostname, verification status, DNS instructions,
+and default team URL. `PUT /team/domain` accepts `domain`, `custom_domain`, or
+`customDomain`; `POST /team/domain/verify` checks TXT (10 checks/minute/team);
+`DELETE /team/domain` disconnects it. All require a team admin session or PAT;
+OAuth cannot manage domains. The hostname is unique across teams, including
+pending claims. Replacing it resets verification with a new random token, and
+verification writes only if that domain and token still match after DNS resolves.
+The UI requires removal before adding a replacement. The instance's own domains,
+private names, IPs, wildcards and malformed hostnames are refused.
+
+Verified custom-host resolution reads the live team row, so suspension, deletion,
+or disconnect takes effect without waiting for the subdomain cache. Suspended
+teams retain TLS but answer 403. Deleted and disconnected hosts answer 404.
+Team-generated email links prefer the verified custom domain. Links generated
+for the current request keep its resolved hostname, so both login addresses have
+consistent passkey origins and OAuth issuers. Browser sessions are per origin;
+members sign in again when switching addresses. Passkeys registered on the Stohr
+subdomain cannot be used on the unrelated custom domain; register a new passkey
+there after signing in with a password.
+
+Migration `00000060_teamdomains` adds `custom_domain`, `domain_token`, and
+`domain_verified_at` to `teams`. The verification token is returned only through
+the admin domain endpoint, not the public setup probe or team listings.
+
+The bundled `caddyfile` has an on-demand HTTPS catch-all for custom hosts.
+For a shared edge, add Stohr to its certificate ask dispatcher and route confirmed
+Stohr domains to the web service. For per-request routing, use
+`GET /internal/domains/resolve?domain=<host>`: it answers 200 only for verified,
+non-deleted custom domains, is restricted to loopback/trusted peers, and does not
+consume the 60/minute certificate-issuance budget. Block `/api/internal/*` publicly.
+On a managed edge without on-demand TLS, registering the hostname and certificate
+with that hosting provider remains a separate deployment step.

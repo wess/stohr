@@ -156,7 +156,12 @@ export const authRoutes = (db: Connection, secret: string) => {
       // only the root team bootstraps itself; a tenant's first user is made
       // by the owner, so its host never shows the setup screen
       const count = await userCount(db)
-      return json(c, 200, { needsSetup: teamFor(c.request).isRoot && count === 0 })
+      const { team, isRoot } = teamFor(c.request)
+      return json(c, 200, {
+        needsSetup: isRoot && count === 0,
+        is_root: isRoot,
+        team: { id: team.id, slug: team.slug, name: team.name },
+      })
     }),
 
     post(

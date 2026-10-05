@@ -3,11 +3,12 @@
 // route runs, and stashes the result on the Request object where teamFor
 // reads it back from inside pipes and handlers.
 
+import { isIP } from "node:net"
 import type { Connection } from "@atlas/db"
 import type { Cidr } from "../security/proxies.ts"
 import { effectiveHost } from "./host.ts"
 import type { Team } from "./resolve.ts"
-import { ROOT_TEAM_ID, rootSentinel, rootTeam, teamBySlug } from "./resolve.ts"
+import { ROOT_TEAM_ID, rootSentinel, rootTeam, teamByDomain, teamBySlug } from "./resolve.ts"
 import { parseHost } from "./slug.ts"
 import type { HostConfig } from "./urls.ts"
 import { teamBaseUrl } from "./urls.ts"
@@ -25,7 +26,7 @@ type Stashed = Request & { [STASH]?: ResolvedTeam }
 
 // liveness probes and the tls allow-list never touch the database and are
 // answered on any host; the root team is what they see
-const INFRA_PATHS = new Set(["/healthz", "/readyz", "/metrics", "/internal/tls/allow"])
+const INFRA_PATHS = new Set(["/healthz", "/readyz", "/metrics", "/internal/tls/allow", "/internal/domains/resolve"])
 
 const FALLBACK: ResolvedTeam = { team: rootSentinel(), isRoot: true, baseUrl: null }
 
@@ -50,17 +51,24 @@ export const withTeams =
     const path = new URL(req.url).pathname
     if (INFRA_PATHS.has(path)) return fetch(req, server)
 
-    const parsed = parseHost(effectiveHost(req, cfg.trusted), cfg.rootDomain)
+    const host = effectiveHost(req, cfg.trusted)
+    const parsed = parseHost(host, cfg.rootDomain)
     if (parsed.kind === "invalid") return reject(404, "Unknown team")
 
-    const team = parsed.kind === "team" ? await teamBySlug(db, parsed.slug) : await rootTeam(db)
+    const rootHost = host === cfg.rootDomain?.toLowerCase() || host === new URL(cfg.appUrl).hostname.toLowerCase()
+    const localHost = host === "localhost" || !host.includes(".") || isIP(host.replace(/^\[|\]$/g, "")) !== 0
+    const custom =
+      cfg.rootDomain && parsed.kind === "root" && !rootHost && !localHost ? await teamByDomain(db, host) : null
+    if (cfg.rootDomain && parsed.kind === "root" && !rootHost && !localHost && !custom)
+      return reject(404, "Unknown team")
+    const team = custom ?? (parsed.kind === "team" ? await teamBySlug(db, parsed.slug) : await rootTeam(db))
     if (!team) return reject(404, "Unknown team")
     if (team.suspended_at) return reject(403, "This team is suspended. Contact the instance owner.")
 
     ;(req as Stashed)[STASH] = {
       team,
       isRoot: team.id === ROOT_TEAM_ID,
-      baseUrl: teamBaseUrl(team, cfg),
+      baseUrl: custom ? `https://${host}` : teamBaseUrl({ ...team, custom_domain: null }, cfg),
     }
     return fetch(req, server)
   }

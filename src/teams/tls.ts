@@ -10,7 +10,7 @@ import { get, json } from "@atlas/server"
 import type { Cidr } from "../security/proxies.ts"
 import { checkRate } from "../security/ratelimit.ts"
 import { isLoopbackPeer, isTrustedPeer, socketPeer } from "./host.ts"
-import { teamBySlug } from "./resolve.ts"
+import { teamByDomain, teamBySlug } from "./resolve.ts"
 import { parseHost } from "./slug.ts"
 import type { HostConfig } from "./urls.ts"
 
@@ -27,6 +27,13 @@ export const tlsAllowRoutes = (db: Connection, cfg: HostConfig & { trusted?: Cid
   }
 
   return [
+    get("/internal/domains/resolve", async c => {
+      if (!isLoopbackPeer(c.request) && !isTrustedPeer(c.request, cfg.trusted))
+        return json(c, 403, { error: "Forbidden" })
+      const domain = (c.query.domain ?? "").trim().toLowerCase().replace(/\.$/, "")
+      if (cfg.rootDomain && domain && (await teamByDomain(db, domain))) return json(c, 200, { allow: true })
+      return json(c, 404, { allow: false })
+    }),
     get("/internal/tls/allow", async c => {
       if (!isLoopbackPeer(c.request) && !isTrustedPeer(c.request, cfg.trusted)) {
         return json(c, 403, { error: "Forbidden" })
@@ -44,6 +51,8 @@ export const tlsAllowRoutes = (db: Connection, cfg: HostConfig & { trusted?: Cid
       const parsed = parseHost(domain, cfg.rootDomain)
       // a suspended team keeps its certificate so the 403 page is reachable
       if (parsed.kind === "team" && (await teamBySlug(db, parsed.slug))) return json(c, 200, { allow: true })
+      if (cfg.rootDomain && parsed.kind === "root" && (await teamByDomain(db, domain)))
+        return json(c, 200, { allow: true })
       return json(c, 404, { allow: false })
     }),
   ]
