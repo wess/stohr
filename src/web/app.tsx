@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  ArrowLeft,
   ArrowRight,
   Bell,
   BookOpen,
@@ -24,6 +25,7 @@ import {
   FolderPlus,
   HelpCircle,
   Inbox,
+  KeyRound,
   Link2,
   Mail,
   Menu,
@@ -47,7 +49,7 @@ import {
   X,
   Zap,
 } from "lucide-react"
-import React, { useEffect, useMemo, useRef, useState } from "react"
+import React, { useEffect, useId, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
 import * as api from "./api.ts"
 import { Logo } from "./logo.tsx"
@@ -254,22 +256,15 @@ const MimeIcon: React.FC<{ mime: string; size?: number }> = ({ mime, size = 28 }
 }
 
 const FileThumb: React.FC<{ file: FileItem }> = ({ file }) => {
-  const [failed, setFailed] = useState(false)
-  if (failed) {
-    return (
-      <div className="icon">
-        <MimeIcon mime={file.mime} size={32} />
-      </div>
-    )
-  }
+  const fallback = (
+    <div className="icon">
+      <MimeIcon mime={file.mime} size={32} />
+    </div>
+  )
+  if (!file.mime.startsWith("image/")) return fallback
   return (
     <div className="thumb">
-      <img
-        src={`/api/files/${file.id}/thumb?v=${file.version}`}
-        alt=""
-        loading="lazy"
-        onError={() => setFailed(true)}
-      />
+      <AuthedImage src={`/api/files/${file.id}/thumb?v=${file.version}`} alt="" useAuth fallback={fallback} />
     </div>
   )
 }
@@ -294,6 +289,7 @@ const Auth: React.FC<{
   const [inviteToken, setInviteToken] = useState(initialInvite ?? "")
   const [inviteEmailLock, setInviteEmailLock] = useState<string | null>(null)
   const [error, setError] = useState("")
+  const [busy, setBusy] = useState(false)
   const [mfaToken, setMfaToken] = useState<string | null>(null)
   const [mfaCode, setMfaCode] = useState("")
   const [mfaUseBackup, setMfaUseBackup] = useState(false)
@@ -345,23 +341,63 @@ const Auth: React.FC<{
   }, [needsSetup, tenant])
 
   const submit = async () => {
-    setError("")
-    if (mode === "signup") {
-      const res = await api.signup({
-        name,
-        username,
-        email,
-        password,
-        inviteToken: needsSetup ? undefined : inviteToken,
-      })
+    if (busy) return
+    setBusy(true)
+    try {
+      setError("")
+      if (mode === "signup") {
+        const res = await api.signup({
+          name,
+          username,
+          email,
+          password,
+          inviteToken: needsSetup ? undefined : inviteToken,
+        })
+        if (res.error) return setError(res.error)
+        if (!res.token) return setError("Authentication failed")
+        if (window.location.pathname === "/signup") history.replaceState(null, "", "/")
+        onLogin()
+        return
+      }
+      if (useLdap) {
+        const res = await api.loginLdap(identity, password)
+        if (res.error) return setError(res.error)
+        if (!res.token) return setError("Authentication failed")
+        if (oauthNext) {
+          history.replaceState(null, "", oauthNext)
+          window.dispatchEvent(new PopStateEvent("popstate"))
+        }
+        onLogin()
+        return
+      }
+      const res = await api.login(identity, password)
       if (res.error) return setError(res.error)
+      if (res.mfa_required && res.mfa_token) {
+        setMfaToken(res.mfa_token)
+        setMfaCode("")
+        return
+      }
       if (!res.token) return setError("Authentication failed")
       if (window.location.pathname === "/signup") history.replaceState(null, "", "/")
+      if (oauthNext) {
+        history.replaceState(null, "", oauthNext)
+        window.dispatchEvent(new PopStateEvent("popstate"))
+      }
       onLogin()
-      return
+    } catch {
+      setError("Could not sign in. Check your connection and try again.")
+    } finally {
+      setBusy(false)
     }
-    if (useLdap) {
-      const res = await api.loginLdap(identity, password)
+  }
+
+  const submitMfa = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      if (!mfaToken) return
+      setError("")
+      const res = await api.loginMfa(mfaToken, mfaUseBackup ? { backupCode: mfaBackup } : { code: mfaCode })
       if (res.error) return setError(res.error)
       if (!res.token) return setError("Authentication failed")
       if (oauthNext) {
@@ -369,35 +405,11 @@ const Auth: React.FC<{
         window.dispatchEvent(new PopStateEvent("popstate"))
       }
       onLogin()
-      return
+    } catch {
+      setError("Could not sign in. Check your connection and try again.")
+    } finally {
+      setBusy(false)
     }
-    const res = await api.login(identity, password)
-    if (res.error) return setError(res.error)
-    if (res.mfa_required && res.mfa_token) {
-      setMfaToken(res.mfa_token)
-      setMfaCode("")
-      return
-    }
-    if (!res.token) return setError("Authentication failed")
-    if (window.location.pathname === "/signup") history.replaceState(null, "", "/")
-    if (oauthNext) {
-      history.replaceState(null, "", oauthNext)
-      window.dispatchEvent(new PopStateEvent("popstate"))
-    }
-    onLogin()
-  }
-
-  const submitMfa = async () => {
-    if (!mfaToken) return
-    setError("")
-    const res = await api.loginMfa(mfaToken, mfaUseBackup ? { backupCode: mfaBackup } : { code: mfaCode })
-    if (res.error) return setError(res.error)
-    if (!res.token) return setError("Authentication failed")
-    if (oauthNext) {
-      history.replaceState(null, "", oauthNext)
-      window.dispatchEvent(new PopStateEvent("popstate"))
-    }
-    onLogin()
   }
 
   const signInWithPasskey = async () => {
@@ -468,7 +480,11 @@ const Auth: React.FC<{
           No accounts yet. The first user becomes the owner and can invite others.
         </div>
       )}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
       {mfaToken ? (
         <>
           <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 8 }}>
@@ -476,6 +492,7 @@ const Auth: React.FC<{
           </div>
           {mfaUseBackup ? (
             <input
+              aria-label="Backup code (xxxxx-xxxxx)"
               placeholder="Backup code (xxxxx-xxxxx)"
               value={mfaBackup}
               autoFocus
@@ -486,6 +503,8 @@ const Auth: React.FC<{
             />
           ) : (
             <input
+              aria-label="Authenticator code"
+              autoComplete="one-time-code"
               placeholder="6-digit code"
               value={mfaCode}
               autoFocus
@@ -495,10 +514,16 @@ const Auth: React.FC<{
               onKeyDown={e => e.key === "Enter" && submitMfa()}
             />
           )}
-          <button type="button" className="primary" onClick={submitMfa}>
-            Verify
+          <button
+            type="button"
+            className="primary"
+            onClick={submitMfa}
+            disabled={busy || !(mfaUseBackup ? mfaBackup.trim() : mfaCode.length === 6)}
+          >
+            {busy ? "Verifying…" : "Verify"}
           </button>
-          <div
+          <button
+            type="button"
             className="toggle"
             onClick={() => {
               setMfaUseBackup(!mfaUseBackup)
@@ -506,8 +531,9 @@ const Auth: React.FC<{
             }}
           >
             {mfaUseBackup ? "Use authenticator code instead" : "Use a backup code"}
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
             className="toggle"
             onClick={() => {
               setMfaToken(null)
@@ -517,12 +543,20 @@ const Auth: React.FC<{
             }}
           >
             Cancel
-          </div>
+          </button>
         </>
       ) : mode === "signup" ? (
         <>
-          <input placeholder="Name" value={name} onChange={e => setName(e.target.value)} />
           <input
+            aria-label="Name"
+            autoComplete="name"
+            placeholder="Name"
+            value={name}
+            onChange={e => setName(e.target.value)}
+          />
+          <input
+            aria-label="Username"
+            autoComplete="username"
             placeholder="Username"
             value={username}
             onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
@@ -530,6 +564,8 @@ const Auth: React.FC<{
             autoCorrect="off"
           />
           <input
+            aria-label="Email"
+            autoComplete="email"
             placeholder="Email"
             type="email"
             value={email}
@@ -537,6 +573,8 @@ const Auth: React.FC<{
             disabled={!!inviteEmailLock}
           />
           <input
+            aria-label="Password, at least 8 characters"
+            autoComplete="new-password"
             placeholder="Password (min 8 chars)"
             type="password"
             value={password}
@@ -545,6 +583,7 @@ const Auth: React.FC<{
           />
           {!needsSetup && (
             <input
+              aria-label="Invite token"
               placeholder="Invite token"
               value={inviteToken}
               onChange={e => setInviteToken(e.target.value.trim())}
@@ -564,7 +603,7 @@ const Auth: React.FC<{
                   window.location.href = "/auth/sso/login"
                 }}
               >
-                🏰 Sign in with {sso.label}
+                <ShieldCheck size={16} /> Sign in with {sso.label}
               </button>
               <div className="auth-divider">
                 <span>or</span>
@@ -583,7 +622,7 @@ const Auth: React.FC<{
                   window.location.href = `/api/auth/oidc/start${q}`
                 }}
               >
-                🔐 {oidc.label}
+                <ShieldCheck size={16} /> {oidc.label}
               </button>
               <div className="auth-divider">
                 <span>or</span>
@@ -593,7 +632,7 @@ const Auth: React.FC<{
           {!needsSetup && (
             <>
               <button type="button" className="passkey-cta" onClick={signInWithPasskey} disabled={passkeyBusy}>
-                🔑 {passkeyBusy ? "Waiting for passkey…" : "Sign in with a passkey"}
+                <KeyRound size={16} /> {passkeyBusy ? "Waiting for passkey…" : "Sign in with a passkey"}
               </button>
               <div className="auth-divider">
                 <span>or</span>
@@ -601,6 +640,8 @@ const Auth: React.FC<{
             </>
           )}
           <input
+            aria-label={useLdap ? "LDAP username" : "Email or username"}
+            autoComplete="username"
             placeholder={useLdap ? "LDAP username" : "Email or username"}
             value={identity}
             onChange={e => setIdentity(e.target.value)}
@@ -608,6 +649,8 @@ const Auth: React.FC<{
             autoCorrect="off"
           />
           <input
+            aria-label="Password"
+            autoComplete="current-password"
             placeholder="Password"
             type="password"
             value={password}
@@ -618,23 +661,37 @@ const Auth: React.FC<{
       )}
       {!mfaToken && (
         <>
-          <button type="button" className="primary" onClick={submit}>
-            {needsSetup ? "Create owner account" : mode === "login" ? "Sign in" : "Create account"}
+          <button type="button" className="primary" onClick={submit} disabled={busy || passkeyBusy}>
+            {busy
+              ? mode === "login"
+                ? "Signing in…"
+                : "Creating account…"
+              : needsSetup
+                ? "Create owner account"
+                : mode === "login"
+                  ? "Sign in"
+                  : "Create account"}
           </button>
           {/* a team's members are made by its admins (or come in through
               an invite link, which lands here in signup mode already) */}
           {!needsSetup && (mode === "signup" || !tenant) && (
-            <div className="toggle" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
+            <button type="button" className="toggle" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
               {mode === "login" ? "Have an invite? Create your account" : "Already have an account? Sign in"}
-            </div>
+            </button>
           )}
           {!needsSetup && mode === "login" && (
-            <div className="toggle" onClick={() => navigate("/password/forgot")} style={{ marginTop: 4 }}>
+            <button
+              type="button"
+              className="toggle"
+              onClick={() => navigate("/password/forgot")}
+              style={{ marginTop: 4 }}
+            >
               Forgot your password?
-            </div>
+            </button>
           )}
           {!needsSetup && mode === "login" && ldap?.available && (
-            <div
+            <button
+              type="button"
               className="toggle"
               onClick={() => {
                 setUseLdap(!useLdap)
@@ -643,7 +700,7 @@ const Auth: React.FC<{
               style={{ marginTop: 4 }}
             >
               {useLdap ? "Use a Stohr account instead" : "Sign in with LDAP"}
-            </div>
+            </button>
           )}
         </>
       )}
@@ -691,6 +748,7 @@ const ForgotPasswordPage: React.FC = () => {
         <>
           {error && <div className="error">{error}</div>}
           <input
+            aria-label="Your email"
             type="email"
             placeholder="Your email"
             value={email}
@@ -760,6 +818,7 @@ const ResetPasswordPage: React.FC<{ token: string }> = ({ token }) => {
         <>
           {error && <div className="error">{error}</div>}
           <input
+            aria-label="New password (min 8 chars)"
             type="password"
             placeholder="New password (min 8 chars)"
             value={password}
@@ -767,6 +826,7 @@ const ResetPasswordPage: React.FC<{ token: string }> = ({ token }) => {
             onChange={e => setPassword(e.target.value)}
           />
           <input
+            aria-label="Confirm new password"
             type="password"
             placeholder="Confirm new password"
             value={confirm}
@@ -968,7 +1028,7 @@ const UploadPanel: React.FC<{
           )}
         </div>
         <button type="button" onClick={onClear}>
-          Clear
+          {active > 0 ? "Cancel all" : "Dismiss all"}
         </button>
       </div>
       <div className="upload-list">
@@ -1012,14 +1072,48 @@ const Modal: React.FC<{ title: string; onClose: () => void; children: React.Reac
   onClose,
   children,
   size = "default",
-}) => (
-  <div className="modal-backdrop" onClick={onClose}>
-    <div className={`modal${size === "wide" ? " modal-wide" : ""}`} onClick={e => e.stopPropagation()}>
-      <h3>{title}</h3>
-      {children}
-    </div>
-  </div>
-)
+}) => {
+  const ref = useRef<HTMLDialogElement>(null)
+  const titleId = useId()
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    const dialog = ref.current
+    dialog?.showModal()
+    dialog
+      ?.querySelector<HTMLElement>(
+        "input:not([disabled]):not([type=hidden]):not([type=checkbox]), textarea:not([disabled]), select:not([disabled])",
+      )
+      ?.focus()
+    return () => {
+      dialog?.close()
+      previous?.focus()
+    }
+  }, [])
+  return (
+    <dialog
+      ref={ref}
+      className="modal-backdrop"
+      aria-labelledby={titleId}
+      onCancel={e => {
+        e.preventDefault()
+        onClose()
+      }}
+      onClick={e => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div className={`modal${size === "wide" ? " modal-wide" : ""}`}>
+        <div className="modal-head">
+          <h3 id={titleId}>{title}</h3>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close dialog">
+            <X size={18} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </dialog>
+  )
+}
 
 type PaletteFolder = { id: number; name: string; parent_id: number | null }
 type PaletteResults = { files: FileItem[]; folders: PaletteFolder[]; content: api.ContentHit[] }
@@ -1053,15 +1147,20 @@ type KebabItem = {
 const CardKebab: React.FC<{ items: KebabItem[]; ariaLabel?: string }> = ({ items, ariaLabel = "More" }) => {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const menuId = useId()
   const visible = items.filter(i => !i.hidden)
 
   useEffect(() => {
     if (!open) return
+    ref.current?.querySelector<HTMLButtonElement>(".kebab-item")?.focus()
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false)
+      if (e.key === "Escape") {
+        setOpen(false)
+        ref.current?.querySelector<HTMLButtonElement>(".kebab-trigger")?.focus()
+      }
     }
     document.addEventListener("mousedown", onDoc)
     document.addEventListener("keydown", onKey)
@@ -1074,12 +1173,15 @@ const CardKebab: React.FC<{ items: KebabItem[]; ariaLabel?: string }> = ({ items
   if (visible.length === 0) return null
 
   return (
-    <div className="kebab" ref={ref} onClick={e => e.stopPropagation()}>
+    <div className={`kebab${open ? " open" : ""}`} ref={ref} onClick={e => e.stopPropagation()}>
       <button
         type="button"
         className="kebab-trigger"
         aria-label={ariaLabel}
         title={ariaLabel}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
         onClick={e => {
           e.stopPropagation()
           setOpen(v => !v)
@@ -1088,7 +1190,26 @@ const CardKebab: React.FC<{ items: KebabItem[]; ariaLabel?: string }> = ({ items
         <MoreVertical size={16} strokeWidth={2} />
       </button>
       {open && (
-        <div className="kebab-menu" role="menu">
+        <div
+          id={menuId}
+          className="kebab-menu"
+          role="menu"
+          aria-label={ariaLabel}
+          onKeyDown={e => {
+            const buttons = [...e.currentTarget.querySelectorAll<HTMLButtonElement>("button")]
+            const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+            const key = e.key
+            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(key)) return
+            e.preventDefault()
+            const next =
+              key === "Home"
+                ? 0
+                : key === "End"
+                  ? buttons.length - 1
+                  : (index + (key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length
+            buttons[next]?.focus()
+          }}
+        >
           {visible.map((item, i) => (
             <button
               key={i}
@@ -1097,6 +1218,7 @@ const CardKebab: React.FC<{ items: KebabItem[]; ariaLabel?: string }> = ({ items
               className={`kebab-item${item.danger ? " danger" : ""}`}
               onClick={() => {
                 setOpen(false)
+                ref.current?.querySelector<HTMLButtonElement>(".kebab-trigger")?.focus()
                 item.onClick()
               }}
             >
@@ -1109,20 +1231,28 @@ const CardKebab: React.FC<{ items: KebabItem[]; ariaLabel?: string }> = ({ items
   )
 }
 
-const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null }> = ({
-  routeFolderId,
-  routeFileId,
-}) => {
+const Files: React.FC<{
+  routeFolderId: number | null
+  routeFileId: number | null
+  onSpaceChange: (id: number | null) => void
+}> = ({ routeFolderId, routeFileId, onSpaceChange }) => {
   const [folders, setFolders] = useState<Folder[]>([])
   const [files, setFiles] = useState<FileItem[]>([])
   const [currentId, setCurrentId] = useState<number | null>(routeFolderId)
+  const uploadFolder = useRef(currentId)
+  uploadFolder.current = currentId
   const [crumbs, setCrumbs] = useState<Crumb[]>([])
   const [currentRole, setCurrentRole] = useState<"owner" | "editor" | "viewer">("owner")
+  const [currentSpace, setCurrentSpace] = useState<{ id: number; name: string } | null>(null)
   const [currentOwner, setCurrentOwner] = useState<{ id: number; username: string; name: string } | null>(null)
   const [currentKind, setCurrentKind] = useState<string>("standard")
   const [currentIsPublic, setCurrentIsPublic] = useState<boolean>(false)
   const [showFolderSettings, setShowFolderSettings] = useState(false)
-  const [search, setSearch] = useState("")
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
+  const [operationError, setOperationError] = useState("")
+  const [busy, setBusy] = useState(false)
+  const loadId = useRef(0)
   const [dragOver, setDragOver] = useState(false)
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState("")
@@ -1136,7 +1266,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
   const [uploads, setUploads] = useState<Uploading[]>([])
   const fileInput = useRef<HTMLInputElement>(null)
   const me = api.getUser()
-  const canEdit = currentRole === "owner" || currentRole === "editor"
+  const canEdit = !loading && !loadError && (currentRole === "owner" || currentRole === "editor")
 
   useEffect(() => {
     if (routeFolderId !== currentId) setCurrentId(routeFolderId)
@@ -1161,6 +1291,8 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
   const [paletteResults, setPaletteResults] = useState<PaletteResults>({ files: [], folders: [], content: [] })
   const [paletteActive, setPaletteActive] = useState(0)
   const [paletteLoading, setPaletteLoading] = useState(false)
+  const [paletteError, setPaletteError] = useState("")
+  const [paletteRetry, setPaletteRetry] = useState(0)
 
   const [moreFiles, setMoreFiles] = useState(false)
   const [moreFolders, setMoreFolders] = useState(false)
@@ -1170,46 +1302,53 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
   // that's the same signal the API reports in x-has-more, without needing the
   // response headers here.
   const load = async () => {
-    const [fo, fi] = await Promise.all([
-      api.listFolders(currentId, { limit: PAGE_SIZE }),
-      api.listFiles(currentId, search || undefined, { limit: PAGE_SIZE }),
-    ])
-    const foRows = Array.isArray(fo) ? fo : []
-    const fiRows = Array.isArray(fi) ? fi : []
-    setFolders(foRows)
-    setFiles(fiRows)
-    setMoreFolders(foRows.length >= PAGE_SIZE)
-    setMoreFiles(fiRows.length >= PAGE_SIZE)
-    if (currentId == null) {
-      setCrumbs([])
-      setCurrentRole("owner")
-      setCurrentOwner(null)
-      setCurrentKind("standard")
-      setCurrentIsPublic(false)
-    } else {
-      const data = (await api.getFolder(currentId)) as (FolderDetail & { kind?: string; is_public?: boolean }) & {
-        error?: string
+    const requestId = ++loadId.current
+    setLoading(true)
+    setLoadError("")
+    try {
+      const [fo, fi, detail] = await Promise.all([
+        api.listFolders(currentId, { limit: PAGE_SIZE }),
+        api.listFiles(currentId, undefined, { limit: PAGE_SIZE }),
+        currentId == null ? Promise.resolve(null) : api.getFolder(currentId),
+      ])
+      if (requestId !== loadId.current) return
+      if (!Array.isArray(fo) || !Array.isArray(fi) || detail?.error) {
+        throw new Error(detail?.error ?? fo?.error ?? fi?.error ?? "Could not load files. Try again.")
       }
-      if (data && !data.error) {
-        setCrumbs(data.trail ?? [])
-        setCurrentRole(data.role ?? "owner")
-        setCurrentOwner(data.owner ?? null)
-        setCurrentKind(data.kind ?? "standard")
-        setCurrentIsPublic(!!data.is_public)
-      }
+      const space = detail?.space_id ? await api.getSpace(detail.space_id) : null
+      if (requestId !== loadId.current) return
+      if ((space as any)?.error) throw new Error((space as any).error)
+      setCurrentSpace(space ? { id: space.id, name: space.name } : null)
+      onSpaceChange(space?.id ?? null)
+      setFolders(fo)
+      setFiles(fi)
+      setMoreFolders(fo.length >= PAGE_SIZE)
+      setMoreFiles(fi.length >= PAGE_SIZE)
+      setCrumbs(detail?.trail ?? [])
+      setCurrentRole(detail?.role ?? "owner")
+      setCurrentOwner(detail?.owner ?? null)
+      setCurrentKind(detail?.kind ?? "standard")
+      setCurrentIsPublic(!!detail?.is_public)
+    } catch (e: any) {
+      if (requestId === loadId.current) setLoadError(e?.message ?? "Could not load files. Try again.")
+    } finally {
+      if (requestId === loadId.current) setLoading(false)
     }
   }
 
   const loadMore = async () => {
-    if (loadingMore) return
+    if (loadingMore || loading) return
+    const requestId = loadId.current
     setLoadingMore(true)
     try {
       const [fo, fi] = await Promise.all([
         moreFolders ? api.listFolders(currentId, { limit: PAGE_SIZE, offset: folders.length }) : Promise.resolve([]),
         moreFiles
-          ? api.listFiles(currentId, search || undefined, { limit: PAGE_SIZE, offset: files.length })
+          ? api.listFiles(currentId, undefined, { limit: PAGE_SIZE, offset: files.length })
           : Promise.resolve([]),
       ])
+      if (requestId !== loadId.current) return
+      if (!Array.isArray(fo) || !Array.isArray(fi)) throw new Error("Could not load more files. Try again.")
       const foRows = Array.isArray(fo) ? fo : []
       const fiRows = Array.isArray(fi) ? fi : []
       if (moreFolders) {
@@ -1220,6 +1359,8 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
         setFiles(prev => [...prev, ...fiRows])
         setMoreFiles(fiRows.length >= PAGE_SIZE)
       }
+    } catch (e: any) {
+      setOperationError(e?.message ?? "Could not load more files. Try again.")
     } finally {
       setLoadingMore(false)
     }
@@ -1227,23 +1368,28 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
 
   useEffect(() => {
     load()
-  }, [currentId, search])
+    return () => {
+      loadId.current++
+    }
+  }, [currentId])
   useEffect(() => {
     setSelected(new Set())
     setLastClicked(null)
-  }, [currentId, search])
+    setOperationError("")
+  }, [currentId])
 
   useEffect(() => {
     if (currentId == null) {
       if (window.location.pathname.startsWith("/app/")) navigate("/")
       return
     }
-    const ownerSlug = currentOwner && me && currentOwner.id !== me.id ? currentOwner.username : undefined
+    const ownerSlug =
+      !currentSpace && currentOwner && me && currentOwner.id !== me.id ? currentOwner.username : undefined
     const want = folderHref(currentId, ownerSlug)
     if (window.location.pathname !== want) {
       history.replaceState(null, "", want)
     }
-  }, [currentId, currentOwner?.id])
+  }, [currentId, currentOwner?.id, currentSpace?.id])
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -1262,12 +1408,15 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
 
   useEffect(() => {
     if (!paletteOpen) return
-    if (!paletteQuery) {
+    setPaletteError("")
+    if (!paletteQuery.trim()) {
+      setPaletteLoading(false)
       setPaletteResults({ files: [], folders: [], content: [] })
       setPaletteActive(0)
       return
     }
     setPaletteLoading(true)
+    setPaletteResults({ files: [], folders: [], content: [] })
     const ctrl = new AbortController()
     const t = setTimeout(async () => {
       try {
@@ -1276,6 +1425,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
           api.searchContent(paletteQuery, 10).catch(() => ({ query: "", files: [] as api.ContentHit[] })),
         ])
         if (ctrl.signal.aborted) return
+        if (nameRes.error) throw new Error(nameRes.error)
         const results: PaletteResults = {
           folders: Array.isArray((nameRes as any)?.folders) ? (nameRes as any).folders : [],
           files: Array.isArray((nameRes as any)?.files) ? (nameRes as any).files : [],
@@ -1287,7 +1437,8 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
           return total === 0 ? 0 : Math.min(prev, total - 1)
         })
       } catch (err) {
-        if ((err as { name?: string })?.name === "AbortError") return
+        if (ctrl.signal.aborted) return
+        setPaletteError("Could not search. Try again.")
         setPaletteResults({ files: [], folders: [], content: [] })
         setPaletteActive(0)
       } finally {
@@ -1298,7 +1449,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
       clearTimeout(t)
       ctrl.abort()
     }
-  }, [paletteOpen, paletteQuery])
+  }, [paletteOpen, paletteQuery, paletteRetry])
 
   const orderedKeys = useMemo(
     () => [...folders.map(f => `fo-${f.id}`), ...files.map(f => `fi-${f.id}`)],
@@ -1334,50 +1485,63 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
     else setSelected(new Set(orderedKeys))
   }
 
-  const bulkDelete = async () => {
-    if (!confirm(`Move ${selected.size} item${selected.size === 1 ? "" : "s"} to Trash?`)) return
-    const tasks: Promise<any>[] = []
-    for (const k of selected) {
-      const [kind, idStr] = k.split("-")
-      const id = Number(idStr)
-      tasks.push(kind === "fo" ? api.deleteFolder(id) : api.deleteFile(id))
-    }
-    await Promise.allSettled(tasks)
-    clearSelection()
-    await load()
-  }
-
-  const bulkMove = async (targetFolderId: number | null) => {
-    const tasks: Promise<any>[] = []
-    for (const k of selected) {
-      const [kind, idStr] = k.split("-")
-      const id = Number(idStr)
-      if (kind === "fi") tasks.push(api.moveFile(id, targetFolderId))
-      else if (id !== targetFolderId) tasks.push(api.moveFolder(id, targetFolderId))
-    }
-    await Promise.allSettled(tasks)
+  const bulkOperation = async (targetFolderId?: number | null) => {
+    if (!canEdit || busy) return
+    const deleting = targetFolderId === undefined
+    if (deleting && !confirm(`Move ${selected.size} item${selected.size === 1 ? "" : "s"} to Trash?`)) return
+    setBusy(true)
+    setOperationError("")
+    const keys = [...selected]
+    const results = await Promise.allSettled(
+      keys.map(key => {
+        const [kind, idStr] = key.split("-")
+        const id = Number(idStr)
+        if (deleting) return kind === "fo" ? api.deleteFolder(id) : api.deleteFile(id)
+        return kind === "fo" ? api.moveFolder(id, targetFolderId) : api.moveFile(id, targetFolderId)
+      }),
+    )
+    const failed = keys.filter((_, i) => {
+      const result = results[i]!
+      return result.status === "rejected" || result.value?.error
+    })
+    setBusy(false)
     setMovingOpen(false)
-    clearSelection()
+    setSelected(new Set(failed))
+    setLastClicked(null)
+    if (failed.length)
+      setOperationError(
+        `${failed.length} item${failed.length === 1 ? "" : "s"} could not be ${deleting ? "moved to Trash" : "moved"}. Check your access and try again.`,
+      )
     await load()
   }
+  const bulkDelete = () => bulkOperation()
+  const bulkMove = (targetFolderId: number | null) => bulkOperation(targetFolderId)
 
   const upload = async (list: FileList | File[]) => {
+    if (!canEdit) return
     const files = Array.from(list)
     if (files.length === 0) return
 
-    const queued: Uploading[] = files.map(f => ({
-      id: `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${f.name}`,
-      name: f.name,
-      size: f.size,
-      loaded: 0,
-      status: "uploading" as const,
-      abort: () => {},
-    }))
+    const cancelled = new Set<string>()
+    const queued: Uploading[] = files.map(f => {
+      const id = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${f.name}`
+      return {
+        id,
+        name: f.name,
+        size: f.size,
+        loaded: 0,
+        status: "uploading",
+        abort: () => {
+          cancelled.add(id)
+        },
+      }
+    })
     setUploads(prev => [...prev, ...queued])
 
     for (let i = 0; i < files.length; i++) {
       const f = files[i]!
       const u = queued[i]!
+      if (cancelled.has(u.id)) continue
       const handle = api.uploadFile(f, currentId, loaded => {
         setUploads(prev => prev.map(p => (p.id === u.id ? { ...p, loaded } : p)))
       })
@@ -1392,13 +1556,13 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
       }
     }
 
-    await load()
+    if (uploadFolder.current === currentId) await load()
   }
 
   const onDrop: React.DragEventHandler = e => {
     e.preventDefault()
     setDragOver(false)
-    if (e.dataTransfer.files.length) upload(e.dataTransfer.files)
+    if (canEdit && e.dataTransfer.files.length) upload(e.dataTransfer.files)
   }
 
   const [captureNotice, setCaptureNotice] = useState<string | null>(null)
@@ -1427,8 +1591,10 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
       const url = `${window.location.origin}/s/${share.token}`
       try {
         await navigator.clipboard.writeText(url)
-      } catch {}
-      setCaptureNotice(`Link copied: ${url}`)
+        setCaptureNotice(`Link copied: ${url}`)
+      } catch {
+        setCaptureNotice(`Screenshot uploaded. Copy this link: ${url}`)
+      }
       await load()
     } catch (e: any) {
       const msg = e?.message ?? String(e)
@@ -1441,47 +1607,73 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
   }
 
   const createFolder = async () => {
-    if (!newFolderName.trim()) return
-    await api.createFolder(newFolderName.trim(), currentId)
-    setNewFolderName("")
-    setCreatingFolder(false)
-    await load()
+    if (!newFolderName.trim() || !canEdit || busy) return
+    setBusy(true)
+    setOperationError("")
+    try {
+      const res = await api.createFolder(newFolderName.trim(), currentId)
+      if (res.error) return setOperationError(res.error)
+      setNewFolderName("")
+      setCreatingFolder(false)
+      await load()
+    } catch {
+      setOperationError("Could not create the folder. Check your connection and try again.")
+    } finally {
+      setBusy(false)
+    }
   }
 
   const del = async (kind: "folder" | "file", id: number) => {
-    if (!confirm(`Delete this ${kind}?`)) return
-    const res = kind === "folder" ? await api.deleteFolder(id) : await api.deleteFile(id)
-    if (res.error) alert(res.error)
-    await load()
+    if (!canEdit || !confirm(`Move this ${kind} to Trash? You can restore it later.`)) return
+    setOperationError("")
+    try {
+      const res = kind === "folder" ? await api.deleteFolder(id) : await api.deleteFile(id)
+      if (res.error) return setOperationError(res.error)
+      await load()
+    } catch {
+      setOperationError("Could not move the item to Trash. Check your connection and try again.")
+    }
   }
 
   const rename = async () => {
-    if (!renaming?.name.trim()) return
-    const res =
-      renaming.kind === "folder"
-        ? await api.renameFolder(renaming.id, renaming.name.trim())
-        : await api.renameFile(renaming.id, renaming.name.trim())
-    if (res.error) alert(res.error)
-    setRenaming(null)
-    await load()
+    if (!renaming?.name.trim() || !canEdit || busy) return
+    setBusy(true)
+    setOperationError("")
+    try {
+      const res =
+        renaming.kind === "folder"
+          ? await api.renameFolder(renaming.id, renaming.name.trim())
+          : await api.renameFile(renaming.id, renaming.name.trim())
+      if (res.error) return setOperationError(res.error)
+      setRenaming(null)
+      await load()
+    } catch {
+      setOperationError("Could not rename the item. Check your connection and try again.")
+    } finally {
+      setBusy(false)
+    }
   }
 
-  const ownerSlug = currentOwner && me && currentOwner.id !== me.id ? currentOwner.username : undefined
+  const ownerSlug = !currentSpace && currentOwner && me && currentOwner.id !== me.id ? currentOwner.username : undefined
 
   const pathCrumbs = (
     <div className="crumbs">
-      {currentRole === "owner" ? (
-        <span className="crumb" onClick={() => navigate("/")}>
-          All Files
-        </span>
+      {currentSpace ? (
+        <button type="button" className="crumb" onClick={() => navigate(`/app/spaces/${currentSpace.id}`)}>
+          {currentSpace.name}
+        </button>
+      ) : currentRole === "owner" ? (
+        <button type="button" className="crumb" onClick={() => navigate("/")}>
+          My files
+        </button>
       ) : (
         currentOwner && (
-          <span className="crumb" onClick={() => navigate("/app/shared")}>
+          <button type="button" className="crumb" onClick={() => navigate("/app/shared")}>
             Shared with me
-          </span>
+          </button>
         )
       )}
-      {currentOwner && currentRole !== "owner" && (
+      {!currentSpace && currentOwner && currentRole !== "owner" && (
         <>
           <span className="sep">
             <ChevronRight size={14} />
@@ -1497,9 +1689,9 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
           {i === crumbs.length - 1 ? (
             <span className="current">{c.name}</span>
           ) : (
-            <span className="crumb" onClick={() => navigate(folderHref(c.id, ownerSlug))}>
+            <button type="button" className="crumb" onClick={() => navigate(folderHref(c.id, ownerSlug))}>
               {c.name}
-            </span>
+            </button>
           )}
         </React.Fragment>
       ))}
@@ -1508,15 +1700,21 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
 
   return (
     <div className="main">
-      <div className="toolbar">
-        <input
-          className="search"
-          placeholder="Search files..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
+      <div className="toolbar file-toolbar">
+        <button
+          type="button"
+          className="search-launcher"
+          onClick={() => {
+            setPaletteOpen(true)
+            setPaletteQuery("")
+          }}
+        >
+          <Search size={16} />
+          <span>Search files, folders, and contents</span>
+          <kbd>{navigator.platform.includes("Mac") ? "⌘ K" : "Ctrl K"}</kbd>
+        </button>
         <div className="toolbar-actions">
-          {currentId != null && currentRole === "owner" && (
+          {canEdit && currentId != null && currentRole === "owner" && (
             <button
               type="button"
               onClick={() => setShowFolderSettings(true)}
@@ -1526,16 +1724,41 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
               <SettingsIcon size={14} />
             </button>
           )}
-          <button type="button" onClick={() => setCreatingFolder(true)}>
-            <FolderPlus size={14} /> <span>Folder</span>
-          </button>
-          <button type="button" onClick={captureScreenshot} title="Capture screenshot">
-            <Camera size={14} /> <span>Capture</span>
-          </button>
-          <button type="button" className="primary" onClick={() => fileInput.current?.click()}>
-            <UploadIcon size={14} /> <span>Upload</span>
-          </button>
-          <input ref={fileInput} type="file" multiple hidden onChange={e => e.target.files && upload(e.target.files)} />
+          {canEdit && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setOperationError("")
+                  setCreatingFolder(true)
+                }}
+              >
+                <FolderPlus size={14} /> <span>New folder</span>
+              </button>
+              <button
+                type="button"
+                className="capture-button"
+                onClick={captureScreenshot}
+                title="Capture screenshot"
+                aria-label="Capture screenshot"
+              >
+                <Camera size={14} /> <span>Capture</span>
+              </button>
+              <button type="button" className="primary" onClick={() => fileInput.current?.click()}>
+                <UploadIcon size={14} /> <span>Upload files</span>
+              </button>
+              <input
+                ref={fileInput}
+                type="file"
+                multiple
+                hidden
+                onChange={e => {
+                  if (e.target.files) upload(e.target.files)
+                  e.target.value = ""
+                }}
+              />
+            </>
+          )}
         </div>
       </div>
       {captureNotice && (
@@ -1551,168 +1774,224 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
         className="content"
         onDragOver={e => {
           e.preventDefault()
-          setDragOver(true)
+          if (canEdit) setDragOver(true)
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
       >
         <div className="path-bar">{pathCrumbs}</div>
-        <div className={`dropzone${dragOver ? " over" : ""}`}>
-          Drag & drop files here to upload to{" "}
-          {currentId == null ? "your Stohr" : `"${crumbs[crumbs.length - 1]?.name ?? ""}"`}
-        </div>
-
-        {folders.length === 0 && files.length === 0 && !search && (
+        {operationError && !creatingFolder && !renaming && (
+          <div className="msg err" role="alert">
+            {operationError}
+          </div>
+        )}
+        {loading ? (
+          <div className="empty" role="status">
+            Loading files…
+          </div>
+        ) : loadError ? (
           <div className="empty">
-            <div className="big">
-              <Inbox size={64} strokeWidth={1.25} />
+            <div className="msg err" role="alert">
+              {loadError}
             </div>
-            <div>This folder is empty</div>
-            <div style={{ marginTop: 8, fontSize: 13 }}>Upload files or create a folder to get started</div>
-          </div>
-        )}
-
-        {search && folders.length === 0 && files.length === 0 && (
-          <div className="empty">
-            <div className="big">
-              <Search size={64} strokeWidth={1.25} />
-            </div>
-            <div>No files match "{search}"</div>
-          </div>
-        )}
-
-        {selected.size > 0 && (
-          <div className="selbar">
-            <div>{selected.size} selected</div>
-            <div className="selbar-actions">
-              <button type="button" onClick={selectAll}>
-                {selected.size === orderedKeys.length ? "Deselect all" : "Select all"}
-              </button>
-              <button type="button" onClick={() => setMovingOpen(true)}>
-                Move to...
-              </button>
-              <button type="button" className="danger" onClick={bulkDelete}>
-                <Trash2 size={14} /> <span>Delete</span>
-              </button>
-              <button type="button" onClick={clearSelection} aria-label="Clear">
-                <X size={14} />
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="grid">
-          {folders.map(f => {
-            const key = `fo-${f.id}`
-            const sel = selected.has(key)
-            return (
-              <div
-                key={key}
-                className={`card${sel ? " selected" : ""}`}
-                onClick={e => {
-                  if (selected.size > 0) return toggleSelect(key, e)
-                  const ownerSlug = currentOwner && me && currentOwner.id !== me.id ? currentOwner.username : undefined
-                  navigate(folderHref(f.id, ownerSlug))
-                }}
-              >
-                <div className={`check${sel ? " on" : ""}`} onClick={e => toggleSelect(key, e)}>
-                  <div className="check-box" />
-                </div>
-                <CardKebab
-                  ariaLabel="Folder actions"
-                  items={[
-                    {
-                      label: "Share",
-                      onClick: () => setSharing({ kind: "folder", id: f.id, name: f.name }),
-                      hidden: currentRole !== "owner",
-                    },
-                    {
-                      label: "Rename",
-                      onClick: () => setRenaming({ kind: "folder", id: f.id, name: f.name }),
-                      hidden: !canEdit,
-                    },
-                    { label: "Delete", onClick: () => del("folder", f.id), danger: true, hidden: !canEdit },
-                  ]}
-                />
-                <div className="icon">
-                  {f.kind === "screenshots" ? (
-                    <Camera size={32} strokeWidth={1.5} />
-                  ) : (
-                    <FolderIcon size={32} strokeWidth={1.5} />
-                  )}
-                </div>
-                <div className="name">{f.name}</div>
-                <div className="meta">
-                  {f.kind === "photos" ? "Photos" : f.kind === "screenshots" ? "Screenshots" : "Folder"}
-                </div>
-              </div>
-            )
-          })}
-          {currentKind !== "photos" &&
-            currentKind !== "screenshots" &&
-            files.map(f => {
-              const key = `fi-${f.id}`
-              const sel = selected.has(key)
-              return (
-                <div
-                  key={key}
-                  className={`card${sel ? " selected" : ""}`}
-                  onClick={e => (selected.size > 0 ? toggleSelect(key, e) : setPreviewing(f))}
-                >
-                  <div className={`check${sel ? " on" : ""}`} onClick={e => toggleSelect(key, e)}>
-                    <div className="check-box" />
-                  </div>
-                  <CardKebab
-                    ariaLabel="File actions"
-                    items={[
-                      { label: "Download", onClick: () => downloadFile(f) },
-                      {
-                        label: "Share",
-                        onClick: () => setSharing({ kind: "file", id: f.id, name: f.name }),
-                        hidden: currentRole !== "owner",
-                      },
-                      { label: "Versions", onClick: () => setViewingVersions(f), hidden: f.version <= 1 },
-                      {
-                        label: "Rename",
-                        onClick: () => setRenaming({ kind: "file", id: f.id, name: f.name }),
-                        hidden: !canEdit,
-                      },
-                      { label: "Delete", onClick: () => del("file", f.id), danger: true, hidden: !canEdit },
-                    ]}
-                  />
-                  <FileThumb file={f} />
-                  <div className="name">{f.name}</div>
-                  <div className="meta">
-                    {formatBytes(f.size)}
-                    {f.version > 1 && <span className="badge">v{f.version}</span>}
-                  </div>
-                </div>
-              )
-            })}
-        </div>
-
-        {(currentKind === "photos" || currentKind === "screenshots") && (
-          <PhotosGallery
-            files={files}
-            thumbUrl={(id, version) => `/api/files/${id}/thumb?v=${version}`}
-            fullUrl={id => `${api.downloadUrl(id)}?inline=1`}
-            authHeader
-          />
-        )}
-
-        {(moreFiles || moreFolders) && (
-          <div className="load-more">
-            <button type="button" onClick={loadMore} disabled={loadingMore}>
-              {loadingMore ? "Loading…" : "Load more"}
+            <button type="button" onClick={load}>
+              Try again
             </button>
           </div>
+        ) : (
+          <>
+            {canEdit ? (
+              <div className={`dropzone${dragOver ? " over" : ""}`}>
+                Drop files here or use Upload files.
+                <span className="dropzone-help">Uploading the same filename here creates a new version.</span>
+              </div>
+            ) : (
+              <div className="permission-notice">You have view-only access. You can preview and download files.</div>
+            )}
+            {folders.length === 0 && files.length === 0 && (
+              <div className="empty">
+                <div className="big">
+                  <Inbox size={48} strokeWidth={1.25} />
+                </div>
+                <div>{currentId == null ? "No files yet" : "This folder is empty"}</div>
+                <p>
+                  {canEdit
+                    ? "Upload your first files or create a folder to organize your work."
+                    : "Files added to this folder will appear here."}
+                </p>
+                {canEdit && (
+                  <button type="button" className="primary" onClick={() => fileInput.current?.click()}>
+                    <UploadIcon size={14} /> Upload files
+                  </button>
+                )}
+              </div>
+            )}
+
+            {selected.size > 0 && (
+              <div className="selbar">
+                <div>{selected.size} selected</div>
+                <div className="selbar-actions">
+                  <button type="button" onClick={selectAll}>
+                    {selected.size === orderedKeys.length ? "Deselect all" : "Select all"}
+                  </button>
+                  {canEdit && (
+                    <button type="button" disabled={busy} onClick={() => setMovingOpen(true)}>
+                      Move to…
+                    </button>
+                  )}
+                  {canEdit && (
+                    <button type="button" className="danger" disabled={busy} onClick={bulkDelete}>
+                      <Trash2 size={14} /> <span>Move to Trash</span>
+                    </button>
+                  )}
+                  <button type="button" onClick={clearSelection} aria-label="Clear">
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="grid">
+              {folders.map(f => {
+                const key = `fo-${f.id}`
+                const sel = selected.has(key)
+                return (
+                  <article key={key} className={`card${sel ? " selected" : ""}`}>
+                    <button
+                      type="button"
+                      className="card-open"
+                      aria-label={`Open folder ${f.name}`}
+                      onClick={e => {
+                        if (selected.size > 0) return toggleSelect(key, e)
+                        const ownerSlug =
+                          currentOwner && me && currentOwner.id !== me.id ? currentOwner.username : undefined
+                        navigate(folderHref(f.id, ownerSlug))
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className={`check${sel ? " on" : ""}`}
+                      aria-label={`Select ${f.name}`}
+                      aria-pressed={sel}
+                      onClick={e => toggleSelect(key, e)}
+                    >
+                      <span className="check-box" />
+                    </button>
+                    <CardKebab
+                      ariaLabel="Folder actions"
+                      items={[
+                        {
+                          label: "Share",
+                          onClick: () => setSharing({ kind: "folder", id: f.id, name: f.name }),
+                          hidden: currentRole !== "owner",
+                        },
+                        {
+                          label: "Rename",
+                          onClick: () => setRenaming({ kind: "folder", id: f.id, name: f.name }),
+                          hidden: !canEdit,
+                        },
+                        { label: "Move to Trash", onClick: () => del("folder", f.id), danger: true, hidden: !canEdit },
+                      ]}
+                    />
+                    <div className="icon">
+                      {f.kind === "screenshots" ? (
+                        <Camera size={32} strokeWidth={1.5} />
+                      ) : (
+                        <FolderIcon size={32} strokeWidth={1.5} />
+                      )}
+                    </div>
+                    <div className="name" title={f.name}>
+                      {f.name}
+                    </div>
+                    <div className="meta">
+                      {f.kind === "photos" ? "Photos" : f.kind === "screenshots" ? "Screenshots" : "Folder"}
+                    </div>
+                  </article>
+                )
+              })}
+              {currentKind !== "photos" &&
+                currentKind !== "screenshots" &&
+                files.map(f => {
+                  const key = `fi-${f.id}`
+                  const sel = selected.has(key)
+                  return (
+                    <article key={key} className={`card${sel ? " selected" : ""}`}>
+                      <button
+                        type="button"
+                        className="card-open"
+                        aria-label={`Preview ${f.name}`}
+                        onClick={e => (selected.size > 0 ? toggleSelect(key, e) : setPreviewing(f))}
+                      />
+                      <button
+                        type="button"
+                        className={`check${sel ? " on" : ""}`}
+                        aria-label={`Select ${f.name}`}
+                        aria-pressed={sel}
+                        onClick={e => toggleSelect(key, e)}
+                      >
+                        <span className="check-box" />
+                      </button>
+                      <CardKebab
+                        ariaLabel="File actions"
+                        items={[
+                          { label: "Download", onClick: () => downloadFile(f) },
+                          {
+                            label: "Share",
+                            onClick: () => setSharing({ kind: "file", id: f.id, name: f.name }),
+                            hidden: currentRole !== "owner",
+                          },
+                          { label: "Versions", onClick: () => setViewingVersions(f), hidden: f.version <= 1 },
+                          {
+                            label: "Rename",
+                            onClick: () => setRenaming({ kind: "file", id: f.id, name: f.name }),
+                            hidden: !canEdit,
+                          },
+                          { label: "Move to Trash", onClick: () => del("file", f.id), danger: true, hidden: !canEdit },
+                        ]}
+                      />
+                      <FileThumb file={f} />
+                      <div className="name" title={f.name}>
+                        {f.name}
+                      </div>
+                      <div className="meta">
+                        {formatBytes(f.size)}
+                        {f.version > 1 && <span className="badge">v{f.version}</span>}
+                      </div>
+                    </article>
+                  )
+                })}
+            </div>
+
+            {(currentKind === "photos" || currentKind === "screenshots") && (
+              <PhotosGallery
+                files={files}
+                thumbUrl={(id, version) => `/api/files/${id}/thumb?v=${version}`}
+                fullUrl={id => `${api.downloadUrl(id)}?inline=1`}
+                authHeader
+              />
+            )}
+
+            {(moreFiles || moreFolders) && (
+              <div className="load-more">
+                <button type="button" onClick={loadMore} disabled={loadingMore}>
+                  {loadingMore ? "Loading…" : "Load more"}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 
       {creatingFolder && (
         <Modal title="Create folder" onClose={() => setCreatingFolder(false)}>
+          {operationError && (
+            <div className="msg err" role="alert">
+              {operationError}
+            </div>
+          )}
           <input
             autoFocus
+            aria-label="Folder name"
             placeholder="Folder name"
             value={newFolderName}
             onChange={e => setNewFolderName(e.target.value)}
@@ -1722,8 +2001,8 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
             <button type="button" onClick={() => setCreatingFolder(false)}>
               Cancel
             </button>
-            <button type="button" className="primary" onClick={createFolder}>
-              Create
+            <button type="button" className="primary" disabled={busy || !newFolderName.trim()} onClick={createFolder}>
+              {busy ? "Creating…" : "Create folder"}
             </button>
           </div>
         </Modal>
@@ -1735,8 +2014,14 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
 
       {renaming && (
         <Modal title={`Rename ${renaming.kind}`} onClose={() => setRenaming(null)}>
+          {operationError && (
+            <div className="msg err" role="alert">
+              {operationError}
+            </div>
+          )}
           <input
             autoFocus
+            aria-label="Name"
             value={renaming.name}
             onChange={e => setRenaming({ ...renaming, name: e.target.value })}
             onKeyDown={e => e.key === "Enter" && rename()}
@@ -1745,8 +2030,8 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
             <button type="button" onClick={() => setRenaming(null)}>
               Cancel
             </button>
-            <button type="button" className="primary" onClick={rename}>
-              Rename
+            <button type="button" className="primary" disabled={busy || !renaming.name.trim()} onClick={rename}>
+              {busy ? "Saving…" : "Rename"}
             </button>
           </div>
         </Modal>
@@ -1772,6 +2057,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
       {viewingVersions && (
         <VersionsModal
           file={viewingVersions}
+          canEdit={canEdit}
           onClose={() => setViewingVersions(null)}
           onRestored={async () => {
             setViewingVersions(null)
@@ -1782,6 +2068,9 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
 
       {movingOpen && (
         <FolderPicker
+          space={currentSpace}
+          rootFolder={!currentSpace && currentRole !== "owner" ? crumbs[0] : undefined}
+          allowRoot={!currentSpace || (currentRole === "owner" && ![...selected].some(key => key.startsWith("fi-")))}
           excludeIds={[...selected].filter(k => k.startsWith("fo-")).map(k => Number(k.slice(3)))}
           onClose={() => setMovingOpen(false)}
           onPick={bulkMove}
@@ -1814,11 +2103,11 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
           const onKeyDown = (e: React.KeyboardEvent) => {
             if (e.key === "ArrowDown") {
               e.preventDefault()
-              setPaletteActive(prev => Math.min(prev + 1, combined.length - 1))
+              setPaletteActive(prev => Math.max(0, Math.min(prev + 1, combined.length - 1)))
             } else if (e.key === "ArrowUp") {
               e.preventDefault()
               setPaletteActive(prev => Math.max(prev - 1, 0))
-            } else if (e.key === "Enter") {
+            } else if (e.key === "Enter" && e.target instanceof HTMLInputElement) {
               e.preventDefault()
               activate(paletteActive)
             } else if (e.key === "Escape") {
@@ -1826,31 +2115,40 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
             }
           }
           return (
-            <div className="modal-backdrop" onClick={closePalette}>
-              <div
-                className="modal"
-                style={{ maxWidth: 520, width: "100%" }}
-                onClick={e => e.stopPropagation()}
-                onKeyDown={onKeyDown}
-              >
+            <Modal title="Search" onClose={closePalette} size="wide">
+              <div onKeyDown={onKeyDown}>
                 <input
                   autoFocus
                   className="search"
                   style={{ width: "100%", marginBottom: 8, boxSizing: "border-box" }}
-                  placeholder="Search files and folders..."
+                  aria-label="Search files, folders, and contents"
+                  placeholder="Search files, folders, and contents…"
                   value={paletteQuery}
                   onChange={e => {
                     setPaletteQuery(e.target.value)
                     setPaletteActive(0)
                   }}
                 />
-                {paletteQuery.length > 0 &&
+                {!paletteQuery && (
+                  <p className="search-help">Find files by name or contents, or search for a folder.</p>
+                )}
+                {paletteLoading && <p role="status">Searching…</p>}
+                {paletteError && (
+                  <div className="msg err" role="alert">
+                    {paletteError}{" "}
+                    <button type="button" onClick={() => setPaletteRetry(prev => prev + 1)}>
+                      Try again
+                    </button>
+                  </div>
+                )}
+                {paletteQuery.trim().length > 0 &&
                   !paletteLoading &&
+                  !paletteError &&
                   paletteResults.folders.length === 0 &&
                   paletteResults.files.length === 0 &&
                   paletteResults.content.length === 0 && (
                     <div style={{ padding: "12px 0", color: "var(--muted)", textAlign: "center", fontSize: 14 }}>
-                      No matches.
+                      No matches. Try a different name or a shorter search.
                     </div>
                   )}
                 {paletteResults.folders.length > 0 && (
@@ -1868,7 +2166,8 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                       Folders
                     </div>
                     {paletteResults.folders.map((f, i) => (
-                      <div
+                      <button
+                        type="button"
                         key={`pf-${f.id}`}
                         className={`picker-row${paletteActive === i ? " active" : ""}`}
                         style={{
@@ -1882,7 +2181,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                       >
                         <FolderIcon size={16} strokeWidth={1.5} />
                         <span style={{ marginLeft: 8 }}>{f.name}</span>
-                      </div>
+                      </button>
                     ))}
                   </>
                 )}
@@ -1903,7 +2202,8 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                     {paletteResults.files.map((f, i) => {
                       const globalIdx = paletteResults.folders.length + i
                       return (
-                        <div
+                        <button
+                          type="button"
                           key={`pfi-${f.id}`}
                           className={`picker-row${paletteActive === globalIdx ? " active" : ""}`}
                           style={{
@@ -1917,7 +2217,7 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                         >
                           <MimeIcon mime={f.mime} size={16} />
                           <span style={{ marginLeft: 8 }}>{f.name}</span>
-                        </div>
+                        </button>
                       )
                     })}
                   </>
@@ -1939,7 +2239,8 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                     {paletteResults.content.map((f, i) => {
                       const globalIdx = paletteResults.folders.length + paletteResults.files.length + i
                       return (
-                        <div
+                        <button
+                          type="button"
                           key={`pco-${f.id}`}
                           className={`picker-row${paletteActive === globalIdx ? " active" : ""}`}
                           style={{
@@ -1971,13 +2272,13 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
                               dangerouslySetInnerHTML={{ __html: f.snippet }}
                             />
                           )}
-                        </div>
+                        </button>
                       )
                     })}
                   </>
                 )}
               </div>
-            </div>
+            </Modal>
           )
         })()}
 
@@ -2003,23 +2304,49 @@ const Files: React.FC<{ routeFolderId: number | null; routeFileId: number | null
 }
 
 const FolderPicker: React.FC<{
+  space?: { id: number; name: string } | null
+  rootFolder?: Crumb
+  allowRoot?: boolean
   excludeIds: number[]
   onClose: () => void
-  onPick: (folderId: number | null) => void
-}> = ({ excludeIds, onClose, onPick }) => {
-  const [currentId, setCurrentId] = useState<number | null>(null)
+  onPick: (folderId: number | null) => void | Promise<void>
+}> = ({ space, rootFolder, allowRoot = true, excludeIds, onClose, onPick }) => {
+  const [currentId, setCurrentId] = useState<number | null>(rootFolder?.id ?? null)
   const [crumbs, setCrumbs] = useState<Crumb[]>([])
-  const [folders, setFolders] = useState<Folder[]>([])
+  const [folders, setFolders] = useState<Array<{ id: number; name: string }>>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+  const [moving, setMoving] = useState(false)
 
   const load = async () => {
-    const list = await api.listFolders(currentId)
-    setFolders(Array.isArray(list) ? list : [])
-    if (currentId == null) setCrumbs([])
-    else {
-      const data = await api.getFolder(currentId)
-      setCrumbs(data.trail ?? [])
+    setLoading(true)
+    setError("")
+    try {
+      const list =
+        space && currentId == null ? (await api.listSpaceFolders(space.id)).folders : await api.listFolders(currentId)
+      if (!Array.isArray(list)) throw new Error("Could not load destination folders. Try again.")
+      const detail = currentId == null ? null : await api.getFolder(currentId)
+      if (detail?.error) throw new Error(detail.error)
+      setFolders(list)
+      const trail = detail?.trail ?? []
+      setCrumbs(rootFolder ? trail.filter((crumb: Crumb) => crumb.id !== rootFolder.id) : trail)
+    } catch (e: any) {
+      setError(e?.message ?? "Could not load destination folders. Try again.")
+    } finally {
+      setLoading(false)
     }
   }
+
+  const move = async () => {
+    if (moving) return
+    setMoving(true)
+    try {
+      await onPick(currentId)
+    } finally {
+      setMoving(false)
+    }
+  }
+
   useEffect(() => {
     load()
   }, [currentId])
@@ -2027,9 +2354,9 @@ const FolderPicker: React.FC<{
   return (
     <Modal title="Move to folder" onClose={onClose}>
       <div className="picker-crumbs">
-        <span className="crumb" onClick={() => setCurrentId(null)}>
-          All Files
-        </span>
+        <button type="button" className="crumb" onClick={() => setCurrentId(rootFolder?.id ?? null)}>
+          {space?.name ?? rootFolder?.name ?? "My files"}
+        </button>
         {crumbs.map((c, i) => (
           <React.Fragment key={c.id}>
             <span className="sep">
@@ -2038,35 +2365,61 @@ const FolderPicker: React.FC<{
             {i === crumbs.length - 1 ? (
               <span className="current">{c.name}</span>
             ) : (
-              <span className="crumb" onClick={() => setCurrentId(c.id)}>
+              <button type="button" className="crumb" onClick={() => setCurrentId(c.id)}>
                 {c.name}
-              </span>
+              </button>
             )}
           </React.Fragment>
         ))}
       </div>
+      {error && (
+        <div className="msg err" role="alert">
+          {error}{" "}
+          <button type="button" onClick={load}>
+            Try again
+          </button>
+        </div>
+      )}
+      {space && currentId == null && !allowRoot && (
+        <p className="field-help">Choose a folder in this space. Files stay within their workspace.</p>
+      )}
       <div className="picker-list">
-        {folders.length === 0 && <div className="picker-empty">No subfolders here</div>}
-        {folders.map(f => {
-          const disabled = excludeIds.includes(f.id)
-          return (
-            <div
-              key={f.id}
-              className={`picker-row${disabled ? " disabled" : ""}`}
-              onClick={() => !disabled && setCurrentId(f.id)}
-            >
-              <FolderIcon size={18} strokeWidth={1.5} />
-              <span>{f.name}</span>
-            </div>
-          )
-        })}
+        {loading && (
+          <div className="picker-empty" role="status">
+            Loading folders…
+          </div>
+        )}
+        {!loading && !error && folders.length === 0 && <div className="picker-empty">No subfolders here</div>}
+        {!loading &&
+          !error &&
+          folders.map(f => {
+            const disabled = excludeIds.includes(f.id)
+            return (
+              <button
+                type="button"
+                key={f.id}
+                className={`picker-row${disabled ? " disabled" : ""}`}
+                disabled={disabled}
+                onClick={() => setCurrentId(f.id)}
+              >
+                <FolderIcon size={18} strokeWidth={1.5} />
+                <span>{f.name}</span>
+              </button>
+            )
+          })}
       </div>
       <div className="actions">
         <button type="button" onClick={onClose}>
           Cancel
         </button>
-        <button type="button" className="primary" onClick={() => onPick(currentId)}>
-          Move here{crumbs.length > 0 ? `: ${crumbs[crumbs.length - 1]?.name}` : ""}
+        <button
+          type="button"
+          className="primary"
+          disabled={loading || !!error || moving || (!allowRoot && currentId == null)}
+          onClick={move}
+        >
+          {moving ? "Moving…" : "Move here"}
+          {crumbs.length > 0 ? `: ${crumbs[crumbs.length - 1]?.name}` : ""}
         </button>
       </div>
     </Modal>
@@ -2096,6 +2449,7 @@ const PreviewModal: React.FC<{ file: FileItem; onClose: () => void }> = ({ file,
   const [error, setError] = useState<string | null>(null)
   const [commentsOpen, setCommentsOpen] = useState(false)
   const kind = kindFor(file.mime)
+  const dialogRef = useRef<HTMLDialogElement>(null)
 
   useEffect(() => {
     let objectUrl: string | null = null
@@ -2127,15 +2481,30 @@ const PreviewModal: React.FC<{ file: FileItem; onClose: () => void }> = ({ file,
   }, [file.id])
 
   useEffect(() => {
-    const h = (e: KeyboardEvent) => e.key === "Escape" && onClose()
-    window.addEventListener("keydown", h)
-    return () => window.removeEventListener("keydown", h)
-  }, [onClose])
+    const previous = document.activeElement as HTMLElement | null
+    const dialog = dialogRef.current
+    dialog?.showModal()
+    return () => {
+      dialog?.close()
+      previous?.focus()
+    }
+  }, [])
 
   const loading = !error && kind !== "other" && !url && text === null
 
   return (
-    <div className="preview-backdrop" onClick={onClose}>
+    <dialog
+      ref={dialogRef}
+      className="preview-backdrop"
+      aria-label={`Preview ${file.name}`}
+      onCancel={e => {
+        e.preventDefault()
+        onClose()
+      }}
+      onClick={e => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
       <div className="preview" onClick={e => e.stopPropagation()}>
         <div className="preview-head">
           <div className="preview-title">
@@ -2169,7 +2538,7 @@ const PreviewModal: React.FC<{ file: FileItem; onClose: () => void }> = ({ file,
               display: "flex",
               flexDirection: "column",
               alignItems: "stretch",
-              justifyContent: "center",
+              justifyContent: kind === "text" ? "flex-start" : "center",
             }}
           >
             {loading && <div className="preview-empty">Loading preview...</div>}
@@ -2205,7 +2574,7 @@ const PreviewModal: React.FC<{ file: FileItem; onClose: () => void }> = ({ file,
           )}
         </div>
       </div>
-    </div>
+    </dialog>
   )
 }
 
@@ -2297,6 +2666,7 @@ const CommentsPanel: React.FC<{ kind: "file" | "folder"; resourceId: number }> =
         </div>
       )}
       <textarea
+        aria-label="Add a comment…"
         value={body}
         onChange={e => setBody(e.target.value)}
         placeholder="Add a comment…"
@@ -2311,10 +2681,11 @@ const CommentsPanel: React.FC<{ kind: "file" | "folder"; resourceId: number }> =
   )
 }
 
-const VersionsModal: React.FC<{ file: FileItem; onClose: () => void; onRestored: () => void }> = ({
+const VersionsModal: React.FC<{ file: FileItem; onClose: () => void; onRestored: () => void; canEdit: boolean }> = ({
   file,
   onClose,
   onRestored,
+  canEdit,
 }) => {
   const [versions, setVersions] = useState<FileVersion[]>([])
   const [err, setErr] = useState("")
@@ -2379,12 +2750,12 @@ const VersionsModal: React.FC<{ file: FileItem; onClose: () => void; onRestored:
               <button type="button" onClick={() => downloadVersion(v)}>
                 Download
               </button>
-              {!v.is_current && (
+              {canEdit && !v.is_current && (
                 <button type="button" onClick={() => restore(v)}>
                   Restore
                 </button>
               )}
-              {!v.is_current && (
+              {canEdit && !v.is_current && (
                 <button type="button" className="danger" onClick={() => remove(v)}>
                   Delete
                 </button>
@@ -2403,13 +2774,25 @@ const VersionsModal: React.FC<{ file: FileItem; onClose: () => void; onRestored:
 }
 
 const TrashView: React.FC = () => {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
   const [data, setData] = useState<{ folders: TrashedFolder[]; files: TrashedFile[] }>({ folders: [], files: [] })
 
   const load = async () => {
-    const res = await api.listTrash()
-    if (res && "folders" in res) setData(res)
-    else setData({ folders: [], files: [] })
+    setLoading(true)
+    setError("")
+    try {
+      const res = await api.listTrash()
+      if (res?.error) throw new Error(res.error)
+      if (res && "folders" in res) setData(res)
+      else setData({ folders: [], files: [] })
+    } catch (e: any) {
+      setError(e?.message ?? "Could not load this page. Check your connection and try again.")
+    } finally {
+      setLoading(false)
+    }
   }
+
   useEffect(() => {
     load()
   }, [])
@@ -2442,14 +2825,27 @@ const TrashView: React.FC = () => {
         <div className="crumbs">
           <span className="current">Trash</span>
         </div>
-        {!isEmpty && (
+        {!loading && !error && !isEmpty && (
           <button type="button" className="danger" onClick={emptyAll}>
             Empty trash
           </button>
         )}
       </div>
       <div className="content">
-        {isEmpty && (
+        {loading && (
+          <div className="empty" role="status">
+            Loading…
+          </div>
+        )}
+        {error && (
+          <div className="msg err" role="alert">
+            {error}{" "}
+            <button type="button" onClick={load}>
+              Try again
+            </button>
+          </div>
+        )}
+        {!loading && !error && isEmpty && (
           <div className="empty">
             <div className="big">
               <Trash2 size={64} strokeWidth={1.25} />
@@ -2457,7 +2853,7 @@ const TrashView: React.FC = () => {
             <div>Trash is empty</div>
           </div>
         )}
-        {!isEmpty && (
+        {!loading && !error && !isEmpty && (
           <div className="grid">
             {data.folders.map(f => (
               <div key={`tf-${f.id}`} className="card">
@@ -2548,15 +2944,21 @@ const CollaboratorsPanel: React.FC<{ kind: "file" | "folder"; id: number }> = ({
     setBusy(true)
     setError("")
     setPendingInvite(null)
-    const fn = kind === "folder" ? api.addFolderCollab : api.addFileCollab
-    const res = await fn(id, identity.trim(), role)
-    setBusy(false)
-    if (res.error) return setError(res.error)
-    if (res.invite_token && res.email) {
-      setPendingInvite({ token: res.invite_token, email: res.email })
+    try {
+      const fn = kind === "folder" ? api.addFolderCollab : api.addFileCollab
+      const res = await fn(id, identity.trim(), role)
+      setBusy(false)
+      if (res.error) return setError(res.error)
+      if (res.invite_token && res.email) {
+        setPendingInvite({ token: res.invite_token, email: res.email })
+      }
+      setIdentity("")
+      await load()
+    } catch {
+      setError("Could not add the collaborator. Check your connection and try again.")
+    } finally {
+      setBusy(false)
     }
-    setIdentity("")
-    await load()
   }
 
   const remove = async (collabId: number) => {
@@ -2570,11 +2972,12 @@ const CollaboratorsPanel: React.FC<{ kind: "file" | "folder"; id: number }> = ({
   return (
     <div>
       <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8 }}>
-        Add by username or email. Unknown emails get an invite link you can send.
+        Share with specific people by username or email. New email addresses receive an invite link you can copy.
       </div>
-      <div style={{ display: "flex", gap: 6 }}>
+      <div className="inline-form">
         <input
-          placeholder="username or email"
+          aria-label="Collaborator username or email"
+          placeholder="Username or email"
           value={identity}
           onChange={e => setIdentity(e.target.value)}
           onKeyDown={e => e.key === "Enter" && add()}
@@ -2583,6 +2986,7 @@ const CollaboratorsPanel: React.FC<{ kind: "file" | "folder"; id: number }> = ({
           style={{ flex: 1 }}
         />
         <select
+          aria-label="Collaborator access"
           value={role}
           onChange={e => setRole(e.target.value as "viewer" | "editor")}
           style={{
@@ -2596,12 +3000,15 @@ const CollaboratorsPanel: React.FC<{ kind: "file" | "folder"; id: number }> = ({
           <option value="viewer">Viewer</option>
           <option value="editor">Editor</option>
         </select>
-        <button type="button" className="primary" onClick={add} disabled={busy}>
+        <button type="button" className="primary" onClick={add} disabled={busy || !identity.trim()}>
           <UserPlus size={14} /> <span>Add</span>
         </button>
       </div>
+      <p className="field-help">
+        Viewers can preview, download, and comment. Editors can also upload, rename, and delete.
+      </p>
       {error && (
-        <div className="msg err" style={{ marginTop: 8 }}>
+        <div className="msg err" role="alert" style={{ marginTop: 8 }}>
           {error}
         </div>
       )}
@@ -2651,6 +3058,7 @@ const CollaboratorsPanel: React.FC<{ kind: "file" | "folder"; id: number }> = ({
               type="button"
               className="danger"
               onClick={() => remove(r.id)}
+              aria-label={`Remove ${r.user?.username ?? r.email}`}
               style={{ padding: "4px 8px", fontSize: 12 }}
             >
               <X size={12} />
@@ -2680,24 +3088,42 @@ const SharingModal: React.FC<{
   const [linkBusy, setLinkBusy] = useState(false)
   const [linkErr, setLinkErr] = useState("")
 
+  const [copied, setCopied] = useState(false)
+  const copy = async (url: string) => {
+    setCopied(false)
+    setLinkErr("")
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+    } catch {
+      setLinkErr("Could not copy the link. Select it and copy it manually.")
+    }
+  }
+
   const createPublic = async () => {
-    if (target.kind !== "file") return
+    if (target.kind !== "file" || linkBusy) return
     setLinkBusy(true)
     setLinkErr("")
-    const res = await api.createShare(target.id, {
-      expiresIn: linkExpiry,
-      password: linkPassword.trim() || undefined,
-      burnOnView: linkBurn,
-    })
-    setLinkBusy(false)
-    if (res.token) {
-      setPublicLink({
-        url: `${window.location.origin}/s/${res.token}`,
-        passwordRequired: !!res.password_required,
-        burnOnView: !!res.burn_on_view,
+    try {
+      const res = await api.createShare(target.id, {
+        expiresIn: linkExpiry,
+        password: linkPassword.trim() || undefined,
+        burnOnView: linkBurn,
       })
-    } else {
-      setLinkErr(res.error ?? "Failed to share")
+      setLinkBusy(false)
+      if (res.token) {
+        setPublicLink({
+          url: `${window.location.origin}/s/${res.token}`,
+          passwordRequired: !!res.password_required,
+          burnOnView: !!res.burn_on_view,
+        })
+      } else {
+        setLinkErr(res.error ?? "Could not create the link. Try again.")
+      }
+    } catch {
+      setLinkErr("Could not create the link. Check your connection and try again.")
+    } finally {
+      setLinkBusy(false)
     }
   }
 
@@ -2738,6 +3164,16 @@ const SharingModal: React.FC<{
         )}
       </div>
 
+      {linkErr && (
+        <div className="msg err" role="alert">
+          {linkErr}
+        </div>
+      )}
+      {copied && (
+        <p className="field-help" role="status">
+          Link copied to clipboard.
+        </p>
+      )}
       {tab === "people" && (
         <>
           <CollaboratorsPanel kind={target.kind} id={target.id} />
@@ -2747,8 +3183,8 @@ const SharingModal: React.FC<{
                 Collaborators with access can open:
               </div>
               <div className="share-link">{directLink}</div>
-              <button type="button" onClick={() => navigator.clipboard.writeText(directLink)} style={{ marginTop: 6 }}>
-                Copy link
+              <button type="button" onClick={() => copy(directLink)} style={{ marginTop: 6 }}>
+                {copied ? "Copied" : "Copy link"}
               </button>
             </div>
           )}
@@ -2772,13 +3208,11 @@ const SharingModal: React.FC<{
               }}
             >
               {publicLink.passwordRequired && <span>· Recipient will need the password you set.</span>}
-              {publicLink.burnOnView && (
-                <span>· Link self-destructs after the first viewer (other than you) downloads it.</span>
-              )}
+              {publicLink.burnOnView && <span>· Link expires after the first recipient opens it.</span>}
             </div>
             <div className="actions">
-              <button type="button" onClick={() => navigator.clipboard.writeText(publicLink.url)}>
-                Copy
+              <button type="button" onClick={() => copy(publicLink.url)}>
+                {copied ? "Copied" : "Copy link"}
               </button>
               <button type="button" className="primary" onClick={onClose}>
                 Done
@@ -2787,8 +3221,18 @@ const SharingModal: React.FC<{
           </>
         ) : (
           <>
-            <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Expires in</label>
-            <select value={linkExpiry} onChange={e => setLinkExpiry(Number(e.target.value))}>
+            <p className="field-help">
+              Anyone with this link can open the file
+              {linkPassword.trim() ? " using the password" : " without signing in"}. Share only with your intended
+              recipients.
+            </p>
+            <label
+              htmlFor="share-expiry"
+              style={{ display: "block", fontSize: 12, color: "var(--muted)", marginBottom: 6 }}
+            >
+              Expires in
+            </label>
+            <select id="share-expiry" value={linkExpiry} onChange={e => setLinkExpiry(Number(e.target.value))}>
               <option value={3600}>1 hour</option>
               <option value={86400}>1 day</option>
               <option value={604800}>7 days</option>
@@ -2798,6 +3242,7 @@ const SharingModal: React.FC<{
               Password (optional)
             </label>
             <input
+              aria-label="Leave blank for no password"
               type="password"
               autoComplete="new-password"
               value={linkPassword}
@@ -2806,13 +3251,8 @@ const SharingModal: React.FC<{
             />
             <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 14, fontSize: 13 }}>
               <input type="checkbox" checked={linkBurn} onChange={e => setLinkBurn(e.target.checked)} />
-              <span>Self-destruct after first non-owner view</span>
+              <span>One-time link: expires after the first recipient opens it</span>
             </label>
-            {linkErr && (
-              <div className="msg err" style={{ marginTop: 10 }}>
-                {linkErr}
-              </div>
-            )}
             <div className="actions">
               <button type="button" onClick={onClose}>
                 Cancel
@@ -2843,14 +3283,26 @@ type SharedFile = FileItem & {
 }
 
 const SharedView: React.FC = () => {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
   const [data, setData] = useState<{ folders: SharedFolder[]; files: SharedFile[] }>({ folders: [], files: [] })
   const [previewing, setPreviewing] = useState<FileItem | null>(null)
 
   const load = async () => {
-    const res = await api.listSharedWithMe()
-    if (res && "folders" in res) setData(res)
-    else setData({ folders: [], files: [] })
+    setLoading(true)
+    setError("")
+    try {
+      const res = await api.listSharedWithMe()
+      if (res?.error) throw new Error(res.error)
+      if (res && "folders" in res) setData(res)
+      else setData({ folders: [], files: [] })
+    } catch (e: any) {
+      setError(e?.message ?? "Could not load this page. Check your connection and try again.")
+    } finally {
+      setLoading(false)
+    }
   }
+
   useEffect(() => {
     load()
   }, [])
@@ -2865,7 +3317,20 @@ const SharedView: React.FC = () => {
         </div>
       </div>
       <div className="content">
-        {isEmpty && (
+        {loading && (
+          <div className="empty" role="status">
+            Loading…
+          </div>
+        )}
+        {error && (
+          <div className="msg err" role="alert">
+            {error}{" "}
+            <button type="button" onClick={load}>
+              Try again
+            </button>
+          </div>
+        )}
+        {!loading && !error && isEmpty && (
           <div className="empty">
             <div className="big">
               <Users size={64} strokeWidth={1.25} />
@@ -2876,10 +3341,16 @@ const SharedView: React.FC = () => {
             </div>
           </div>
         )}
-        {!isEmpty && (
+        {!loading && !error && !isEmpty && (
           <div className="grid">
             {data.folders.map(f => (
-              <div key={`sf-${f.id}`} className="card" onClick={() => navigate(folderHref(f.id, f.owner?.username))}>
+              <article key={`sf-${f.id}`} className="card">
+                <button
+                  type="button"
+                  className="card-open"
+                  aria-label={`Open folder ${f.name}`}
+                  onClick={() => navigate(folderHref(f.id, f.owner?.username))}
+                />
                 <div className="icon">
                   <FolderIcon size={32} strokeWidth={1.5} />
                 </div>
@@ -2890,10 +3361,16 @@ const SharedView: React.FC = () => {
                     {f.role}
                   </span>
                 </div>
-              </div>
+              </article>
             ))}
             {data.files.map(f => (
-              <div key={`sfi-${f.id}`} className="card" onClick={() => setPreviewing(f)}>
+              <article key={`sfi-${f.id}`} className="card">
+                <button
+                  type="button"
+                  className="card-open"
+                  aria-label={`Preview ${f.name}`}
+                  onClick={() => setPreviewing(f)}
+                />
                 <FileThumb file={f} />
                 <div className="name">{f.name}</div>
                 <div className="meta">
@@ -2903,12 +3380,12 @@ const SharedView: React.FC = () => {
                     {f.role}
                   </span>
                 </div>
-                <div className="row" onClick={e => e.stopPropagation()}>
+                <div className="row card-actions">
                   <button type="button" onClick={() => downloadFile(f)}>
                     Download
                   </button>
                 </div>
-              </div>
+              </article>
             ))}
           </div>
         )}
@@ -2919,37 +3396,80 @@ const SharedView: React.FC = () => {
 }
 
 const SharesView: React.FC = () => {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
   const [shares, setShares] = useState<Share[]>([])
 
   const load = async () => {
-    const data = await api.listShares()
-    setShares(Array.isArray(data) ? data : [])
+    setLoading(true)
+    setError("")
+    try {
+      const data = await api.listShares()
+      if (!Array.isArray(data)) throw new Error(data?.error ?? "Could not load public links.")
+      setShares(Array.isArray(data) ? data : [])
+    } catch (e: any) {
+      setError(e?.message ?? "Could not load this page. Check your connection and try again.")
+    } finally {
+      setLoading(false)
+    }
   }
+
   useEffect(() => {
     load()
   }, [])
 
-  const revoke = async (id: number) => {
-    if (!confirm("Revoke this share?")) return
-    await api.deleteShare(id)
-    await load()
+  const [copiedId, setCopiedId] = useState<number | null>(null)
+  const copy = async (id: number, url: string) => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopiedId(id)
+    } catch {
+      setError("Could not copy the link. Select it and copy it manually.")
+    }
   }
 
-  if (shares.length === 0) {
+  const revoke = async (id: number) => {
+    if (!confirm("Revoke this public link? Anyone using it will lose access.")) return
+    try {
+      const res = await api.deleteShare(id)
+      if (res.error) return setError(res.error)
+      await load()
+    } catch {
+      setError("Could not revoke the link. Check your connection and try again.")
+    }
+  }
+
+  if (loading || error || shares.length === 0) {
     return (
       <div className="main">
         <div className="toolbar">
           <div className="crumbs">
-            <span className="current">Shared links</span>
+            <span className="current">Public links</span>
           </div>
         </div>
         <div className="content">
-          <div className="empty">
-            <div className="big">
-              <Link2 size={64} strokeWidth={1.25} />
+          {loading && (
+            <div className="empty" role="status">
+              Loading…
             </div>
-            <div>No active shares</div>
-          </div>
+          )}
+          {error && (
+            <div className="msg err" role="alert">
+              {error}{" "}
+              <button type="button" onClick={load}>
+                Try again
+              </button>
+            </div>
+          )}
+          {!loading && !error && (
+            <div className="empty">
+              <div className="big">
+                <Link2 size={64} strokeWidth={1.25} />
+              </div>
+              <div>No public links yet</div>
+              <p>Open a file’s Share menu and choose Public link to share it outside your team.</p>
+            </div>
+          )}
         </div>
       </div>
     )
@@ -2959,10 +3479,28 @@ const SharesView: React.FC = () => {
     <div className="main">
       <div className="toolbar">
         <div className="crumbs">
-          <span className="current">Shared links</span>
+          <span className="current">Public links</span>
         </div>
       </div>
       <div className="content">
+        {loading && (
+          <div className="empty" role="status">
+            Loading…
+          </div>
+        )}
+        {error && (
+          <div className="msg err" role="alert">
+            {error}{" "}
+            <button type="button" onClick={load}>
+              Try again
+            </button>
+          </div>
+        )}
+        {copiedId != null && (
+          <p className="field-help" role="status">
+            Link copied to clipboard.
+          </p>
+        )}
         <table className="shares-table">
           <thead>
             <tr>
@@ -2990,7 +3528,7 @@ const SharesView: React.FC = () => {
                     )}
                     {s.burn_on_view && (
                       <span className="badge" style={{ marginLeft: 6 }}>
-                        burn
+                        one-time
                       </span>
                     )}
                   </td>
@@ -3002,8 +3540,8 @@ const SharesView: React.FC = () => {
                   <td>{formatBytes(s.size)}</td>
                   <td>{s.expires_at ? new Date(s.expires_at).toLocaleString() : "Never"}</td>
                   <td>
-                    <button type="button" onClick={() => navigator.clipboard.writeText(url)}>
-                      Copy
+                    <button type="button" onClick={() => copy(s.id, url)}>
+                      {copiedId === s.id ? "Copied" : "Copy link"}
                     </button>
                     <button type="button" className="danger" onClick={() => revoke(s.id)}>
                       Revoke
@@ -3021,10 +3559,16 @@ const SharesView: React.FC = () => {
 
 type GalleryFile = { id: number; name: string; mime: string; size: number; version: number; created_at: string }
 
-const AuthedImage: React.FC<{ src: string; alt: string; useAuth: boolean }> = ({ src, alt, useAuth }) => {
+const AuthedImage: React.FC<{ src: string; alt: string; useAuth: boolean; fallback?: React.ReactNode }> = ({
+  src,
+  alt,
+  useAuth,
+  fallback = <MimeIcon mime="image/" size={32} />,
+}) => {
   const ref = useRef<HTMLDivElement>(null)
   const [resolved, setResolved] = useState<string | null>(useAuth ? null : src)
   const [loaded, setLoaded] = useState(false)
+  const [failed, setFailed] = useState(false)
   const [visible, setVisible] = useState(!useAuth)
 
   useEffect(() => {
@@ -3057,15 +3601,22 @@ const AuthedImage: React.FC<{ src: string; alt: string; useAuth: boolean }> = ({
     let createdUrl: string | null = null
     setResolved(null)
     setLoaded(false)
+    setFailed(false)
     ;(async () => {
       try {
         const res = await fetch(src, { headers: { authorization: `Bearer ${api.getToken()}` } })
-        if (!res.ok || aborted) return
+        if (aborted) return
+        if (!res.ok) {
+          setFailed(true)
+          return
+        }
         const blob = await res.blob()
         if (aborted) return
         createdUrl = URL.createObjectURL(blob)
         setResolved(createdUrl)
-      } catch {}
+      } catch {
+        if (!aborted) setFailed(true)
+      }
     })()
     return () => {
       aborted = true
@@ -3075,13 +3626,14 @@ const AuthedImage: React.FC<{ src: string; alt: string; useAuth: boolean }> = ({
 
   return (
     <div ref={ref} className="thumb-wrap">
-      {!loaded && <div className="thumb-spinner" aria-hidden="true" />}
-      {resolved && (
+      {failed ? fallback : !loaded && <div className="thumb-spinner" aria-hidden="true" />}
+      {resolved && !failed && (
         <img
           src={resolved}
           alt={alt}
           loading="lazy"
           onLoad={() => setLoaded(true)}
+          onError={() => setFailed(true)}
           className={loaded ? "loaded" : ""}
         />
       )}
@@ -3124,9 +3676,15 @@ const PhotosGallery: React.FC<{
     <>
       <div className="gallery">
         {photos.map((p, i) => (
-          <div key={p.id} className="tile" onClick={() => setActive(i)}>
+          <button
+            type="button"
+            key={p.id}
+            className="tile"
+            aria-label={`Preview ${p.name}`}
+            onClick={() => setActive(i)}
+          >
             <AuthedImage src={thumbUrl(p.id, p.version)} alt={p.name} useAuth={!!authHeader} />
-          </div>
+          </button>
         ))}
       </div>
       {active !== null && photos[active] && (
@@ -4073,6 +4631,7 @@ const DevicePair: React.FC<{ query: string }> = ({ query }) => {
           <>
             <div className="oauth-desc">Enter the code shown by the app you're trying to sign in.</div>
             <input
+              aria-label="ABCD-1234"
               autoFocus
               placeholder="ABCD-1234"
               value={code}
@@ -4320,6 +4879,7 @@ const SharePage: React.FC<{ token: string }> = ({ token }) => {
               )}
               {meta.password_required && (
                 <input
+                  aria-label="Password"
                   type="password"
                   autoComplete="off"
                   placeholder="Password"
@@ -4986,14 +5546,19 @@ const NotificationsView: React.FC<{ onChange: () => void }> = ({ onChange }) => 
   const [items, setItems] = useState<api.NotificationRow[]>([])
   const [unread, setUnread] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
   const [filter, setFilter] = useState<"all" | "unread">("all")
 
   const refresh = async () => {
     setLoading(true)
+    setError("")
     try {
       const res = await api.listNotifications(filter === "unread")
-      setItems(res.notifications)
+      if ((res as any).error) throw new Error((res as any).error)
+      setItems(Array.isArray(res.notifications) ? res.notifications : [])
       setUnread(res.unread)
+    } catch (e: any) {
+      setError(e?.message ?? "Could not load this page. Check your connection and try again.")
     } finally {
       setLoading(false)
     }
@@ -5024,9 +5589,9 @@ const NotificationsView: React.FC<{ onChange: () => void }> = ({ onChange }) => 
 
   return (
     <div className="main">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <h2 style={{ margin: 0 }}>Notifications</h2>
-        <div style={{ display: "flex", gap: 8 }}>
+      <div className="toolbar page-toolbar">
+        <h2 className="page-title">Notifications</h2>
+        <div className="toolbar-actions">
           <button type="button" onClick={() => setFilter("all")} className={filter === "all" ? "primary" : undefined}>
             All
           </button>
@@ -5044,58 +5609,74 @@ const NotificationsView: React.FC<{ onChange: () => void }> = ({ onChange }) => 
           )}
         </div>
       </div>
-      {loading && items.length === 0 ? (
-        <div style={{ color: "var(--muted)" }}>Loading…</div>
-      ) : items.length === 0 ? (
-        <div style={{ padding: "24px 0", color: "var(--muted)" }}>
-          {filter === "unread" ? "You're all caught up." : "No notifications yet."}
-        </div>
-      ) : (
-        <div>
-          {items.map(n => {
-            const href = notificationHref(n)
-            return (
-              <div
-                key={n.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  padding: "10px 12px",
-                  borderRadius: 6,
-                  marginBottom: 4,
-                  background: n.read_at ? "transparent" : "var(--accent-bg)",
-                  cursor: href ? "pointer" : "default",
-                }}
-                onClick={() => {
-                  markRead(n)
-                  if (href) navigate(href)
-                }}
-              >
-                <Bell
-                  size={16}
-                  strokeWidth={1.75}
-                  style={{ marginRight: 12, color: n.read_at ? "var(--muted)" : "var(--brand)" }}
-                />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14 }}>{summarizeNotification(n)}</div>
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>{new Date(n.created_at).toLocaleString()}</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={e => {
-                    e.stopPropagation()
-                    remove(n)
+      <div className="content">
+        {error && (
+          <div className="msg err" role="alert">
+            {error}{" "}
+            <button type="button" onClick={refresh}>
+              Try again
+            </button>
+          </div>
+        )}
+        {error ? null : loading && items.length === 0 ? (
+          <div style={{ color: "var(--muted)" }}>Loading…</div>
+        ) : items.length === 0 ? (
+          <div style={{ padding: "24px 0", color: "var(--muted)" }}>
+            {filter === "unread" ? "You're all caught up." : "No notifications yet."}
+          </div>
+        ) : (
+          <div>
+            {items.map(n => {
+              const href = notificationHref(n)
+              return (
+                <article
+                  className="message-row"
+                  key={n.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    padding: "10px 12px",
+                    borderRadius: 6,
+                    marginBottom: 4,
+                    background: n.read_at ? "transparent" : "var(--accent-bg)",
+                    cursor: href ? "pointer" : "default",
                   }}
-                  style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}
-                  aria-label="Dismiss"
                 >
-                  <X size={14} strokeWidth={1.75} />
-                </button>
-              </div>
-            )
-          })}
-        </div>
-      )}
+                  <button
+                    type="button"
+                    className="row-open"
+                    aria-label={summarizeNotification(n)}
+                    onClick={() => {
+                      markRead(n)
+                      if (href) navigate(href)
+                    }}
+                  />
+                  <Bell
+                    size={16}
+                    strokeWidth={1.75}
+                    style={{ marginRight: 12, color: n.read_at ? "var(--muted)" : "var(--brand)" }}
+                  />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14 }}>{summarizeNotification(n)}</div>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>{new Date(n.created_at).toLocaleString()}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation()
+                      remove(n)
+                    }}
+                    style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}
+                    aria-label="Dismiss"
+                  >
+                    <X size={14} strokeWidth={1.75} />
+                  </button>
+                </article>
+              )
+            })}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -5109,6 +5690,8 @@ const MessagesView: React.FC<{ onChange: () => void }> = ({ onChange }) => {
   const [box, setBox] = useState<"inbox" | "sent" | "archived">("inbox")
   const [items, setItems] = useState<api.Message[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+  const [sending, setSending] = useState(false)
   const [composing, setComposing] = useState(false)
   const [composeTo, setComposeTo] = useState("")
   const [composeSubject, setComposeSubject] = useState("")
@@ -5117,9 +5700,13 @@ const MessagesView: React.FC<{ onChange: () => void }> = ({ onChange }) => {
 
   const refresh = async () => {
     setLoading(true)
+    setError("")
     try {
       const data = await api.listMessages(box)
+      if ((data as any).error) throw new Error((data as any).error)
       setItems(Array.isArray(data.messages) ? data.messages : [])
+    } catch (e: any) {
+      setError(e?.message ?? "Could not load this page. Check your connection and try again.")
     } finally {
       setLoading(false)
     }
@@ -5130,6 +5717,7 @@ const MessagesView: React.FC<{ onChange: () => void }> = ({ onChange }) => {
   }, [box])
 
   const send = async () => {
+    if (sending) return
     setComposeErr("")
     if (!composeTo.trim() || !composeSubject.trim() || !composeBody.trim()) {
       setComposeErr("Recipient, subject, and message are all required.")
@@ -5139,16 +5727,23 @@ const MessagesView: React.FC<{ onChange: () => void }> = ({ onChange }) => {
     const input = to.includes("@")
       ? { email: to, subject: composeSubject.trim(), body: composeBody.trim() }
       : { username: to.toLowerCase(), subject: composeSubject.trim(), body: composeBody.trim() }
-    const res = await api.sendMessage(input)
-    if ((res as any).error) {
-      setComposeErr((res as any).error)
-      return
+    setSending(true)
+    try {
+      const res = await api.sendMessage(input)
+      if ((res as any).error) {
+        setComposeErr((res as any).error)
+        return
+      }
+      setComposing(false)
+      setComposeTo("")
+      setComposeSubject("")
+      setComposeBody("")
+      if (box === "sent") refresh()
+    } catch {
+      setComposeErr("Could not send your message. Check your connection and try again.")
+    } finally {
+      setSending(false)
     }
-    setComposing(false)
-    setComposeTo("")
-    setComposeSubject("")
-    setComposeBody("")
-    if (box === "sent") refresh()
   }
 
   const markRead = async (m: api.Message) => {
@@ -5173,9 +5768,9 @@ const MessagesView: React.FC<{ onChange: () => void }> = ({ onChange }) => {
 
   return (
     <div className="main">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <h2 style={{ margin: 0 }}>Messages</h2>
-        <div style={{ display: "flex", gap: 8 }}>
+      <div className="toolbar page-toolbar">
+        <h2 className="page-title">Messages</h2>
+        <div className="toolbar-actions">
           <button type="button" onClick={() => setBox("inbox")} className={box === "inbox" ? "primary" : undefined}>
             Inbox
           </button>
@@ -5194,138 +5789,166 @@ const MessagesView: React.FC<{ onChange: () => void }> = ({ onChange }) => {
           </button>
         </div>
       </div>
-      {loading ? (
-        <div style={{ color: "var(--muted)" }}>Loading…</div>
-      ) : items.length === 0 ? (
-        <div style={{ padding: "32px 0", color: "var(--muted)", textAlign: "center" }}>
-          {box === "inbox" ? "Inbox is empty." : box === "sent" ? "Nothing sent." : "No archived messages."}
-        </div>
-      ) : (
-        <div>
-          {items.map(m => {
-            const unread = !m.read_at && box === "inbox"
-            const partyLabel = box === "sent" ? `to @${m.to.username ?? "?"}` : `from ${formatSender(m)}`
-            return (
-              <div
-                key={m.id}
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 6,
-                  marginBottom: 4,
-                  display: "flex",
-                  alignItems: "center",
-                  background: unread ? "var(--accent-bg)" : "transparent",
-                  cursor: "pointer",
-                }}
-                onClick={() => {
-                  markRead(m)
-                  navigate(`/app/messages/thread/${m.thread_id}`)
-                }}
-              >
-                <Mail
-                  size={16}
-                  strokeWidth={1.75}
-                  style={{ marginRight: 12, color: unread ? "var(--brand)" : "var(--muted)" }}
-                />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontWeight: unread ? 600 : 400,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {m.subject}
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                    {partyLabel} · {new Date(m.created_at).toLocaleString()}
-                  </div>
-                </div>
-                {box === "inbox" && (
-                  <button
-                    type="button"
-                    onClick={e => {
-                      e.stopPropagation()
-                      archive(m)
-                    }}
-                    title="Archive"
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: "var(--muted)",
-                      cursor: "pointer",
-                      marginRight: 4,
-                    }}
-                  >
-                    <Inbox size={14} strokeWidth={1.75} />
-                  </button>
-                )}
-                {box === "archived" && (
-                  <button
-                    type="button"
-                    onClick={e => {
-                      e.stopPropagation()
-                      unarchive(m)
-                    }}
-                    title="Unarchive"
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: "var(--muted)",
-                      cursor: "pointer",
-                      marginRight: 4,
-                    }}
-                  >
-                    <ArrowRight size={14} strokeWidth={1.75} />
-                  </button>
-                )}
-                {box !== "sent" && (
-                  <button
-                    type="button"
-                    onClick={e => {
-                      e.stopPropagation()
-                      remove(m)
-                    }}
-                    title="Delete"
-                    style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}
-                  >
-                    <X size={14} strokeWidth={1.75} />
-                  </button>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {composing && (
-        <Modal title="New message" onClose={() => setComposing(false)}>
-          {composeErr && <div className="msg err">{composeErr}</div>}
-          <input
-            placeholder="To (username or email)"
-            value={composeTo}
-            onChange={e => setComposeTo(e.target.value)}
-            autoFocus
-          />
-          <input placeholder="Subject" value={composeSubject} onChange={e => setComposeSubject(e.target.value)} />
-          <textarea
-            placeholder="Message"
-            rows={8}
-            value={composeBody}
-            onChange={e => setComposeBody(e.target.value)}
-            style={{ width: "100%", boxSizing: "border-box" }}
-          />
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button type="button" onClick={() => setComposing(false)}>
-              Cancel
-            </button>
-            <button type="button" className="primary" onClick={send}>
-              Send
+      <div className="content">
+        {error && (
+          <div className="msg err" role="alert">
+            {error}{" "}
+            <button type="button" onClick={refresh}>
+              Try again
             </button>
           </div>
-        </Modal>
-      )}
+        )}
+        {error ? null : loading ? (
+          <div style={{ color: "var(--muted)" }}>Loading…</div>
+        ) : items.length === 0 ? (
+          <div style={{ padding: "32px 0", color: "var(--muted)", textAlign: "center" }}>
+            {box === "inbox" ? "Inbox is empty." : box === "sent" ? "Nothing sent." : "No archived messages."}
+          </div>
+        ) : (
+          <div>
+            {items.map(m => {
+              const unread = !m.read_at && box === "inbox"
+              const partyLabel = box === "sent" ? `to @${m.to.username ?? "?"}` : `from ${formatSender(m)}`
+              return (
+                <article
+                  className="message-row"
+                  key={m.id}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 6,
+                    marginBottom: 4,
+                    display: "flex",
+                    alignItems: "center",
+                    background: unread ? "var(--accent-bg)" : "transparent",
+                    cursor: "pointer",
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="row-open"
+                    aria-label={`Open message ${m.subject}`}
+                    onClick={() => {
+                      markRead(m)
+                      navigate(`/app/messages/thread/${m.thread_id}`)
+                    }}
+                  />
+                  <Mail
+                    size={16}
+                    strokeWidth={1.75}
+                    style={{ marginRight: 12, color: unread ? "var(--brand)" : "var(--muted)" }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontWeight: unread ? 600 : 400,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {m.subject}
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                      {partyLabel} · {new Date(m.created_at).toLocaleString()}
+                    </div>
+                  </div>
+                  {box === "inbox" && (
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation()
+                        archive(m)
+                      }}
+                      title="Archive"
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: "var(--muted)",
+                        cursor: "pointer",
+                        marginRight: 4,
+                      }}
+                    >
+                      <Inbox size={14} strokeWidth={1.75} />
+                    </button>
+                  )}
+                  {box === "archived" && (
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation()
+                        unarchive(m)
+                      }}
+                      title="Unarchive"
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: "var(--muted)",
+                        cursor: "pointer",
+                        marginRight: 4,
+                      }}
+                    >
+                      <ArrowRight size={14} strokeWidth={1.75} />
+                    </button>
+                  )}
+                  {box !== "sent" && (
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation()
+                        remove(m)
+                      }}
+                      title="Delete"
+                      style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}
+                    >
+                      <X size={14} strokeWidth={1.75} />
+                    </button>
+                  )}
+                </article>
+              )
+            })}
+          </div>
+        )}
+
+        {composing && (
+          <Modal title="New message" onClose={() => setComposing(false)}>
+            {composeErr && <div className="msg err">{composeErr}</div>}
+            <input
+              aria-label="To (username or email)"
+              placeholder="To (username or email)"
+              value={composeTo}
+              onChange={e => setComposeTo(e.target.value)}
+              autoFocus
+            />
+            <input
+              aria-label="Subject"
+              placeholder="Subject"
+              value={composeSubject}
+              onChange={e => setComposeSubject(e.target.value)}
+            />
+            <textarea
+              aria-label="Message"
+              placeholder="Message"
+              rows={8}
+              value={composeBody}
+              onChange={e => setComposeBody(e.target.value)}
+              style={{ width: "100%", boxSizing: "border-box" }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button type="button" onClick={() => setComposing(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary"
+                disabled={sending || !composeTo.trim() || !composeSubject.trim() || !composeBody.trim()}
+                onClick={send}
+              >
+                {sending ? "Sending…" : "Send message"}
+              </button>
+            </div>
+          </Modal>
+        )}
+      </div>
     </div>
   )
 }
@@ -5405,9 +6028,9 @@ const MessageThreadView: React.FC<{ threadId: number; onChange: () => void }> = 
     <div className="main">
       <div className="content">
         <div style={{ marginBottom: 8 }}>
-          <span style={{ color: "var(--muted)", cursor: "pointer" }} onClick={() => navigate("/app/messages")}>
-            ← Messages
-          </span>
+          <button type="button" className="crumb" onClick={() => navigate("/app/messages")}>
+            <ArrowLeft size={14} /> Messages
+          </button>
         </div>
         <h2 style={{ margin: "0 0 16px" }}>{items[0]!.subject}</h2>
         <div>
@@ -5433,6 +6056,7 @@ const MessageThreadView: React.FC<{ threadId: number; onChange: () => void }> = 
         {canReply ? (
           <div style={{ marginTop: 16 }}>
             <textarea
+              aria-label="Reply…"
               placeholder="Reply…"
               rows={4}
               value={replyBody}
@@ -5454,6 +6078,7 @@ const MessageThreadView: React.FC<{ threadId: number; onChange: () => void }> = 
 const SpacesListView: React.FC = () => {
   const [spaces, setSpaces] = useState<api.Space[]>([])
   const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
@@ -5463,7 +6088,11 @@ const SpacesListView: React.FC = () => {
     setLoading(true)
     try {
       const data = await api.listSpaces()
+      if ((data as any).error) throw new Error((data as any).error)
       setSpaces(Array.isArray(data.spaces) ? data.spaces : [])
+      setErr("")
+    } catch (e: any) {
+      setErr(e?.message ?? "Could not load spaces. Try again.")
     } finally {
       setLoading(false)
     }
@@ -5473,87 +6102,109 @@ const SpacesListView: React.FC = () => {
   }, [])
 
   const create = async () => {
-    setErr("")
     const trimmed = name.trim()
-    if (!trimmed) return
-    const res = await api.createSpace({ name: trimmed, description: description.trim() || undefined })
-    if ((res as any).error) {
-      setErr((res as any).error)
-      return
+    if (!trimmed || busy) return
+    setBusy(true)
+    setErr("")
+    try {
+      const res = await api.createSpace({ name: trimmed, description: description.trim() || undefined })
+      if ((res as any).error) return setErr((res as any).error)
+      setName("")
+      setDescription("")
+      setCreating(false)
+      await refresh()
+    } catch {
+      setErr("Could not create the space. Check your connection and try again.")
+    } finally {
+      setBusy(false)
     }
-    setName("")
-    setDescription("")
-    setCreating(false)
-    await refresh()
   }
 
   return (
     <div className="main">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <h2 style={{ margin: 0 }}>Spaces</h2>
-        <button type="button" className="primary" onClick={() => setCreating(true)}>
+      <div className="toolbar page-toolbar">
+        <h2 className="page-title">Spaces</h2>
+        <button
+          type="button"
+          className="primary"
+          onClick={() => {
+            setErr("")
+            setCreating(true)
+          }}
+        >
           <Plus size={14} strokeWidth={1.75} /> New space
         </button>
       </div>
-      <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>
-        Spaces are shared workspaces. Files in a space belong to the team, not to any one person.
-      </div>
-      {loading ? (
-        <div style={{ color: "var(--muted)" }}>Loading…</div>
-      ) : spaces.length === 0 ? (
-        <div style={{ padding: "32px 0", color: "var(--muted)", textAlign: "center" }}>
-          No spaces yet. Create one to share a folder tree with your team.
+      <div className="content">
+        <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>
+          Create a shared workspace for a project, department, or campaign. Members get access to its folders and files.
         </div>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
-          {spaces.map(s => (
-            <div
-              key={s.id}
-              style={{
-                padding: 16,
-                borderRadius: 8,
-                border: "1px solid var(--border)",
-                cursor: "pointer",
-                background: "var(--panel-elev)",
-              }}
-              onClick={() => navigate(`/app/spaces/${s.id}`)}
-            >
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                <Briefcase size={14} strokeWidth={1.75} style={{ marginRight: 6, verticalAlign: -2 }} />
-                {s.name}
-              </div>
-              {s.description && (
-                <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8 }}>{s.description}</div>
-              )}
-              <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                {s.my_role} · /{s.slug}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {creating && (
-        <Modal title="Create a space" onClose={() => setCreating(false)}>
-          {err && <div className="msg err">{err}</div>}
-          <input placeholder="Space name" value={name} onChange={e => setName(e.target.value)} autoFocus />
-          <textarea
-            placeholder="Description (optional)"
-            rows={3}
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            style={{ width: "100%", boxSizing: "border-box" }}
-          />
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button type="button" onClick={() => setCreating(false)}>
-              Cancel
-            </button>
-            <button type="button" className="primary" onClick={create} disabled={!name.trim()}>
-              Create
+        {err && !creating && (
+          <div className="msg err" role="alert">
+            {err}{" "}
+            <button type="button" onClick={refresh}>
+              Try again
             </button>
           </div>
-        </Modal>
-      )}
+        )}
+        {loading ? (
+          <div style={{ color: "var(--muted)" }}>Loading…</div>
+        ) : err ? null : spaces.length === 0 ? (
+          <div style={{ padding: "32px 0", color: "var(--muted)", textAlign: "center" }}>
+            No spaces yet. Create one for your team’s shared files.
+          </div>
+        ) : (
+          <div className="spaces-grid">
+            {spaces.map(s => (
+              <button type="button" key={s.id} className="space-card" onClick={() => navigate(`/app/spaces/${s.id}`)}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  <Briefcase size={14} strokeWidth={1.75} style={{ marginRight: 6, verticalAlign: -2 }} />
+                  {s.name}
+                </div>
+                {s.description && (
+                  <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8 }}>{s.description}</div>
+                )}
+                <div className="space-role">
+                  {s.my_role === "admin" ? "Space admin" : s.my_role === "editor" ? "Can edit" : "View only"}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {creating && (
+          <Modal title="Create a space" onClose={() => setCreating(false)}>
+            {err && (
+              <div className="msg err" role="alert">
+                {err}
+              </div>
+            )}
+            <input
+              aria-label="Space name"
+              placeholder="Space name"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              autoFocus
+            />
+            <textarea
+              aria-label="Description (optional)"
+              placeholder="Description (optional)"
+              rows={3}
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              style={{ width: "100%", boxSizing: "border-box" }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button type="button" onClick={() => setCreating(false)}>
+                Cancel
+              </button>
+              <button type="button" className="primary" onClick={create} disabled={busy || !name.trim()}>
+                {busy ? "Creating…" : "Create space"}
+              </button>
+            </div>
+          </Modal>
+        )}
+      </div>
     </div>
   )
 }
@@ -5564,6 +6215,7 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
   const [members, setMembers] = useState<api.SpaceMember[]>([])
   const [tab, setTab] = useState<"folders" | "members">("folders")
   const [err, setErr] = useState("")
+  const [busy, setBusy] = useState(false)
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState("")
   const [addingMember, setAddingMember] = useState(false)
@@ -5589,11 +6241,16 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
     refresh()
   }, [id])
 
-  if (err)
+  if (err && !space)
     return (
       <div className="main">
         <div className="content">
-          <div className="msg err">{err}</div>
+          <div className="msg err" role="alert">
+            {err}
+          </div>
+          <button type="button" onClick={refresh}>
+            Try again
+          </button>
         </div>
       </div>
     )
@@ -5610,62 +6267,104 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
   const canEdit = isAdmin || space.my_role === "editor"
 
   const createFolder = async () => {
-    const trimmed = newFolderName.trim()
-    if (!trimmed) return
-    const res = await api.createSpaceFolder(id, trimmed)
-    if ((res as any).error) {
-      setErr((res as any).error)
-      return
+    if (busy) return
+    setBusy(true)
+    setErr("")
+    try {
+      const trimmed = newFolderName.trim()
+      if (!trimmed) return
+      const res = await api.createSpaceFolder(id, trimmed)
+      if ((res as any).error) {
+        setErr((res as any).error)
+        return
+      }
+      setNewFolderName("")
+      setCreatingFolder(false)
+      await refresh()
+    } catch {
+      setErr("Could not create the folder. Check your connection and try again.")
+    } finally {
+      setBusy(false)
     }
-    setNewFolderName("")
-    setCreatingFolder(false)
-    await refresh()
   }
 
   const addMember = async () => {
-    const ident = memberIdentity.trim()
-    if (!ident) return
-    const input = ident.includes("@")
-      ? { email: ident, role: memberRole }
-      : { username: ident.toLowerCase(), role: memberRole }
-    const res = await api.addSpaceMember(id, input)
-    if ((res as any).error) {
-      setErr((res as any).error)
-      return
+    if (busy) return
+    setBusy(true)
+    setErr("")
+    try {
+      const ident = memberIdentity.trim()
+      if (!ident) return
+      const input = ident.includes("@")
+        ? { email: ident, role: memberRole }
+        : { username: ident.toLowerCase(), role: memberRole }
+      const res = await api.addSpaceMember(id, input)
+      if ((res as any).error) {
+        setErr((res as any).error)
+        return
+      }
+      setMemberIdentity("")
+      setAddingMember(false)
+      await refresh()
+    } catch {
+      setErr("Could not add the member. Check your connection and try again.")
+    } finally {
+      setBusy(false)
     }
-    setMemberIdentity("")
-    setAddingMember(false)
-    await refresh()
   }
 
   const removeMember = async (m: api.SpaceMember) => {
-    if (!confirm(`Remove ${m.user.name ?? m.user.username} from this space?`)) return
-    await api.removeSpaceMember(id, m.id)
-    await refresh()
+    if (busy) return
+    setBusy(true)
+    setErr("")
+    try {
+      if (!confirm(`Remove ${m.user.name ?? m.user.username} from this space?`)) return
+      const res = await api.removeSpaceMember(id, m.id)
+      if (res.error) return setErr(res.error)
+      await refresh()
+    } catch {
+      setErr("Could not remove the member. Check your connection and try again.")
+    } finally {
+      setBusy(false)
+    }
   }
 
   const changeRole = async (m: api.SpaceMember, role: api.SpaceRole) => {
-    await api.updateSpaceMember(id, m.id, role)
-    await refresh()
+    if (busy) return
+    setBusy(true)
+    setErr("")
+    try {
+      const res = await api.updateSpaceMember(id, m.id, role)
+      if (res.error) return setErr(res.error)
+      await refresh()
+    } catch {
+      setErr("Could not update access. Check your connection and try again.")
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
     <div className="main">
+      <div className="toolbar">
+        <h2 className="page-title">{space.name}</h2>
+      </div>
       <div className="content">
+        {err && (
+          <div className="msg err" role="alert">
+            {err}
+          </div>
+        )}
         <div style={{ marginBottom: 8 }}>
-          <span style={{ color: "var(--muted)", cursor: "pointer" }} onClick={() => navigate("/app/spaces")}>
-            ← Spaces
-          </span>
+          <button type="button" className="crumb" onClick={() => navigate("/app/spaces")}>
+            <ArrowLeft size={14} /> Spaces
+          </button>
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <div>
-            <h2 style={{ margin: 0 }}>
-              <Briefcase size={18} strokeWidth={1.75} style={{ marginRight: 8, verticalAlign: -3 }} />
-              {space.name}
-            </h2>
             {space.description && <div style={{ color: "var(--muted)", marginTop: 4 }}>{space.description}</div>}
             <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-              you are {space.my_role} · /{space.slug}
+              {space.my_role === "admin" ? "Space admin" : space.my_role === "editor" ? "Can edit" : "View-only access"}
             </div>
           </div>
         </div>
@@ -5705,15 +6404,21 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
             {canEdit && (
               <div style={{ marginBottom: 12 }}>
                 {creatingFolder ? (
-                  <div style={{ display: "flex", gap: 8 }}>
+                  <div className="inline-form">
                     <input
+                      aria-label="Folder name"
                       autoFocus
                       placeholder="Folder name"
                       value={newFolderName}
                       onChange={e => setNewFolderName(e.target.value)}
                       onKeyDown={e => e.key === "Enter" && createFolder()}
                     />
-                    <button type="button" className="primary" onClick={createFolder} disabled={!newFolderName.trim()}>
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={createFolder}
+                      disabled={busy || !newFolderName.trim()}
+                    >
                       Create
                     </button>
                     <button
@@ -5734,11 +6439,16 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
               </div>
             )}
             {folders.length === 0 ? (
-              <div style={{ padding: "24px 0", color: "var(--muted)" }}>No folders yet.</div>
+              <div style={{ padding: "24px 0", color: "var(--muted)" }}>
+                {canEdit
+                  ? "No folders yet. Create a folder to start organizing shared files."
+                  : "No folders yet. A space editor can add folders here."}
+              </div>
             ) : (
               <div>
                 {folders.map(f => (
-                  <div
+                  <button
+                    type="button"
                     key={f.id}
                     style={{
                       padding: "8px 12px",
@@ -5748,11 +6458,12 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
                       alignItems: "center",
                     }}
                     className="picker-row"
+                    aria-label={`Open folder ${f.name}`}
                     onClick={() => navigate(`/app/f/${f.id}`)}
                   >
                     <FolderIcon size={16} strokeWidth={1.5} />
                     <span style={{ marginLeft: 8 }}>{f.name}</span>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
@@ -5764,19 +6475,29 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
             {isAdmin && (
               <div style={{ marginBottom: 12 }}>
                 {addingMember ? (
-                  <div style={{ display: "flex", gap: 8 }}>
+                  <div className="inline-form">
                     <input
+                      aria-label="username or email"
                       autoFocus
                       placeholder="username or email"
                       value={memberIdentity}
                       onChange={e => setMemberIdentity(e.target.value)}
                     />
-                    <select value={memberRole} onChange={e => setMemberRole(e.target.value as api.SpaceRole)}>
+                    <select
+                      aria-label="New member access"
+                      value={memberRole}
+                      onChange={e => setMemberRole(e.target.value as api.SpaceRole)}
+                    >
                       <option value="viewer">Viewer</option>
                       <option value="editor">Editor</option>
                       <option value="admin">Admin</option>
                     </select>
-                    <button type="button" className="primary" onClick={addMember} disabled={!memberIdentity.trim()}>
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={addMember}
+                      disabled={busy || !memberIdentity.trim()}
+                    >
                       Add
                     </button>
                     <button
@@ -5817,6 +6538,8 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
                   {isAdmin && m.user.id !== space.owner_id ? (
                     <>
                       <select
+                        aria-label={`Access for ${m.user.name ?? m.user.username}`}
+                        disabled={busy}
                         value={m.role}
                         onChange={e => changeRole(m, e.target.value as api.SpaceRole)}
                         style={{ marginRight: 8 }}
@@ -5828,6 +6551,7 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
                       <button
                         type="button"
                         onClick={() => removeMember(m)}
+                        aria-label={`Remove ${m.user.name ?? m.user.username}`}
                         style={{ background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer" }}
                       >
                         <X size={14} strokeWidth={1.75} />
@@ -5849,6 +6573,7 @@ const SpaceView: React.FC<{ id: number }> = ({ id }) => {
 }
 
 const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, route }) => {
+  const [folderSpaceId, setFolderSpaceId] = useState<number | null>(null)
   const [userSnapshot, setUserSnapshot] = useState(api.getUser())
   // the login response has no team fields; /me does
   useEffect(() => {
@@ -5966,13 +6691,15 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
       <button
         type="button"
         className="mobile-nav-toggle"
-        onClick={() => setMobileNavOpen(true)}
-        aria-label="Open navigation"
+        onClick={() => setMobileNavOpen(v => !v)}
+        aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
+        aria-expanded={mobileNavOpen}
+        aria-controls="stohr-navigation"
       >
-        <Menu size={20} strokeWidth={1.75} />
+        {mobileNavOpen ? <X size={20} strokeWidth={1.75} /> : <Menu size={20} strokeWidth={1.75} />}
       </button>
       <div className="sidebar-backdrop" onClick={() => setMobileNavOpen(false)} aria-hidden="true" />
-      <aside className="sidebar">
+      <aside id="stohr-navigation" className="sidebar" aria-label="Main navigation">
         <div className="sidebar-head">
           <div className="brand">
             <Logo />
@@ -5994,46 +6721,64 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
             <span className="nav-label">{userSnapshot.team.name}</span>
           </div>
         )}
-        <div className={`nav${activeTab === "files" ? " active" : ""}`} onClick={() => navigate("/")} title="My Files">
-          <FolderOpen size={18} strokeWidth={1.75} /> <span className="nav-label">My Files</span>
-        </div>
-        <div
+        <button
+          type="button"
+          className={`nav${activeTab === "files" && !folderSpaceId ? " active" : ""}`}
+          aria-current={activeTab === "files" && !folderSpaceId ? "page" : undefined}
+          onClick={() => navigate("/")}
+          title="My files"
+        >
+          <FolderOpen size={18} strokeWidth={1.75} /> <span className="nav-label">My files</span>
+        </button>
+        <button
+          type="button"
           className={`nav${activeTab === "shared" ? " active" : ""}`}
+          aria-current={activeTab === "shared" ? "page" : undefined}
           onClick={() => navigate("/app/shared")}
           title="Shared with me"
         >
           <Users size={18} strokeWidth={1.75} /> <span className="nav-label">Shared with me</span>
-        </div>
-        <div
-          className={`nav${activeTab === "spaces" ? " active" : ""}`}
+        </button>
+        <button
+          type="button"
+          className={`nav${activeTab === "spaces" || (activeTab === "files" && folderSpaceId != null) ? " active" : ""}`}
+          aria-current={activeTab === "spaces" || (activeTab === "files" && folderSpaceId != null) ? "page" : undefined}
           onClick={() => navigate("/app/spaces")}
           title="Spaces"
         >
           <Briefcase size={18} strokeWidth={1.75} /> <span className="nav-label">Spaces</span>
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           className={`nav${activeTab === "links" ? " active" : ""}`}
+          aria-current={activeTab === "links" ? "page" : undefined}
           onClick={() => navigate("/app/links")}
           title="Public links"
         >
           <Link2 size={18} strokeWidth={1.75} /> <span className="nav-label">Public links</span>
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           className={`nav${activeTab === "actions" ? " active" : ""}`}
+          aria-current={activeTab === "actions" ? "page" : undefined}
           onClick={() => navigate("/app/actions")}
-          title="Actions"
+          title="Automations"
         >
-          <Zap size={18} strokeWidth={1.75} /> <span className="nav-label">Actions</span>
-        </div>
-        <div
+          <Zap size={18} strokeWidth={1.75} /> <span className="nav-label">Automations</span>
+        </button>
+        <button
+          type="button"
           className={`nav${activeTab === "trash" ? " active" : ""}`}
+          aria-current={activeTab === "trash" ? "page" : undefined}
           onClick={() => navigate("/app/trash")}
           title="Trash"
         >
           <Trash2 size={18} strokeWidth={1.75} /> <span className="nav-label">Trash</span>
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           className={`nav${activeTab === "notifications" ? " active" : ""}`}
+          aria-current={activeTab === "notifications" ? "page" : undefined}
           onClick={() => navigate("/app/notifications")}
           title="Notifications"
         >
@@ -6043,7 +6788,7 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
               style={{
                 marginLeft: "auto",
                 background: "var(--brand)",
-                color: "white",
+                color: "var(--brand-fg)",
                 borderRadius: 10,
                 fontSize: 11,
                 padding: "0 6px",
@@ -6054,9 +6799,11 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
               {unreadNotif > 99 ? "99+" : unreadNotif}
             </span>
           )}
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           className={`nav${activeTab === "messages" ? " active" : ""}`}
+          aria-current={activeTab === "messages" ? "page" : undefined}
           onClick={() => navigate("/app/messages")}
           title="Messages"
         >
@@ -6066,7 +6813,7 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
               style={{
                 marginLeft: "auto",
                 background: "var(--brand)",
-                color: "white",
+                color: "var(--brand-fg)",
                 borderRadius: 10,
                 fontSize: 11,
                 padding: "0 6px",
@@ -6077,54 +6824,50 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
               {unreadMsg > 99 ? "99+" : unreadMsg}
             </span>
           )}
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           className={`nav${activeTab === "settings" ? " active" : ""}`}
+          aria-current={activeTab === "settings" ? "page" : undefined}
           onClick={() => navigate("/app/settings")}
           title="Settings"
         >
           <SettingsIcon size={18} strokeWidth={1.75} /> <span className="nav-label">Settings</span>
-        </div>
+        </button>
         {/* the owner already has all of this under Admin */}
         {userSnapshot?.team_admin && !userSnapshot.is_owner && (
-          <div
+          <button
+            type="button"
             className={`nav${activeTab === "team" ? " active" : ""}`}
+            aria-current={activeTab === "team" ? "page" : undefined}
             onClick={() => navigate("/app/team")}
             title="Team"
           >
             <ShieldCheck size={18} strokeWidth={1.75} /> <span className="nav-label">Team</span>
-          </div>
+          </button>
         )}
         {userSnapshot?.is_owner && (
-          <div
+          <button
+            type="button"
             className={`nav${activeTab === "admin" ? " active" : ""}`}
+            aria-current={activeTab === "admin" ? "page" : undefined}
             onClick={() => navigate("/app/admin")}
             title="Admin"
           >
             <AlertTriangle size={18} strokeWidth={1.75} /> <span className="nav-label">Admin</span>
-          </div>
+          </button>
         )}
         <div className="help-wrap" ref={helpRef}>
-          {/* A bare div can't carry aria-haspopup/aria-expanded and can't be
-              reached by keyboard. Kept as a div for styling, but given the
-              button role and key handling that role implies. */}
-          <div
+          <button
+            type="button"
             className={`nav${helpOpen ? " active" : ""}`}
             onClick={() => setHelpOpen(v => !v)}
-            onKeyDown={e => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault()
-                setHelpOpen(v => !v)
-              }
-            }}
             title="Help & resources"
-            role="button"
-            tabIndex={0}
             aria-haspopup="menu"
             aria-expanded={helpOpen}
           >
             <HelpCircle size={18} strokeWidth={1.75} /> <span className="nav-label">Help</span>
-          </div>
+          </button>
           {helpOpen && (
             <div className="help-menu" role="menu">
               <a href="https://github.com/wess/stohr/tree/main/docs" target="_blank" rel="noreferrer" role="menuitem">
@@ -6166,14 +6909,15 @@ const Shell: React.FC<{ onLogout: () => void; route: Route }> = ({ onLogout, rou
           <div className="user-meta">
             <div className="who">{userSnapshot?.name ?? ""}</div>
             <div className="who muted">@{userSnapshot?.username ?? ""}</div>
-            <div className="logout" onClick={onLogout}>
+            <button type="button" className="logout" onClick={onLogout}>
               Sign out
-            </div>
+            </button>
           </div>
         </div>
       </aside>
       {activeTab === "files" && (
         <Files
+          onSpaceChange={setFolderSpaceId}
           routeFolderId={route.kind === "folder" ? route.id : null}
           routeFileId={route.kind === "file" ? route.id : null}
         />
@@ -6408,10 +7152,11 @@ const S3KeysSection: React.FC = () => {
 
       {creating && !justCreated && (
         <div className="dev-create">
-          <label>
+          <label htmlFor="s3keyssection-name">
             Name <span className="lp-field-opt">(optional, e.g. "laptop")</span>
           </label>
           <input
+            id="s3keyssection-name"
             value={newName}
             onChange={e => setNewName(e.target.value)}
             placeholder="What's this key for?"
@@ -6540,17 +7285,23 @@ const AppsSection: React.FC = () => {
 
       {creating && !justCreated && (
         <div className="dev-create">
-          <label>Name</label>
+          <label htmlFor="appssection-name">Name</label>
           <input
+            id="appssection-name"
             value={newName}
             onChange={e => setNewName(e.target.value)}
             placeholder="e.g. Flutter app, CI bot"
             autoFocus
           />
-          <label style={{ marginTop: 8 }}>
+          <label htmlFor="appssection-description" style={{ marginTop: 8 }}>
             Description <span className="lp-field-opt">(optional)</span>
           </label>
-          <input value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="What's this app for?" />
+          <input
+            id="appssection-description"
+            value={newDesc}
+            onChange={e => setNewDesc(e.target.value)}
+            placeholder="What's this app for?"
+          />
           {error && (
             <div className="msg err" style={{ marginTop: 8 }}>
               {error}
@@ -7042,8 +7793,9 @@ const CreateFederationForm: React.FC<{ onCancel: () => void; onCreated: () => vo
 
   return (
     <div className="fed-form">
-      <label>Slug</label>
+      <label htmlFor="createfederationform-slug">Slug</label>
       <input
+        id="createfederationform-slug"
         value={slug}
         onChange={e => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
         placeholder="my-friends"
@@ -7054,13 +7806,21 @@ const CreateFederationForm: React.FC<{ onCancel: () => void; onCreated: () => vo
         later.
       </div>
 
-      <label style={{ marginTop: 10 }}>Name</label>
-      <input value={name} onChange={e => setName(e.target.value)} placeholder="My friends" />
+      <label htmlFor="createfederationform-name" style={{ marginTop: 10 }}>
+        Name
+      </label>
+      <input
+        id="createfederationform-name"
+        value={name}
+        onChange={e => setName(e.target.value)}
+        placeholder="My friends"
+      />
 
-      <label style={{ marginTop: 10 }}>
+      <label htmlFor="createfederationform-description" style={{ marginTop: 10 }}>
         Description <span className="lp-field-opt">(optional)</span>
       </label>
       <input
+        id="createfederationform-description"
         value={description}
         onChange={e => setDescription(e.target.value)}
         placeholder="What's this federation for?"
@@ -7099,8 +7859,11 @@ const CreateFederationForm: React.FC<{ onCancel: () => void; onCreated: () => vo
         </label>
       </div>
 
-      <label style={{ marginTop: 10 }}>Replication factor</label>
+      <label htmlFor="createfederationform-replication-factor" style={{ marginTop: 10 }}>
+        Replication factor
+      </label>
       <input
+        id="createfederationform-replication-factor"
         type="number"
         min={1}
         max={16}
@@ -7154,17 +7917,19 @@ const AcceptInviteForm: React.FC<{ onCancel: () => void; onAccepted: () => void 
 
   return (
     <div className="fed-form">
-      <label>Invite token</label>
+      <label htmlFor="acceptinviteform-invite-token">Invite token</label>
       <textarea
+        id="acceptinviteform-invite-token"
         value={token}
         onChange={e => setToken(e.target.value)}
         placeholder="Paste the invite token someone sent you (starts with eyJ…)"
         rows={4}
       />
-      <label style={{ marginTop: 10 }}>
+      <label htmlFor="acceptinviteform-display-name" style={{ marginTop: 10 }}>
         Display name <span className="lp-field-opt">(optional)</span>
       </label>
       <input
+        id="acceptinviteform-display-name"
         value={displayName}
         onChange={e => setDisplayName(e.target.value)}
         placeholder="How other members see you (e.g. wess@home)"
@@ -7522,8 +8287,9 @@ const ContributeForm: React.FC<{ federationId: number; onDone: () => void; onCan
 
   return (
     <div className="fed-form" style={{ marginTop: 10 }}>
-      <label>Quota (GB)</label>
+      <label htmlFor="contributeform-quota-gb">Quota (GB)</label>
       <input
+        id="contributeform-quota-gb"
         type="number"
         min={1}
         value={quotaGB}
@@ -7533,8 +8299,14 @@ const ContributeForm: React.FC<{ federationId: number; onDone: () => void; onCan
         How much disk space this instance is offering to the federation. Floor is 0.1 GB.
       </div>
 
-      <label style={{ marginTop: 10 }}>Existing folder</label>
-      <select value={folderId ?? ""} onChange={e => setFolderId(e.target.value ? Number(e.target.value) : null)}>
+      <label htmlFor="contributeform-existing-folder" style={{ marginTop: 10 }}>
+        Existing folder
+      </label>
+      <select
+        id="contributeform-existing-folder"
+        value={folderId ?? ""}
+        onChange={e => setFolderId(e.target.value ? Number(e.target.value) : null)}
+      >
         <option value="">— pick a folder —</option>
         {(folders ?? []).map(f => (
           <option key={f.id} value={f.id}>
@@ -7546,8 +8318,11 @@ const ContributeForm: React.FC<{ federationId: number; onDone: () => void; onCan
         Only root-level folders that aren't already tied to a federation are eligible.
       </div>
 
-      <label style={{ marginTop: 10 }}>Or create a new dedicated folder</label>
+      <label htmlFor="contributeform-or-create-a-new-dedicated-folder" style={{ marginTop: 10 }}>
+        Or create a new dedicated folder
+      </label>
       <input
+        id="contributeform-or-create-a-new-dedicated-folder"
         value={newFolderName}
         onChange={e => setNewFolderName(e.target.value)}
         placeholder="e.g. Federation: friends"
@@ -7732,20 +8507,28 @@ const OAuthClientsSection: React.FC = () => {
 
       {creating && !justCreated && (
         <div className="dev-create">
-          <label>Name</label>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Butter" autoFocus />
-          <label style={{ marginTop: 10 }}>
+          <label htmlFor="oauthclientssection-name">Name</label>
+          <input
+            id="oauthclientssection-name"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="e.g. Butter"
+            autoFocus
+          />
+          <label htmlFor="oauthclientssection-description" style={{ marginTop: 10 }}>
             Description <span className="lp-field-opt">(optional)</span>
           </label>
           <input
+            id="oauthclientssection-description"
             value={description}
             onChange={e => setDescription(e.target.value)}
             placeholder="Desktop screenshot uploader"
           />
-          <label style={{ marginTop: 10 }}>
+          <label htmlFor="oauthclientssection-redirect-uris" style={{ marginTop: 10 }}>
             Redirect URIs <span className="lp-field-opt">(one per line, exact match)</span>
           </label>
           <textarea
+            id="oauthclientssection-redirect-uris"
             value={redirectsRaw}
             onChange={e => setRedirectsRaw(e.target.value)}
             placeholder={"stohrshot://oauth/callback\nhttp://localhost:5173/callback"}
@@ -8049,8 +8832,11 @@ const SecurityPanel: React.FC = () => {
           >
             {setup.secret}
           </code>
-          <label style={{ marginTop: 14 }}>6-digit code from your app</label>
+          <label htmlFor="securitypanel-6-digit-code-from-your-app" style={{ marginTop: 14 }}>
+            6-digit code from your app
+          </label>
           <input
+            id="securitypanel-6-digit-code-from-your-app"
             inputMode="numeric"
             maxLength={6}
             value={enableCode}
@@ -8149,8 +8935,13 @@ const SecurityPanel: React.FC = () => {
 
           {showRegen && (
             <div className="dev-create">
-              <label>Confirm with your password</label>
-              <input type="password" value={regenPw} onChange={e => setRegenPw(e.target.value)} />
+              <label htmlFor="securitypanel-confirm-with-your-password">Confirm with your password</label>
+              <input
+                id="securitypanel-confirm-with-your-password"
+                type="password"
+                value={regenPw}
+                onChange={e => setRegenPw(e.target.value)}
+              />
               {error && (
                 <div className="msg err" style={{ marginTop: 8 }}>
                   {error}
@@ -8176,10 +8967,18 @@ const SecurityPanel: React.FC = () => {
 
           {showDisable && (
             <div className="dev-create">
-              <label>Password</label>
-              <input type="password" value={disablePw} onChange={e => setDisablePw(e.target.value)} />
-              <label style={{ marginTop: 10 }}>6-digit code from your app</label>
+              <label htmlFor="securitypanel-password">Password</label>
               <input
+                id="securitypanel-password"
+                type="password"
+                value={disablePw}
+                onChange={e => setDisablePw(e.target.value)}
+              />
+              <label htmlFor="securitypanel-6-digit-code-from-your-app-2" style={{ marginTop: 10 }}>
+                6-digit code from your app
+              </label>
+              <input
+                id="securitypanel-6-digit-code-from-your-app-2"
                 inputMode="numeric"
                 maxLength={6}
                 value={disableCode}
@@ -8377,6 +9176,7 @@ const PasskeysSection: React.FC = () => {
             Give this passkey a name so you can tell it apart from others later (e.g. "iPhone", "Work laptop").
           </div>
           <input
+            aria-label="Passkey name"
             autoFocus
             placeholder="Passkey name"
             value={draftName}
@@ -8550,8 +9350,16 @@ const InvitesPanel: React.FC = () => {
       <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 12 }}>
         Stohr is invite-only. Mint an invite to bring someone in.
       </div>
-      <label>Email (optional, locks the invite to this address)</label>
-      <input type="email" placeholder="alice@example.com" value={email} onChange={e => setEmail(e.target.value)} />
+      <label htmlFor="invitespanel-email-optional-locks-the-invite-to-this-address">
+        Email (optional, locks the invite to this address)
+      </label>
+      <input
+        id="invitespanel-email-optional-locks-the-invite-to-this-address"
+        type="email"
+        placeholder="alice@example.com"
+        value={email}
+        onChange={e => setEmail(e.target.value)}
+      />
       {error && <div className="msg err">{error}</div>}
       <div className="settings-actions">
         <button type="button" className="primary" onClick={create}>
@@ -8741,17 +9549,18 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
             <>
               <section className="settings-card">
                 <h3>Profile</h3>
-                <label>Name</label>
-                <input value={name} onChange={e => setName(e.target.value)} />
-                <label>Username</label>
+                <label htmlFor="settings-name">Name</label>
+                <input id="settings-name" value={name} onChange={e => setName(e.target.value)} />
+                <label htmlFor="settings-username">Username</label>
                 <input
+                  id="settings-username"
                   value={username}
                   onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
                   autoCapitalize="off"
                   autoCorrect="off"
                 />
-                <label>Email</label>
-                <input type="email" value={email} onChange={e => setEmail(e.target.value)} />
+                <label htmlFor="settings-email">Email</label>
+                <input id="settings-email" type="email" value={email} onChange={e => setEmail(e.target.value)} />
                 {identityEdited && (
                   <>
                     <label>Current password</label>
@@ -8808,12 +9617,27 @@ const Settings: React.FC<{ onProfileUpdate: () => void; onAccountDeleted: () => 
               <SecurityPanel />
               <section className="settings-card">
                 <h3>Change password</h3>
-                <label>Current password</label>
-                <input type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)} />
-                <label>New password</label>
-                <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} />
-                <label>Confirm new password</label>
-                <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} />
+                <label htmlFor="settings-current-password">Current password</label>
+                <input
+                  id="settings-current-password"
+                  type="password"
+                  value={currentPw}
+                  onChange={e => setCurrentPw(e.target.value)}
+                />
+                <label htmlFor="settings-new-password">New password</label>
+                <input
+                  id="settings-new-password"
+                  type="password"
+                  value={newPw}
+                  onChange={e => setNewPw(e.target.value)}
+                />
+                <label htmlFor="settings-confirm-new-password">Confirm new password</label>
+                <input
+                  id="settings-confirm-new-password"
+                  type="password"
+                  value={confirmPw}
+                  onChange={e => setConfirmPw(e.target.value)}
+                />
                 {pwMsg && <div className={`msg ${pwMsg.kind}`}>{pwMsg.text}</div>}
                 <div className="settings-actions">
                   <button type="button" className="primary" onClick={savePassword}>
@@ -9256,20 +10080,29 @@ const AdminMcpServerForm: React.FC<{ onSaved: () => void }> = ({ onSaved }) => {
 
   return (
     <div className="admin-form" style={{ marginTop: 12, display: "grid", gap: 8 }}>
-      <input className="input" placeholder="Name" value={name} onChange={e => setName(e.target.value)} />
       <input
+        aria-label="Name"
+        className="input"
+        placeholder="Name"
+        value={name}
+        onChange={e => setName(e.target.value)}
+      />
+      <input
+        aria-label="https://example.com/mcp"
         className="input"
         placeholder="https://example.com/mcp"
         value={url}
         onChange={e => setUrl(e.target.value)}
       />
       <input
+        aria-label="Description (optional)"
         className="input"
         placeholder="Description (optional)"
         value={desc}
         onChange={e => setDesc(e.target.value)}
       />
       <input
+        aria-label="Bearer token (optional)"
         className="input"
         placeholder="Bearer token (optional)"
         value={token}
@@ -9604,12 +10437,22 @@ const AdminUserEditModal: React.FC<{
   return (
     <Modal title={`Edit @${user.username}`} onClose={onClose}>
       {err && <div className="msg err">{err}</div>}
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>Display name</label>
-      <input value={name} onChange={e => setName(e.target.value)} />
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>Email</label>
-      <input value={email} onChange={e => setEmail(e.target.value)} type="email" />
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>Username</label>
-      <input value={username} onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))} />
+      <label htmlFor="adminusereditmodal-display-name" style={{ fontSize: 13, color: "var(--muted)" }}>
+        Display name
+      </label>
+      <input id="adminusereditmodal-display-name" value={name} onChange={e => setName(e.target.value)} />
+      <label htmlFor="adminusereditmodal-email" style={{ fontSize: 13, color: "var(--muted)" }}>
+        Email
+      </label>
+      <input id="adminusereditmodal-email" value={email} onChange={e => setEmail(e.target.value)} type="email" />
+      <label htmlFor="adminusereditmodal-username" style={{ fontSize: 13, color: "var(--muted)" }}>
+        Username
+      </label>
+      <input
+        id="adminusereditmodal-username"
+        value={username}
+        onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
+      />
       {/* an owner administers root implicitly; the flag is for everyone else */}
       {!user.is_owner && (
         <label className="scope-check" style={{ margin: "12px 0 16px" }}>
@@ -9700,8 +10543,11 @@ const TeamMemberCreateModal: React.FC<{ onClose: () => void; onCreated: () => vo
   return (
     <Modal title="Add a member" onClose={onClose}>
       {err && <div className="msg err">{err}</div>}
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>Email</label>
+      <label htmlFor="teammembercreatemodal-email" style={{ fontSize: 13, color: "var(--muted)" }}>
+        Email
+      </label>
       <input
+        id="teammembercreatemodal-email"
         type="email"
         placeholder="alice@example.com"
         value={email}
@@ -9710,21 +10556,36 @@ const TeamMemberCreateModal: React.FC<{ onClose: () => void; onCreated: () => vo
         autoCapitalize="off"
         autoCorrect="off"
       />
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>Name (optional)</label>
-      <input value={name} onChange={e => setName(e.target.value)} />
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>
+      <label htmlFor="teammembercreatemodal-name-optional" style={{ fontSize: 13, color: "var(--muted)" }}>
+        Name (optional)
+      </label>
+      <input id="teammembercreatemodal-name-optional" value={name} onChange={e => setName(e.target.value)} />
+      <label
+        htmlFor="teammembercreatemodal-username-optional-derived-from-the-email-otherwise"
+        style={{ fontSize: 13, color: "var(--muted)" }}
+      >
         Username (optional, derived from the email otherwise)
       </label>
       <input
+        id="teammembercreatemodal-username-optional-derived-from-the-email-otherwise"
         value={username}
         onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
         autoCapitalize="off"
         autoCorrect="off"
       />
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>
+      <label
+        htmlFor="teammembercreatemodal-password-optional-leave-blank-for-a-set-password-link"
+        style={{ fontSize: 13, color: "var(--muted)" }}
+      >
         Password (optional — leave blank for a set-password link)
       </label>
-      <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" />
+      <input
+        id="teammembercreatemodal-password-optional-leave-blank-for-a-set-password-link"
+        type="password"
+        value={password}
+        onChange={e => setPassword(e.target.value)}
+        autoComplete="new-password"
+      />
       <label className="scope-check" style={{ margin: "12px 0 16px" }}>
         <input type="checkbox" checked={teamAdmin} onChange={e => setTeamAdmin(e.target.checked)} />
         Team admin
@@ -9770,8 +10631,15 @@ const AdminMessageModal: React.FC<{ target: AdminUser; client: UserAdminClient; 
   return (
     <Modal title={`Message @${target.username}`} onClose={onClose}>
       {err && <div className="msg err">{err}</div>}
-      <input placeholder="Subject" value={subject} onChange={e => setSubject(e.target.value)} autoFocus />
+      <input
+        aria-label="Subject"
+        placeholder="Subject"
+        value={subject}
+        onChange={e => setSubject(e.target.value)}
+        autoFocus
+      />
       <textarea
+        aria-label="Message"
         placeholder="Message"
         rows={8}
         value={body}
@@ -9817,8 +10685,15 @@ const AdminBroadcastModal: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   return (
     <Modal title="Broadcast to all users" onClose={onClose}>
       {err && <div className="msg err">{err}</div>}
-      <input placeholder="Subject" value={subject} onChange={e => setSubject(e.target.value)} autoFocus />
+      <input
+        aria-label="Subject"
+        placeholder="Subject"
+        value={subject}
+        onChange={e => setSubject(e.target.value)}
+        autoFocus
+      />
       <textarea
+        aria-label="Message"
         placeholder="Message"
         rows={8}
         value={body}
@@ -9890,6 +10765,7 @@ const AdminInvites: React.FC<{ scope: AdminScope }> = ({ scope }) => {
       </h3>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
         <input
+          aria-label="Email (optional, locks the invite to this address)"
           type="email"
           placeholder="Email (optional, locks the invite to this address)"
           value={email}
@@ -10206,6 +11082,7 @@ const AdminAudit: React.FC<{ scope: AdminScope }> = ({ scope }) => {
           ))}
         </select>
         <input
+          aria-label="Or type a custom event…"
           placeholder="Or type a custom event…"
           value={eventFilter}
           onChange={e => setEventFilter(e.target.value)}
@@ -10461,6 +11338,7 @@ const TeamDomainSettings: React.FC = () => {
   const [domain, setDomain] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+  const [copied, setCopied] = useState("")
 
   useEffect(() => {
     let cancelled = false
@@ -10509,9 +11387,7 @@ const TeamDomainSettings: React.FC = () => {
   return (
     <section className="settings-card" style={{ marginTop: 16 }}>
       <h3>Custom domain</h3>
-      <p className="sub-status" style={{ textTransform: "none" }}>
-        Use your own address for this team. Your Stohr address stays available.
-      </p>
+      <p className="sub-status">Use your own address for this team. Your Stohr address stays available.</p>
       {error && (
         <div className="msg err" role="alert">
           {error}
@@ -10550,34 +11426,50 @@ const TeamDomainSettings: React.FC = () => {
                   ? "Ownership verified. HTTPS is issued on the first visit once DNS points here."
                   : "Waiting for DNS verification."}
               </p>
-              <p className="sub-status" style={{ textTransform: "none" }}>
+              <p className="sub-status">
                 Add these records with your DNS provider. For a root domain, use A/AAAA records pointing to this server
                 instead of CNAME.
               </p>
-              <div style={{ overflowX: "auto" }}>
-                <table className="shares-table" style={{ width: "100%" }}>
-                  <thead>
-                    <tr>
-                      <th scope="col">Type</th>
-                      <th scope="col">Name</th>
-                      <th scope="col">Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>CNAME</td>
-                      <td>{state.domain}</td>
-                      <td>{state.target}</td>
-                    </tr>
-                    <tr>
-                      <td>TXT</td>
-                      <td>{state.verification_name}</td>
-                      <td style={{ overflowWrap: "anywhere" }}>{state.verification_value}</td>
-                    </tr>
-                  </tbody>
-                </table>
+              <div className="domain-records">
+                {[
+                  { type: "CNAME", name: state.domain, value: state.target },
+                  { type: "TXT", name: state.verification_name, value: state.verification_value },
+                ].map(record => (
+                  <div className="domain-record" key={record.type}>
+                    <strong>{record.type}</strong>
+                    <dl>
+                      {(["name", "value"] as const).map(field => (
+                        <div key={field}>
+                          <dt>{field === "name" ? "Name" : "Value"}</dt>
+                          <dd>
+                            <code>{record[field]}</code>
+                            <button
+                              type="button"
+                              aria-label={`Copy ${record.type} ${field}`}
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(record[field] ?? "")
+                                  setCopied(`${record.type} ${field} copied.`)
+                                } catch {
+                                  setCopied("Could not copy. Select the record text to copy it manually.")
+                                }
+                              }}
+                            >
+                              <Copy size={14} /> Copy
+                            </button>
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                ))}
               </div>
-              <p className="sub-status" style={{ textTransform: "none" }}>
+              {copied && (
+                <p className="sub-status" role="status">
+                  {copied}
+                </p>
+              )}
+              <p className="sub-status">
                 Sign in again on your custom domain. Register a new passkey there; passkeys from your Stohr address stay
                 on that address.
               </p>
@@ -10872,8 +11764,11 @@ const AdminTeamCreateModal: React.FC<{ onClose: () => void; onCreated: () => voi
   return (
     <Modal title="New team" onClose={onClose}>
       {err && <div className="msg err">{err}</div>}
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>Slug</label>
+      <label htmlFor="adminteamcreatemodal-slug" style={{ fontSize: 13, color: "var(--muted)" }}>
+        Slug
+      </label>
       <input
+        id="adminteamcreatemodal-slug"
         placeholder="acme"
         value={slug}
         onChange={e => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
@@ -10888,12 +11783,32 @@ const AdminTeamCreateModal: React.FC<{ onClose: () => void; onCreated: () => voi
         </code>
         . Lowercase letters, digits and hyphens; it cannot be changed later.
       </div>
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>Name</label>
-      <input placeholder="Acme Inc" value={name} onChange={e => setName(e.target.value)} />
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>Storage cap in GB (0 = unlimited)</label>
-      <input inputMode="decimal" value={quotaGb} onChange={e => setQuotaGb(e.target.value)} />
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>First admin's email</label>
+      <label htmlFor="adminteamcreatemodal-name" style={{ fontSize: 13, color: "var(--muted)" }}>
+        Name
+      </label>
       <input
+        id="adminteamcreatemodal-name"
+        placeholder="Acme Inc"
+        value={name}
+        onChange={e => setName(e.target.value)}
+      />
+      <label
+        htmlFor="adminteamcreatemodal-storage-cap-in-gb-0-unlimited"
+        style={{ fontSize: 13, color: "var(--muted)" }}
+      >
+        Storage cap in GB (0 = unlimited)
+      </label>
+      <input
+        id="adminteamcreatemodal-storage-cap-in-gb-0-unlimited"
+        inputMode="decimal"
+        value={quotaGb}
+        onChange={e => setQuotaGb(e.target.value)}
+      />
+      <label htmlFor="adminteamcreatemodal-first-admin-s-email" style={{ fontSize: 13, color: "var(--muted)" }}>
+        First admin's email
+      </label>
+      <input
+        id="adminteamcreatemodal-first-admin-s-email"
         type="email"
         placeholder="jane@acme.example"
         value={adminEmail}
@@ -10901,10 +11816,19 @@ const AdminTeamCreateModal: React.FC<{ onClose: () => void; onCreated: () => voi
         autoCapitalize="off"
         autoCorrect="off"
       />
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>Admin name (optional)</label>
-      <input value={adminName} onChange={e => setAdminName(e.target.value)} />
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>Admin username (optional)</label>
+      <label htmlFor="adminteamcreatemodal-admin-name-optional" style={{ fontSize: 13, color: "var(--muted)" }}>
+        Admin name (optional)
+      </label>
       <input
+        id="adminteamcreatemodal-admin-name-optional"
+        value={adminName}
+        onChange={e => setAdminName(e.target.value)}
+      />
+      <label htmlFor="adminteamcreatemodal-admin-username-optional" style={{ fontSize: 13, color: "var(--muted)" }}>
+        Admin username (optional)
+      </label>
+      <input
+        id="adminteamcreatemodal-admin-username-optional"
         value={adminUsername}
         onChange={e => setAdminUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
         autoCapitalize="off"
@@ -10954,10 +11878,19 @@ const AdminTeamEditModal: React.FC<{ team: api.AdminTeam; onClose: () => void; o
   return (
     <Modal title={`Edit ${team.name}`} onClose={onClose}>
       {err && <div className="msg err">{err}</div>}
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>Name</label>
-      <input value={name} onChange={e => setName(e.target.value)} autoFocus />
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>Storage cap in GB (0 = unlimited)</label>
-      <input inputMode="decimal" value={quotaGb} onChange={e => setQuotaGb(e.target.value)} />
+      <label htmlFor="adminteameditmodal-name" style={{ fontSize: 13, color: "var(--muted)" }}>
+        Name
+      </label>
+      <input id="adminteameditmodal-name" value={name} onChange={e => setName(e.target.value)} autoFocus />
+      <label htmlFor="adminteameditmodal-storage-cap-in-gb-0-unlimited" style={{ fontSize: 13, color: "var(--muted)" }}>
+        Storage cap in GB (0 = unlimited)
+      </label>
+      <input
+        id="adminteameditmodal-storage-cap-in-gb-0-unlimited"
+        inputMode="decimal"
+        value={quotaGb}
+        onChange={e => setQuotaGb(e.target.value)}
+      />
       <div style={{ fontSize: 12, color: "var(--muted)", margin: "-6px 0 10px" }}>
         Caps the sum of every member's storage; per-user caps still apply. Currently using{" "}
         {formatBytes(team.usage.total)}.
@@ -11002,10 +11935,11 @@ const AdminTeamDeleteModal: React.FC<{ team: api.AdminTeam; onClose: () => void;
         files are purged after 24 hours; until then the team can be restored from the Deleted filter.
       </p>
       {err && <div className="msg err">{err}</div>}
-      <label style={{ fontSize: 13, color: "var(--muted)" }}>
+      <label htmlFor="adminteamdeletemodal-type-to-confirm" style={{ fontSize: 13, color: "var(--muted)" }}>
         Type <code>{team.slug}</code> to confirm
       </label>
       <input
+        id="adminteamdeletemodal-type-to-confirm"
         value={typed}
         onChange={e => setTyped(e.target.value)}
         onKeyDown={e => e.key === "Enter" && run()}
