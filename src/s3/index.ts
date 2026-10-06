@@ -4,7 +4,8 @@ import { del, get, head, put, putHeader, setStatus, stream, text } from "@atlas/
 import { fireEvent } from "../actions/dispatch.ts"
 import type { FileRow, FolderRow } from "../permissions/index.ts"
 import { personalFileSql } from "../permissions/index.ts"
-import { clamdConfig } from "../scanning/index.ts"
+import { clamdConfig, isScanBlocked } from "../scanning/index.ts"
+import { type Cidr, isTrustedProxy } from "../security/proxies.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { drop, fetchObject, makeKey, put as putStorage } from "../storage/index.ts"
 import { teamFor } from "../teams/request.ts"
@@ -61,11 +62,18 @@ type ErrConn = ReturnType<typeof xmlConn>
 const escapeXml = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 
-const headersFromRequest = (req: Request): Record<string, string> => {
+export const headersFromRequest = (req: Request, trusted?: Cidr[]): Record<string, string> => {
   const out: Record<string, string> = {}
   req.headers.forEach((v, k) => {
     out[k.toLowerCase()] = v
   })
+  const peer = (req as Request & { peerIp?: string }).peerIp
+  const forwarded = req.headers.get("x-forwarded-host")
+  if (peer && isTrustedProxy(peer, trusted) && forwarded && !/[\s,/@?#]/.test(forwarded)) {
+    out.host = forwarded
+  } else {
+    out.host = req.headers.get("host") ?? new URL(req.url).host
+  }
   return out
 }
 
@@ -113,6 +121,8 @@ const verifyAndAuthorize = async (
   const owner = (await db.one(
     from("users")
       .where(q => q("id").equals(keyRow.user_id))
+      .where(q => q("deleted_at").isNull())
+      .where(q => q("suspended_at").isNull())
       .select("id", "username", "team_id", "storage_quota_bytes"),
   )) as S3Owner | null
   if (!owner) return { fail: errXml(c, "InvalidAccessKeyId", "User not found", 403) }
@@ -130,16 +140,24 @@ const verifyAndAuthorize = async (
   const url = new URL((c.request as Request).url)
   const declaredHash = headers["x-amz-content-sha256"] ?? UNSIGNED_PAYLOAD
 
-  const expected = computeSignature({
-    method: c.request.method,
-    path: url.pathname,
-    query: url.search,
-    headers,
-    payloadHash: declaredHash,
-    secretKey: keyRow.secret_key,
-    sig,
-    amzDate,
-  })
+  if (sig.signedHeaders.some(name => headers[name] === undefined)) {
+    return { fail: errXml(c, "InvalidArgument", "Missing signed header", 400) }
+  }
+  let expected: string
+  try {
+    expected = computeSignature({
+      method: c.request.method,
+      path: url.pathname,
+      query: url.search,
+      headers,
+      payloadHash: declaredHash,
+      secretKey: keyRow.secret_key,
+      sig,
+      amzDate,
+    })
+  } catch {
+    return { fail: errXml(c, "InvalidArgument", "Malformed request path or query", 400) }
+  }
 
   if (!constantTimeEquals(expected, sig.signature)) {
     return { fail: errXml(c, "SignatureDoesNotMatch", "The request signature did not match", 403) }
@@ -283,6 +301,9 @@ export const s3Routes = (db: Connection, store: StorageHandle) => [
           mime: existing.mime,
           size: existing.size,
           storage_key: existing.storage_key,
+          scan_status: existing.scan_status,
+          scan_signature: existing.scan_signature,
+          scanned_at: existing.scanned_at,
           uploaded_by: owner.id,
         }),
       )
@@ -401,7 +422,7 @@ export const s3Routes = (db: Connection, store: StorageHandle) => [
     if (folderId === "missing") return errXml(c, "NoSuchKey", "Object not found", 404)
     const file = await findFile(db, owner.id, folderId, fileName)
     if (!file) return errXml(c, "NoSuchKey", "Object not found", 404)
-    if (file.scan_status === "infected") return errXml(c, "AccessDenied", "File failed malware scan", 403)
+    if (isScanBlocked(file.scan_status)) return errXml(c, "AccessDenied", "File failed malware scan", 403)
 
     const res = await fetchObject(store, file.storage_key)
     if (!res.body) return errXml(c, "InternalError", "Storage returned empty body", 500)

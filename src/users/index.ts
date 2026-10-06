@@ -1,16 +1,18 @@
 import { hash, verify } from "@atlas/auth"
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
-import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
+import { del, get, json, patch, pipeline, post } from "@atlas/server"
 import { scheduleDeletion } from "../auth/deletion.ts"
 import { requireAuth } from "../auth/guard.ts"
 import type { Emailer } from "../email/index.ts"
 import { logEvent } from "../security/audit.ts"
+import { revokeCredentials } from "../security/credentials.ts"
 import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
 import { issueSession, revokeAllSessions } from "../security/sessions.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { requestBaseUrl, teamFor } from "../teams/request.ts"
 import { computeUsage } from "../usage/index.ts"
+import { parseJson } from "../util/json/index.ts"
 import { isEmail, isValidUsername, normalizeUsername } from "../util/username.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -144,11 +146,15 @@ export const userRoutes = (db: Connection, secret: string, _store: StorageHandle
           updates.username = username
         }
 
-        await db.execute(
-          from("users")
-            .where(q => q("id").equals(userId))
-            .update(updates),
-        )
+        await db.transaction(async tx => {
+          await tx.execute({ text: "SELECT id FROM users WHERE id = $1 FOR UPDATE", values: [userId] })
+          await tx.execute(
+            from("users")
+              .where(q => q("id").equals(userId))
+              .update(updates),
+          )
+          if (email || username) await revokeCredentials(tx, userId)
+        })
 
         const fresh = (await db.one(
           from("users")
@@ -233,14 +239,22 @@ export const userRoutes = (db: Connection, secret: string, _store: StorageHandle
         if (!ok) return json(c, 401, { error: "Current password is incorrect" })
 
         const hashed = await hash(next)
-        await db.execute(
-          from("users")
-            .where(q => q("id").equals(userId))
-            .update({ password: hashed }),
-        )
-
         const currentJti = authJti(c)
-        const revoked = await revokeAllSessions(db, userId, currentJti ?? undefined)
+        const completed = await db.transaction(async tx => {
+          await tx.execute({ text: "SELECT id FROM users WHERE id = $1 FOR UPDATE", values: [userId] })
+          const changed = (await tx.execute(
+            from("users")
+              .where(q => q("id").equals(userId))
+              .where(q => q("password").equals(user.password))
+              .update({ password: hashed })
+              .returning("id"),
+          )) as Array<{ id: number }>
+          if (!changed.length) return null
+          await revokeCredentials(tx, userId)
+          return { revoked: await revokeAllSessions(tx, userId, currentJti ?? undefined) }
+        })
+        if (!completed) return json(c, 401, { error: "Current password is incorrect" })
+        const { revoked } = completed
         logEvent(db, {
           userId,
           event: "password.changed",

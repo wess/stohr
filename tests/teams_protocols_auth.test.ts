@@ -38,8 +38,7 @@ const mintS3Key = async (host: string, token: string) => {
 
 const amzDate = (ms: number) => new Date(ms).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")
 
-// signs the way an sdk would, without the host header, so the very same
-// request can be replayed against another host
+// each request is signed for the destination host
 const s3 = async (
   host: string,
   creds: { accessKey: string; secretKey: string },
@@ -51,7 +50,7 @@ const s3 = async (
   const date = amzDate(Date.now())
   const credDate = date.slice(0, 8)
   const payloadHash = bodyBytes ? sha256OfBytes(bodyBytes) : "UNSIGNED-PAYLOAD"
-  const headers: Record<string, string> = { "x-amz-date": date, "x-amz-content-sha256": payloadHash }
+  const headers: Record<string, string> = { host, "x-amz-date": date, "x-amz-content-sha256": payloadHash }
   const scope = `${credDate}/us-east-1/s3/aws4_request`
   const signature = computeSignature({
     method,
@@ -67,11 +66,11 @@ const s3 = async (
       region: "us-east-1",
       service: "s3",
       scope,
-      signedHeaders: ["x-amz-content-sha256", "x-amz-date"],
+      signedHeaders: ["host", "x-amz-content-sha256", "x-amz-date"],
       signature: "",
     },
   })
-  headers.authorization = `AWS4-HMAC-SHA256 Credential=${creds.accessKey}/${scope}, SignedHeaders=x-amz-content-sha256;x-amz-date, Signature=${signature}`
+  headers.authorization = `AWS4-HMAC-SHA256 Credential=${creds.accessKey}/${scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=${signature}`
   if (bodyBytes) headers["content-type"] = "text/plain"
   const res = await app(makeRequest(path, { method, headers, body: bodyBytes, host }))
   return { status: res.status, text: await res.text() }

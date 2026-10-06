@@ -1,5 +1,6 @@
 import { from } from "@atlas/db"
 import { fetchObject, makeKey, put } from "../../../storage/index.ts"
+import { checkActionQuota, finishActionWrite } from "../../quota.ts"
 import type { Primitive } from "../types.ts"
 import { resolveTemplateChain } from "../util/folders.ts"
 import { expandTemplate } from "../util/template.ts"
@@ -45,6 +46,7 @@ const routeCopy: Primitive = {
     const file = env.subject.row
     const obj = await fetchObject(ctx.store, file.storage_key)
     const bytes = new Uint8Array(await obj.arrayBuffer())
+    const quota = await checkActionQuota(ctx.db, ctx.ownerId, bytes.byteLength)
     const newKey = makeKey(ctx.ownerId, file.name)
     await put(ctx.store, newKey, bytes, file.mime)
 
@@ -58,9 +60,13 @@ const routeCopy: Primitive = {
         storage_key: newKey,
         thumb_key: null,
         version: 1,
+        scan_status: file.scan_status,
+        scan_signature: file.scan_signature,
+        scanned_at: file.scanned_at,
       }),
     )
 
+    await finishActionWrite(ctx.db, ctx.store, ctx.ownerId, quota, bytes.byteLength, newKey)
     /* Original is untouched; envelope unchanged. */
     return { kind: "continue" }
   },

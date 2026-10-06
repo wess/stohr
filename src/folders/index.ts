@@ -1,6 +1,6 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { del, get, json, parseJson, patch, pipeline, post, putHeader } from "@atlas/server"
+import { del, get, json, patch, pipeline, post, putHeader } from "@atlas/server"
 import type { RunSummary } from "../actions/dispatch.ts"
 import { fireEvent } from "../actions/dispatch.ts"
 import { requireAuth } from "../auth/guard.ts"
@@ -8,6 +8,7 @@ import type { FolderRow } from "../permissions/index.ts"
 import { canWrite, folderAccess, isOwner, trashedFolderAccess } from "../permissions/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { drop } from "../storage/index.ts"
+import { parseJson } from "../util/json/index.ts"
 import { pagingHeaders, parsePaging } from "../util/paging.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id

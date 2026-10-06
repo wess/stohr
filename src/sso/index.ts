@@ -2,92 +2,52 @@
 // JIT-creates the local users row on first login; subsequent logins upsert
 // by sub (so admins renaming their own Castle account remap cleanly).
 
-import { hash } from "@atlas/auth"
+import { createHash } from "node:crypto"
+import { token } from "@atlas/auth"
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 import type { Conn } from "@atlas/server"
-import { get, json } from "@atlas/server"
+import { get, halt, json } from "@atlas/server"
 import { ensureSsoStateTable, type IdTokenClaims, mountSso, type SsoConfig } from "@atlas/sso"
-import { uniqueUsername } from "../auth/external.ts"
-import { resolvePendingCollabs } from "../auth/index.ts"
+import { upsertFromExternal } from "../auth/external.ts"
+import { fetchDiscovery } from "../auth/oidc/discovery.ts"
+import { bindLoginState, clearLoginState, loginStateNonce } from "../auth/state.ts"
 import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
 import { issueSession, revokeAllSessions } from "../security/sessions.ts"
 import { rootOnlyRoutes } from "../teams/guards.ts"
 import { teamFor } from "../teams/request.ts"
-import { ROOT_TEAM_ID } from "../teams/resolve.ts"
-import { normalizeUsername } from "../util/username.ts"
+import { limitBody } from "../util/limitbody/index.ts"
+import { responseJson } from "../util/response/index.ts"
 
-const _SSO_PASSWORD_SENTINEL = "$argon2id$sso$placeholder"
-
-// A starting point only — uniqueUsername makes it valid and unclaimed.
-const claimUsername = (claims: IdTokenClaims): string => {
-  const raw = claims.preferred_username ?? (claims.email ? claims.email.split("@")[0] : null)
-  if (!raw) throw new Error("ID token lacks preferred_username and email")
-  return normalizeUsername(String(raw)).replace(/[^a-z0-9_]/g, "_")
-}
-
-const claimEmail = (claims: IdTokenClaims): string => {
-  if (!claims.email) throw new Error("ID token lacks email claim")
-  return String(claims.email).toLowerCase()
-}
-
-const placeholderHash = async (): Promise<string> => {
-  // Stohr's users.password is NOT NULL. Local auth still works for accounts
-  // created locally, but SSO-only users get a fixed un-verifiable hash so
-  // local login is rejected (verify() returns false on the sentinel) and
-  // the only path in is via /auth/sso/login.
-  return hash(`disabled-local-password-${Math.random().toString(36)}`)
-}
-
-type SyncedUser = { id: number; username: string; name: string; email: string; is_owner: boolean }
-
-const upsertUser = async (db: Connection, claims: IdTokenClaims): Promise<SyncedUser> => {
-  const email = claimEmail(claims)
-  const nameClaim = (claims.name as string | undefined)?.trim()
-
-  // Email is the only match key. Matching on username too let anyone who
-  // could pick a preferred_username at the IdP land in an unrelated local
-  // account; it also makes the IdP the authority over local handles. SSO is
-  // a root-team surface, so a tenant account with this address is not a match.
-  const byEmail = (await db.one(
-    from("users")
-      .where(q => q("email").equals(email))
-      .where(q => q("team_id").equals(ROOT_TEAM_ID))
-      .select("id", "username", "is_owner"),
-  )) as { id: number; username: string; is_owner: boolean } | null
-
-  if (byEmail) {
-    // The IdP vouches for the person, not for the local account's identity:
-    // email and username stay as they are, only the display name follows.
-    const name = nameClaim || byEmail.username
-    await db.execute(
-      from("users")
-        .where(q => q("id").equals(byEmail.id))
-        .update({ name }),
-    )
-    return { id: byEmail.id, username: byEmail.username, name, email, is_owner: byEmail.is_owner }
-  }
-
-  const username = await uniqueUsername(db, claimUsername(claims))
-  const name = nameClaim || username
-
-  // First user to land — via SSO or local signup — owns the instance.
-  const anyUser = await db.one(from("users").select("id").limit(1))
-  const isFirstUser = !anyUser
-
-  const password = await placeholderHash()
-  const inserted = (await db.execute(
-    from("users")
-      .insert({ email, username, name, password, is_owner: isFirstUser, team_id: ROOT_TEAM_ID })
-      .returning("id", "is_owner"),
-  )) as Array<{ id: number; is_owner: boolean }>
-  const row = inserted[0]
-  if (!row) throw new Error("user insert failed")
-  // collaborator invites were mailed to the address; only a verified claim
-  // says this account can read that mailbox
-  if (claims.email_verified === true) await resolvePendingCollabs(db, row.id, email)
-  return { id: row.id, username, name, email, is_owner: row.is_owner }
+const upsertUser = async (db: Connection, claims: IdTokenClaims) => {
+  const now = Math.floor(Date.now() / 1000)
+  if (
+    typeof claims.exp !== "number" ||
+    !Number.isFinite(claims.exp) ||
+    claims.exp <= now ||
+    typeof claims.iat !== "number" ||
+    !Number.isFinite(claims.iat) ||
+    claims.iat > now + 60 ||
+    typeof claims.sub !== "string" ||
+    !claims.sub
+  )
+    throw new Error("Invalid ID token claims")
+  const result = await upsertFromExternal(
+    db,
+    {
+      provider: "oidc",
+      issuer: claims.iss,
+      subject: claims.sub,
+      email: typeof claims.email === "string" ? claims.email : null,
+      email_verified: claims.email_verified === true,
+      display_name: typeof claims.name === "string" ? claims.name : null,
+      preferred_username: typeof claims.preferred_username === "string" ? claims.preferred_username : null,
+    },
+    { autoProvision: true },
+  )
+  if (result.user.deleted_at || result.user.suspended_at) throw new Error("Account unavailable")
+  return result.user
 }
 
 export const buildStohrSso = (env: {
@@ -103,6 +63,13 @@ export const buildStohrSso = (env: {
     clientId: env.clientId,
     clientSecret: env.clientSecret,
     onAuthenticated: async (db, claims) => {
+      const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud]
+      if (
+        (aud.length > 1 && claims.azp !== env.clientId) ||
+        (claims.azp !== undefined && claims.azp !== env.clientId)
+      ) {
+        throw new Error("ID token azp mismatch")
+      }
       const user = await upsertUser(db, claims)
       return { localUserId: user.id, displayName: user.name }
     },
@@ -134,21 +101,23 @@ export const buildStohrSso = (env: {
       // path in this app.
       const target = new URL(conn.request.url)
       target.pathname = "/"
-      target.hash = `token=${encodeURIComponent(sess.token)}`
+      const state = new URL(conn.request.url).searchParams.get("state") ?? ""
+      const nonce = loginStateNonce(conn.request, state)
+      target.hash = `token=${encodeURIComponent(sess.token)}&sso_nonce=${encodeURIComponent(nonce ?? "")}`
       target.search = ""
       const headers = new Headers(conn.respHeaders)
       headers.set("location", target.toString())
-      return { ...conn, status: 302, halted: true, respHeaders: headers }
+      return clearLoginState({ ...conn, status: 302, halted: true, respHeaders: headers })
     },
     findLocalUserBySub: async (db, sub) => {
-      const id = Number(sub)
-      if (!Number.isFinite(id)) return null
       const row = (await db.one(
-        from("users")
-          .where(q => q("id").equals(id))
-          .select("id"),
-      )) as { id: number } | null
-      return row?.id ?? null
+        from("external_identities")
+          .where(q => q("provider").equals("oidc"))
+          .where(q => q("issuer").equals(env.issuerUrl))
+          .where(q => q("subject").equals(sub))
+          .select("user_id"),
+      )) as { user_id: number } | null
+      return row?.user_id ?? null
     },
     invalidateSessions: async (db, params) => {
       if (params.localUserId === null || params.localUserId === undefined) return
@@ -180,5 +149,66 @@ export const setupStohrSso = async (
 ) => {
   await ensureSsoStateTable(db)
   const cfg = buildStohrSso({ db, ...env })
-  return rootOnlyRoutes(mountSso(cfg))
+  return rootOnlyRoutes(
+    mountSso(cfg).map(route => ({
+      ...route,
+      handler: async (c: Conn) => {
+        c = await limitBody()(c)
+        if (c.halted) return c
+        if (c.path === "/auth/sso/callback") {
+          const state = new URL(c.request.url).searchParams.get("state") ?? ""
+          if (!state || !loginStateNonce(c.request, state))
+            return halt(c, 400, { error: "Invalid browser sign-in state" })
+        }
+        if (c.path === "/auth/sso/backchannel-logout") {
+          try {
+            const req = c.request.clone()
+            const body = req.headers.get("content-type")?.includes("application/json")
+              ? ((await req.json()) as { logout_token?: string })
+              : Object.fromEntries(new URLSearchParams(await req.text()))
+            if (typeof body.logout_token !== "string") return halt(c, 400, { error: "logout_token required" })
+            const discovery = await fetchDiscovery(env.issuerUrl)
+            const response = await fetch(discovery.jwks_uri, { signal: AbortSignal.timeout(10_000), redirect: "error" })
+            if (!response.ok) return halt(c, 502, { error: "Signing keys unavailable" })
+            const jwks = (await responseJson(response)) as { keys: Parameters<typeof token.verifyRs256>[1]["keys"] }
+            const claims = await token.verifyRs256(body.logout_token, jwks)
+            const now = Math.floor(Date.now() / 1000)
+            const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud]
+            const events = claims.events as Record<string, unknown> | undefined
+            if (
+              claims.iss !== env.issuerUrl ||
+              !audiences.includes(env.clientId) ||
+              typeof claims.iat !== "number" ||
+              !Number.isFinite(claims.iat) ||
+              claims.iat > now + 60 ||
+              claims.iat < now - 300 ||
+              typeof claims.jti !== "string" ||
+              !claims.jti ||
+              claims.nonce !== undefined ||
+              !events?.["http://schemas.openid.net/event/backchannel-logout"]
+            ) {
+              return halt(c, 400, { error: "Invalid logout token claims" })
+            }
+            const challenge = `logout:${createHash("sha256").update(`${env.issuerUrl}:${claims.jti}`).digest("hex")}`
+            const claimed = (await db.execute({
+              text: `INSERT INTO webauthn_challenges (challenge, kind, expires_at)
+                    VALUES ($1, 'logout', NOW() + INTERVAL '10 minutes')
+                    ON CONFLICT DO NOTHING RETURNING challenge`,
+              values: [challenge],
+            })) as Array<{ challenge: string }>
+            if (claimed.length === 0) return halt(c, 400, { error: "Logout token already used" })
+          } catch {
+            return halt(c, 400, { error: "Invalid logout token" })
+          }
+        }
+        const out = await route.handler(c)
+        if (c.path === "/auth/sso/login" && out.status === 302) {
+          const location = out.respHeaders.get("location")
+          const state = location ? new URL(location).searchParams.get("state") : null
+          if (state) return bindLoginState(out, state)
+        }
+        return out
+      },
+    })),
+  )
 }

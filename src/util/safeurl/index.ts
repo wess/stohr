@@ -7,9 +7,8 @@ import { isIP } from "node:net"
 // there), CGNAT, ULA or a v4-mapped v6 address, then follows redirects by
 // hand so every hop gets the same treatment.
 //
-// NB: resolve-then-connect is two lookups. a hostile resolver can answer
-// differently the second time and bun's fetch has no connect hook to pin
-// the address, so short-TTL rebinding is the residual risk.
+// the vetted address is the connection target; Host and TLS serverName
+// retain the origin so a second DNS answer cannot redirect us onto the LAN.
 
 export type SafeUrlOpts = {
   allowHttp?: boolean
@@ -17,9 +16,10 @@ export type SafeUrlOpts = {
   // 0 returns the 3xx response untouched instead of following it
   maxRedirects?: number
   fetchImpl?: typeof fetch
+  lookupImpl?: (host: string) => Promise<Array<{ address: string }>>
 }
 
-export type UrlCheck = { ok: true; url: URL } | { ok: false; error: string }
+export type UrlCheck = { ok: true; url: URL; address: string } | { ok: false; error: string }
 
 // [network, prefix bits]
 const V4_BLOCKED: Array<[string, number]> = [
@@ -31,6 +31,9 @@ const V4_BLOCKED: Array<[string, number]> = [
   ["172.16.0.0", 12],
   ["192.0.0.0", 24],
   ["192.168.0.0", 16],
+  ["192.0.2.0", 24],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
   ["198.18.0.0", 15],
   ["224.0.0.0", 4],
   ["240.0.0.0", 4],
@@ -99,9 +102,10 @@ export const isPrivateAddress = (address: string): boolean => {
   if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every(x => x === 0)) {
     return isPrivateV4(g[6]! * 65536 + g[7]!)
   }
-  if ((g[0]! & 0xfe00) === 0xfc00) return true
-  if ((g[0]! & 0xffc0) === 0xfe80) return true
-  if ((g[0]! & 0xff00) === 0xff00) return true
+  // accept native global unicast only; transition/tunnel formats can hide a private v4 target
+  if ((g[0]! & 0xe000) !== 0x2000) return true
+  if (g[0] === 0x2002 || (g[0] === 0x2001 && g[1] === 0)) return true
+  if (g[0] === 0x2001 && g[1] === 0x0db8) return true
   return false
 }
 
@@ -121,22 +125,23 @@ export const checkUrl = async (raw: string, opts: SafeUrlOpts = {}): Promise<Url
   }
   const host = hostOf(url)
   if (!host) return { ok: false, error: "URL has no host" }
-  if (opts.allowPrivate) return { ok: true, url }
-  if (isLocalName(host)) return { ok: false, error: "Host is not publicly routable" }
+  if (!opts.allowPrivate && isLocalName(host)) return { ok: false, error: "Host is not publicly routable" }
   if (isIP(host)) {
-    return isPrivateAddress(host) ? { ok: false, error: "Address is not publicly routable" } : { ok: true, url }
+    return !opts.allowPrivate && isPrivateAddress(host)
+      ? { ok: false, error: "Address is not publicly routable" }
+      : { ok: true, url, address: host }
   }
   let addresses: Array<{ address: string }>
   try {
-    addresses = await lookup(host, { all: true })
+    addresses = await (opts.lookupImpl ? opts.lookupImpl(host) : lookup(host, { all: true }))
   } catch {
     return { ok: false, error: "Host did not resolve" }
   }
   if (addresses.length === 0) return { ok: false, error: "Host did not resolve" }
-  if (addresses.some(a => isPrivateAddress(a.address))) {
+  if (!opts.allowPrivate && addresses.some(a => isPrivateAddress(a.address))) {
     return { ok: false, error: "Host resolves to a non-public address" }
   }
-  return { ok: true, url }
+  return { ok: true, url, address: addresses[0]!.address }
 }
 
 const REDIRECTS = new Set([301, 302, 303, 307, 308])
@@ -155,7 +160,18 @@ export const safeFetch = async (raw: string, init: RequestInit = {}, opts: SafeU
   for (let hop = 0; ; hop++) {
     const check = await checkUrl(target, opts)
     if (!check.ok) throw new Error(`Refusing to fetch ${hop === 0 ? "URL" : "redirect"}: ${check.error}`)
-    const res = await doFetch(check.url.toString(), { ...current, redirect: "manual" })
+    const headersForOrigin = new Headers(current.headers)
+    headersForOrigin.set("host", check.url.host)
+    const pinned = new URL(check.url)
+    pinned.hostname = isIP(check.address) === 6 ? `[${check.address}]` : check.address
+    const pinnedInit = {
+      ...current,
+      headers: headersForOrigin,
+      redirect: "manual" as const,
+      proxy: false,
+      tls: { serverName: hostOf(check.url) },
+    }
+    const res = await doFetch(pinned.toString(), pinnedInit)
     const location = res.headers.get("location")
     if (!REDIRECTS.has(res.status) || !location || hop >= max) return res
     await res.body?.cancel().catch(() => {})
@@ -166,6 +182,7 @@ export const safeFetch = async (raw: string, init: RequestInit = {}, opts: SafeU
     if (next.origin !== check.url.origin) {
       headers.delete("authorization")
       headers.delete("cookie")
+      headers.delete("proxy-authorization")
     }
     current = dropsBody(res.status, method)
       ? { ...current, method: "GET", body: undefined, headers }

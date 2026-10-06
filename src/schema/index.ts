@@ -26,11 +26,13 @@ export const users = defineSchema("users", {
   team_id: column.integer().default(1).ref("teams", "id"),
   // manages the users, invites and audit log of their own team only
   team_admin: column.boolean().default(false),
+  oauth_epoch: column.integer().default(0),
   // Per-user storage cap in bytes. 0 means unlimited; the owner sets caps
   // from Admin → Users. See src/usage/index.ts#checkQuota.
   storage_quota_bytes: column.bigint().default(0n),
   totp_secret: column.text().nullable(),
   totp_enabled: column.boolean().default(false),
+  totp_last_step: column.bigint().nullable(),
   totp_backup_codes: column.text().nullable(),
   totp_enabled_at: column.timestamp().nullable(),
   suspended_at: column.timestamp().nullable(),
@@ -228,6 +230,9 @@ export const fileVersions = defineSchema("file_versions", {
   mime: column.text(),
   size: column.bigint(),
   storage_key: column.text(),
+  scan_status: column.text().default("pending"),
+  scan_signature: column.text().nullable(),
+  scanned_at: column.timestamp().nullable(),
   uploaded_by: column.integer().nullable().ref("users", "id"),
   uploaded_at: column.timestamp().default(new Date()),
 })
@@ -538,6 +543,7 @@ export const externalIdentities = defineSchema("external_identities", {
   id: column.serial().primaryKey(),
   user_id: column.integer().ref("users", "id"),
   provider: column.text(),
+  issuer: column.text().default(""),
   subject: column.text(),
   email: column.text().nullable(),
   display_name: column.text().nullable(),

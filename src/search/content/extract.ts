@@ -10,7 +10,7 @@
 // Postgres handles 1 MiB tsvectors comfortably, and there are diminishing
 // returns past that for natural-language search.
 
-import { spawn } from "bun"
+import { runProcess } from "../../util/process/index.ts"
 
 export const MAX_TEXT_BYTES = 1024 * 1024
 
@@ -84,30 +84,8 @@ const decode = (bytes: Uint8Array): string => {
   }
 }
 
-const runCmd = async (
-  cmd: string[],
-  stdin: Uint8Array | null,
-): Promise<{ stdout: Uint8Array; ok: boolean; error?: string }> => {
-  try {
-    const proc = spawn(cmd, {
-      stdin: stdin ? "pipe" : "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    if (stdin && proc.stdin) {
-      const writer = proc.stdin as unknown as { write: (b: Uint8Array) => Promise<number>; end: () => Promise<void> }
-      await writer.write(stdin)
-      await writer.end()
-    }
-    const out = await new Response(proc.stdout).arrayBuffer()
-    const err = await new Response(proc.stderr).text()
-    const code = await proc.exited
-    if (code !== 0) return { stdout: new Uint8Array(out), ok: false, error: err.slice(0, 500) || `exit ${code}` }
-    return { stdout: new Uint8Array(out), ok: true }
-  } catch (err) {
-    return { stdout: new Uint8Array(), ok: false, error: (err as Error).message }
-  }
-}
+const runCmd = (cmd: string[], stdin: Uint8Array | null) =>
+  runProcess(cmd, stdin, { maxBytes: MAX_TEXT_BYTES * 2, timeoutMs: 8000 })
 
 const extractPdf = async (bytes: Uint8Array): Promise<ExtractResult> => {
   // pdftotext (poppler-utils): `pdftotext -enc UTF-8 -layout -nopgbrk - -`

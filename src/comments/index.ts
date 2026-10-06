@@ -1,9 +1,10 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
+import { del, get, json, patch, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { emitMany } from "../notifications/emit.ts"
 import { canWrite, fileAccess, folderAccess, type Role } from "../permissions/index.ts"
+import { parseJson } from "../util/json/index.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -146,9 +147,9 @@ export const commentRoutes = (db: Connection, secret: string) => {
         if (!row || row.deleted_at) return json(c, 404, { error: "Comment not found" })
         // a comment on something the caller cannot see does not exist for
         // them — the 403 is only for comments they can read but did not write
+        const access = await resolveResource(db, userId, row.resource_type as ResourceKind, row.resource_id)
+        if (!access) return json(c, 404, { error: "Comment not found" })
         if (row.user_id !== userId) {
-          const access = await resolveResource(db, userId, row.resource_type as ResourceKind, row.resource_id)
-          if (!access) return json(c, 404, { error: "Comment not found" })
           return json(c, 403, { error: "Not your comment" })
         }
         await db.execute(

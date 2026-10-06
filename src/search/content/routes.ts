@@ -1,6 +1,7 @@
 import type { Connection } from "@atlas/db"
 import { get, json, pipeline } from "@atlas/server"
 import { requireAuth } from "../../auth/guard.ts"
+import { clamdConfig } from "../../scanning/index.ts"
 import { ownerOnly } from "../../security/owner.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -74,11 +75,12 @@ export const contentSearchRoutes = (db: Connection, secret: string) => {
                     FROM folders f0
                     JOIN collaborations c
                       ON c.resource_type = 'folder' AND c.resource_id = f0.id AND c.user_id = $2
+                   WHERE f0.space_id IS NULL AND f0.deleted_at IS NULL
                   UNION ALL
                   SELECT w.root_id, fc.id, w.depth + 1
                     FROM walk w
                     JOIN folders fc ON fc.parent_id = w.id
-                   WHERE w.depth < 64
+                   WHERE w.depth < 64 AND fc.space_id IS NULL AND fc.deleted_at IS NULL
                 )
                 SELECT id FROM walk
               ) reach ON reach.id = f.id
@@ -92,6 +94,8 @@ export const contentSearchRoutes = (db: Connection, secret: string) => {
                  ) AS snippet
             FROM files f, q
            WHERE f.deleted_at IS NULL
+             AND f.scan_status <> 'infected'
+             ${clamdConfig() ? "AND f.scan_status = 'clean'" : ""}
              AND f.text_tsv @@ q.tsq
              AND (SELECT team_id FROM users WHERE id = f.user_id) = (SELECT team_id FROM users WHERE id = $2)
              AND (
@@ -103,6 +107,7 @@ export const contentSearchRoutes = (db: Connection, secret: string) => {
                   WHERE c.resource_type = 'file'
                     AND c.resource_id = f.id
                     AND c.user_id = $2
+                    AND NOT EXISTS (SELECT 1 FROM folders fo WHERE fo.id = f.folder_id AND fo.space_id IS NOT NULL)
                )
              )
            ORDER BY rank DESC, f.created_at DESC

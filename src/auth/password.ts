@@ -2,13 +2,15 @@ import { randomBytes } from "node:crypto"
 import { hash } from "@atlas/auth"
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { json, parseJson, pipeline, post } from "@atlas/server"
+import { json, pipeline, post } from "@atlas/server"
 import type { Emailer } from "../email/index.ts"
 import { passwordResetEmail } from "../email/templates/password.ts"
 import { logEvent } from "../security/audit.ts"
+import { revokeCredentials } from "../security/credentials.ts"
 import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
 import { revokeAllSessions } from "../security/sessions.ts"
 import { requestBaseUrl, teamFor } from "../teams/request.ts"
+import { parseJson } from "../util/json/index.ts"
 import { limitBody } from "../util/limitbody/index.ts"
 import { isEmail } from "../util/username.ts"
 import { hashToken } from "./guard.ts"
@@ -158,18 +160,25 @@ export const passwordRoutes = (db: Connection, emailer: Emailer, appUrl: string)
         }
 
         const hashed = await hash(newPassword)
-        await db.execute(
-          from("users")
-            .where(q => q("id").equals(row.user_id))
-            .update({ password: hashed }),
-        )
-        await db.execute(
-          from("password_resets")
-            .where(q => q("id").equals(row.id))
-            .update({ used_at: raw("NOW()") }),
-        )
-
-        const revoked = await revokeAllSessions(db, row.user_id)
+        const completed = await db.transaction(async tx => {
+          await tx.execute({ text: "SELECT id FROM users WHERE id = $1 FOR UPDATE", values: [row.user_id] })
+          const claimed = (await tx.execute({
+            text: `UPDATE password_resets SET used_at = NOW()
+                    WHERE id = $1 AND used_at IS NULL AND expires_at >= NOW()
+                    RETURNING id`,
+            values: [row.id],
+          })) as Array<{ id: number }>
+          if (claimed.length === 0) return null
+          await tx.execute(
+            from("users")
+              .where(q => q("id").equals(row.user_id))
+              .update({ password: hashed }),
+          )
+          await revokeCredentials(tx, row.user_id)
+          return { revoked: await revokeAllSessions(tx, row.user_id) }
+        })
+        if (!completed) return json(c, 400, { error: "Invalid or expired reset link" })
+        const { revoked } = completed
         logEvent(db, {
           userId: row.user_id,
           event: "password.reset_completed",

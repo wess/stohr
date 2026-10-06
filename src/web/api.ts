@@ -327,17 +327,19 @@ export const loginLdap = async (identity: string, password: string) => {
 // which case the SSO button still navigates and the fragment is ignored.
 const SSO_NONCE_KEY = "stohr_sso_nonce"
 
-export const markSsoStart = (): void => {
+export const markSsoStart = (): string => {
+  const nonce = crypto.randomUUID()
   try {
-    sessionStorage.setItem(SSO_NONCE_KEY, crypto.randomUUID())
+    sessionStorage.setItem(SSO_NONCE_KEY, nonce)
   } catch {
     /* storage unavailable */
   }
+  return nonce
 }
 
-export const consumeSsoStart = (): boolean => {
+export const consumeSsoStart = (nonce: string | null): boolean => {
   try {
-    const present = sessionStorage.getItem(SSO_NONCE_KEY) !== null
+    const present = !!nonce && sessionStorage.getItem(SSO_NONCE_KEY) === nonce
     sessionStorage.removeItem(SSO_NONCE_KEY)
     return present
   } catch {

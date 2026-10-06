@@ -6,7 +6,7 @@ This document describes how Stohr protects authentication, sessions, files, and 
 
 - **Passwords** hashed with Argon2id via `@atlas/auth`'s `hash` / `verify`. Plaintext passwords are never logged or stored. The login path runs an Argon2 verify against a fixed decoy hash on a missing-user lookup so response timing doesn't leak account existence.
 - **JWTs** are signed with `SECRET`. In production the API refuses to start if `SECRET` is the default value or shorter than 32 characters. Tokens carry a `jti` claim, live for 7 days, and are server-side revocable via the `sessions` table. The guard only accepts the two bearer shapes it issues — a session token (numeric `id`, string `jti`, live session row) or an OAuth access token (`client_id`) — so other JWTs minted with the same secret, such as the MFA challenge, are rejected with 401.
-- **SSO handoff** — external sign-ins return the JWT to the SPA in the URL fragment. The SPA adopts a `#token=` fragment only when the same tab started the sign-in (a one-shot nonce in `sessionStorage`), so a crafted link can't log a victim into an attacker's account.
+- **SSO handoff** — external sign-ins return the JWT to the SPA in the URL fragment. The callback must match an HttpOnly, host-only, SameSite=Lax browser-state cookie. The SPA adopts a `#token=` fragment only when its returned nonce matches the one stored by the same tab before starting sign-in, so a crafted link can't log a victim into an attacker's account.
 - **Personal access tokens (PATs)** for SDKs / mobile apps are 32-byte random values prefixed `stohr_pat_`. Stored as SHA-256 hashes; revealed only at creation time.
 - **WebAuthn passkeys** (FIDO2) — see below.
 - **Password reset** via signed email link — see below.
@@ -24,6 +24,7 @@ Sessions are revoked automatically on:
 ## Two-factor authentication (TOTP)
 
 - RFC 6238 TOTP, HMAC-SHA1, 30-second window, ±1 window tolerance
+- The last accepted authenticator timestep is claimed atomically per account. Enrollment, login, and disabling MFA reject that step and older steps, including concurrent requests with different challenges. A used code requires waiting for a new authenticator code; re-enrollment resets the counter.
 - 160-bit symmetric secret per user, generated server-side, shown once via QR
 - 10 backup codes minted at enable time (Argon2-hashed, single-use, regenerable)
 - Login flow: password → `mfa_required: true` + 5-minute MFA challenge JWT → second call with code or backup code. The challenge's `jti` is stored and consumed on success, so a captured challenge can't be completed twice; the second step re-checks that the account is neither suspended nor scheduled for deletion.
@@ -34,6 +35,7 @@ Built on `@simplewebauthn/server`. Users can register one or more passkeys at Se
 
 - **Registration**: `POST /me/passkeys/register/start` returns options; the client invokes `navigator.credentials.create()`; the response is verified at `POST /me/passkeys/register/finish`.
 - **Discoverable login**: `POST /login/passkey/discover/start` issues a challenge; `navigator.credentials.get()` returns a credential the server verifies at `POST /login/passkey/discover/finish`. On success the user is logged in directly — no password needed.
+- **User verification**: passwordless authentication requires the authenticator's user verification (PIN or biometric); a presence-only security-key touch cannot replace both password and TOTP. Challenges are consumed atomically.
 - **Counter regression check**: every signed counter is compared to the stored last-seen counter. A regression aborts the verification (defends against credential cloning).
 - **Challenges** live in `webauthn_challenges` with a 5-minute TTL and are swept periodically.
 - The relying-party identifier is `RP_ID` from the environment. Passkeys created against `RP_ID=localhost` won't work after you flip `RP_ID` to your real domain — users have to re-register.
@@ -44,9 +46,9 @@ Built on `@simplewebauthn/server`. Users can register one or more passkeys at Se
 - Stored as SHA-256 hash in `password_resets`. Plaintext only exists in the email link.
 - 1-hour TTL; single-use (`used_at` timestamp set on apply).
 - Rate-limited per email (5/hour) and per IP (30/hour) to prevent enumeration / floods.
-- Apply path revokes all of the user's existing sessions.
+- Apply atomically consumes the reset link, changes the password, and revokes all sessions, pending MFA challenges, PATs, S3 keys, OAuth grants, refresh tokens, and other reset links. Password changes also disconnect apps and other sessions; the current browser session can remain. An account epoch immediately invalidates previously issued OAuth access tokens. Password verification and MFA completion recheck the locked account before issuing a session, so a concurrent reset cannot leave an old-password session active.
 
-The reset-link URL is built from `APP_URL`. In production this **must** be HTTPS — otherwise the token rides in plaintext over the wire.
+Reset links use the current team's request base URL, falling back to `APP_URL`. Production links **must** use HTTPS — otherwise the token rides in plaintext over the wire.
 
 ## OAuth provider
 
@@ -54,8 +56,8 @@ The reset-link URL is built from `APP_URL`. In production this **must** be HTTPS
 - Authorization codes are 60-second TTL, single-use (atomic UPDATE … RETURNING claims them).
 - `redirect_uri` is matched **exact-string only** against the registered list — no prefix or wildcard matching.
 - Confidential-client secrets are SHA-256 hashed at rest and compared with `crypto.timingSafeEqual`.
-- Refresh tokens rotate on every use; presenting a previously-revoked refresh token burns the entire chain (reuse-detection per RFC 6749 §10.4).
-- Access tokens are short-lived JWTs (1h) carrying scope + client_id; refresh tokens are 30 days. Scopes are enforced on every request: safe methods need `read`, `/shares` needs `share`, other methods need `write`; MCP tools need the scope of their category. Consent (`/oauth/authorize/*`, `/oauth/device/*`), profile identity, credential minting and account deletion refuse access tokens outright.
+- Refresh tokens rotate atomically on every use; presenting a previously-revoked refresh token burns the entire chain (reuse-detection per RFC 6749 §10.4).
+- Access tokens are short-lived JWTs (1h) carrying scope, client_id, and an account revocation epoch. The guard checks the current epoch and that the client is still enabled; refresh tokens are 30 days. Scopes are enforced on every request: safe methods need `read`, `/shares` needs `share`, other methods need `write`; MCP tools need the scope of their category. Consent (`/oauth/authorize/*`, `/oauth/device/*`), profile identity, credential minting and account deletion refuse access tokens outright.
 - Registered `redirect_uri`s may not use `javascript:`, `data:`, `vbscript:`, `file:`, `blob:` or `about:`, and the SPA refuses to follow such a URL even if one were stored. Discovery metadata is built from `APP_URL`, never the `Host` header.
 - Device flow polling is server-rate-limited per RFC 8628.
 
@@ -93,7 +95,7 @@ The HTTP server wraps every response with:
 - `Cross-Origin-Resource-Policy: same-site`
 - `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'` (production). Dev mode loosens `script-src` and `connect-src` so Bun's HMR works.
 
-`'unsafe-inline'` is intentionally allowed for `style-src` only — the SPA uses inline `style=` attributes. Inline scripts are blocked, so an XSS payload can't exfiltrate the bearer token from `localStorage`.
+`'unsafe-inline'` is intentionally allowed for `style-src` only — the SPA uses inline `style=` attributes. Inline scripts are blocked. The browser stores its bearer in `localStorage`, so preventing script injection remains a critical boundary; CSP is defense in depth, not a substitute for escaping untrusted content.
 
 ## File serves: inline-MIME allowlist
 
@@ -105,7 +107,7 @@ This closes the stored-XSS path where an attacker uploads `evil.html` declared a
 
 Public share creation requires an expiration (max 30 days). Optional password is Argon2-hashed; verified via the `X-Share-Password` request header at access time. The header is the **only** accepted password channel — query-string passwords (`?p=`) are rejected, since they end up in browser history, server access logs, and `Referer` headers.
 
-Optional "burn after view by non-creator" atomically deletes the share row before serving — only one non-owner viewer wins.
+Optional "burn after view by non-creator" atomically deletes the share row before serving — only one non-owner viewer wins. The creator exception requires a currently valid credential; revoked sessions and suspended accounts count as anonymous viewers.
 
 A periodic sweep (guarded against overlap) deletes expired share rows hourly; lazy-delete also runs on access.
 
@@ -148,6 +150,20 @@ Setting it wrong has real consequences:
 `MAX_UPLOAD_BYTES` (default 1 GiB) is the hard cap on a single request body. Bun buffers the body in memory before the handler runs; with `STORAGE_DRIVER=s3` the `@atlas/storage` driver re-buffers it again to compute the SigV4 payload hash, so this is effectively a per-upload memory ceiling. The `local` driver streams to disk after Bun's initial buffer.
 
 Direct-to-bucket presigned PUTs are intentionally not supported — all file CRUD goes through the API so authorization, quota, and audit checks always apply.
+
+## File isolation and malware scanning
+
+Space membership grants access; uploader attribution does not. REST, MCP, search, actions, sharing, restoration, and deletion use this boundary. Personal S3 and WebDAV mounts exclude Space content. Account deletion transfers surviving Spaces and preserves their content instead of cascading through another member's files.
+
+All API responses use `Cache-Control: no-store`, including public thumbnails, so permission changes are checked on subsequent requests. Uploaded active content remains attachment-only. PDF rendering and text extraction have time, output, and image-pixel limits; JSON request bodies and remote JSON responses have independent size caps. Outbound webhook and federation requests connect to the vetted IP while retaining the original Host and TLS identity, including after redirects.
+
+Malware scanning is optional. With `CLAMD_HOST` configured, only `clean` files deliver bytes, thumbnails, or search snippets; pending, failed, skipped, and infected files remain blocked. Archived versions retain their verdict, and delayed scan results update only the matching storage key. Previously skipped files and historical versions are scanned in the background. The scan size limit must match the daemon; see [configuration](docs/CONFIGURATION.md#antivirus-scanning-clamav). Without a daemon, uploads are unscanned and delivery remains enabled, except for files previously marked infected.
+
+## Security review, October 2026
+
+The code review traced authentication and recovery, tenant and Space permissions, public sharing, upload and version lifecycle, S3/WebDAV, federation, MCP/actions, outbound requests, and the production proxy boundary. Confirmed issues were reproduced with isolated fixtures and fixed with regression tests. Dependency advisory checks reported no known advisories at review time.
+
+This review does not establish that the service is vulnerability-free. It did not include an independent penetration test or a full inspection of the storage-provider control plane. Production malware scanning was disabled at review time. Password recovery now revokes app credentials; app clients must reconnect after a password change or reset. Refresh-token reuse revokes that user's refresh tokens for the client; already-issued access tokens can remain valid until their one-hour expiry unless the account epoch or client is revoked.
 
 ## What still needs work
 

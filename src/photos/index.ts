@@ -1,6 +1,6 @@
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
-import { get, json, parseJson, parseMultipart, pipeline, post } from "@atlas/server"
+import { get, json, parseMultipart, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { clamdConfig } from "../scanning/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
@@ -8,6 +8,7 @@ import { drop, makeKey, put } from "../storage/index.ts"
 import { generateImageThumb, isThumbable, THUMB_MAX_BYTES, thumbKeyFor } from "../storage/thumb.ts"
 import { quotaAfterWrite, quotaMessage } from "../uploads/quota.ts"
 import { checkQuota, userQuota } from "../usage/index.ts"
+import { parseJson } from "../util/json/index.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 

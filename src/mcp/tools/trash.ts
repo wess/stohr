@@ -1,5 +1,5 @@
 import { from, raw } from "@atlas/db"
-import { canWrite, fileAccess, folderAccess } from "../../permissions/index.ts"
+import { canWrite, fileAccess, folderAccess, trashedFileAccess, trashedFolderAccess } from "../../permissions/index.ts"
 import { asError, asText, type Tool, type ToolContext } from "./index.ts"
 
 const trashFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
@@ -19,12 +19,9 @@ const trashFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
 const restoreFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const id = Number(args.id ?? args.file_id ?? args.fileId)
   if (!Number.isFinite(id)) return asError("id is required")
-  const row = (await ctx.db.one(
-    from("files")
-      .where(q => q("id").equals(id))
-      .where(q => q("user_id").equals(ctx.userId)),
-  )) as { id: number; folder_id: number | null; deleted_at: string | null } | null
-  if (!row) return asError("File not found")
+  const access = await trashedFileAccess(ctx.db, ctx.userId, id)
+  if (!access || access.role !== "owner") return asError("File not found or no permission to restore")
+  const row = access.file
   if (!row.deleted_at) return asText({ id, restored: false, note: "Already live" })
   let folderId = row.folder_id
   if (folderId !== null) {
@@ -33,7 +30,15 @@ const restoreFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
         .where(q => q("id").equals(folderId))
         .where(q => q("deleted_at").isNull()),
     )
-    if (!folder) folderId = null // Parent gone — restore to root
+    if (!folder) {
+      const parent = (await ctx.db.one(
+        from("folders")
+          .where(q => q("id").equals(folderId))
+          .select("space_id"),
+      )) as { space_id: number | null } | null
+      if (parent?.space_id != null) return asError("Restore the space folder first")
+      folderId = null
+    }
   }
   await ctx.db.execute(
     from("files")
@@ -59,12 +64,9 @@ const trashFolder = async (ctx: ToolContext, args: Record<string, unknown>) => {
 const restoreFolder = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const id = Number(args.id ?? args.folder_id ?? args.folderId)
   if (!Number.isFinite(id)) return asError("id is required")
-  const row = (await ctx.db.one(
-    from("folders")
-      .where(q => q("id").equals(id))
-      .where(q => q("user_id").equals(ctx.userId)),
-  )) as { id: number; parent_id: number | null; deleted_at: string | null } | null
-  if (!row) return asError("Folder not found")
+  const access = await trashedFolderAccess(ctx.db, ctx.userId, id)
+  if (!access || access.role !== "owner") return asError("Folder not found or no permission to restore")
+  const row = access.folder
   if (!row.deleted_at) return asText({ id, restored: false, note: "Already live" })
   let parentId = row.parent_id
   if (parentId !== null) {
@@ -73,7 +75,10 @@ const restoreFolder = async (ctx: ToolContext, args: Record<string, unknown>) =>
         .where(q => q("id").equals(parentId))
         .where(q => q("deleted_at").isNull()),
     )
-    if (!parent) parentId = null
+    if (!parent) {
+      if (row.space_id != null) return asError("Restore the space parent first")
+      parentId = null
+    }
   }
   await ctx.db.execute(
     from("folders")

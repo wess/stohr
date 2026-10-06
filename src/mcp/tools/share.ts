@@ -1,5 +1,6 @@
 import { hash } from "@atlas/auth"
 import { from, raw } from "@atlas/db"
+import { fileAccess, isOwner } from "../../permissions/index.ts"
 import { asError, asText, type Tool, type ToolContext } from "./index.ts"
 
 const MAX_EXPIRES_SECONDS = 30 * 24 * 60 * 60
@@ -73,13 +74,8 @@ const createShare = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const burnOnView = Boolean(args.burn_on_view ?? args.burnOnView ?? false)
   const password = typeof args.password === "string" && args.password.trim() ? args.password.trim() : null
 
-  const file = await ctx.db.one(
-    from("files")
-      .where(q => q("id").equals(fileId))
-      .where(q => q("user_id").equals(ctx.userId))
-      .where(q => q("deleted_at").isNull()),
-  )
-  if (!file) return asError("File not found")
+  const access = await fileAccess(ctx.db, ctx.userId, fileId)
+  if (!access || !isOwner(access.role)) return asError("File not found or no permission to share")
 
   const tok = await allocToken(ctx)
   const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString()

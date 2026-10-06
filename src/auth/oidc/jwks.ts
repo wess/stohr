@@ -1,3 +1,5 @@
+import { responseJson } from "../../util/response/index.ts"
+
 // Minimal JWKS-backed ID token verification using SubtleCrypto. Supports
 // RS256 / RS384 / RS512 + ES256 / ES384 — covers every common IdP. The JWKS
 // is cached per issuer for an hour; on a kid miss we refetch once before
@@ -35,9 +37,13 @@ const fetchJwks = async (jwksUri: string, force: boolean): Promise<Jwks> => {
     const hit = jwksCache.get(jwksUri)
     if (hit && hit.expiresAt > Date.now()) return hit.value
   }
-  const res = await fetch(jwksUri, { headers: { accept: "application/json" } })
+  const res = await fetch(jwksUri, {
+    signal: AbortSignal.timeout(10_000),
+    redirect: "error",
+    headers: { accept: "application/json" },
+  })
   if (!res.ok) throw new Error(`JWKS fetch failed: ${res.status}`)
-  const value = (await res.json()) as Jwks
+  const value = (await responseJson(res)) as Jwks
   jwksCache.set(jwksUri, { value, expiresAt: Date.now() + TTL_MS })
   return value
 }
@@ -101,11 +107,7 @@ const splitJwt = (jwt: string): { header: string; payload: string; signature: st
 }
 
 const findKey = (jwks: Jwks, kid: string | undefined, alg: string): Jwk | null => {
-  if (kid) {
-    const exact = jwks.keys.find(k => k.kid === kid)
-    if (exact) return exact
-  }
-  return jwks.keys.find(k => k.alg === alg) ?? jwks.keys[0] ?? null
+  return jwks.keys.find(k => (!kid || k.kid === kid) && (!k.alg || k.alg === alg)) ?? null
 }
 
 export const verifyIdToken = async (
@@ -139,13 +141,18 @@ export const verifyIdToken = async (
   const claims = JSON.parse(b64uToText(payload)) as IdTokenClaims
   const skew = opts.clockSkewSec ?? 60
   const now = Math.floor(Date.now() / 1000)
-  if (claims.exp + skew < now) throw new Error("ID token expired")
+  if (typeof claims.exp !== "number" || !Number.isFinite(claims.exp)) throw new Error("ID token missing exp")
+  if (typeof claims.iat !== "number" || !Number.isFinite(claims.iat)) throw new Error("ID token missing iat")
+  if (claims.exp + skew <= now) throw new Error("ID token expired")
   if (claims.iat - skew > now) throw new Error("ID token issued in the future")
   if (claims.iss !== opts.issuer) throw new Error(`ID token iss mismatch: ${claims.iss}`)
   const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud]
   if (!aud.includes(opts.clientId)) throw new Error("ID token aud mismatch")
+  if ((aud.length > 1 && claims.azp !== opts.clientId) || (claims.azp !== undefined && claims.azp !== opts.clientId)) {
+    throw new Error("ID token azp mismatch")
+  }
   if (opts.nonce && claims.nonce !== opts.nonce) throw new Error("ID token nonce mismatch")
-  if (!claims.sub) throw new Error("ID token missing sub")
+  if (typeof claims.sub !== "string" || !claims.sub) throw new Error("ID token missing sub")
 
   return { claims, raw: idToken }
 }

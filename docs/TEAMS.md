@@ -157,7 +157,7 @@ http://api:3000/internal/tls/allow?domain=<host>` (loopback or
 `TRUSTED_PROXIES` peers only, 60 asks a minute per peer; 200 only for
 `ROOT_DOMAIN`, the `APP_URL` host, live team subdomains, and verified custom domains) — so nobody can
 burn certificates on arbitrary names. The route is unreachable from the
-public hostname: the `caddyfile` answers `/api/internal/*` with 404 in both
+public hostname: the `caddyfile` answers `/api/internal/*` with 404 in all
 site blocks and the web proxy (`src/web/serve.ts`) refuses the prefix
 before it would forward anything. See `caddyfile` and
 [DEPLOY.md](DEPLOY.md).

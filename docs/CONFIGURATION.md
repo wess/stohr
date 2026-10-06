@@ -43,8 +43,8 @@ Stohr ships two storage drivers. All file CRUD always goes through the API regar
 
 | var | default | purpose |
 | --- | --- | --- |
-| `APP_URL` | `http://localhost:3001` | Base URL of the root team: email links (invites, password reset, OAuth redirects) and the OAuth issuer. Always HTTPS in prod. With teams, a tenant's links use `<APP_URL scheme>://<slug>.<ROOT_DOMAIN><APP_URL port>` instead |
-| `ROOT_DOMAIN` | (empty) | Turns multi-tenancy on ([TEAMS.md](TEAMS.md)). `<slug>.ROOT_DOMAIN` is that team's host; `ROOT_DOMAIN` itself, and any host not under it (localhost, an IP, health checks), is the root team. An unknown or deleted slug is a 404 on every route, a suspended team a 403. Empty = single tenant, every host is root, nothing changes. Needs wildcard DNS (`*.ROOT_DOMAIN`) and the on-demand TLS block in `caddyfile`. `ROOT_DOMAIN=localhost` works in dev with no DNS (`acme.localhost:3001`). Also the default `RP_ID` when set |
+| `APP_URL` | `http://localhost:3001` | Base URL of the root team: email links (invites, password reset, OAuth redirects) and the OAuth issuer. Always HTTPS in prod. With teams, links prefer the verified custom domain or `<APP_URL scheme>://<slug>.<ROOT_DOMAIN><APP_URL port>`; request-specific links keep the resolved request hostname |
+| `ROOT_DOMAIN` | (empty) | Turns multi-tenancy on ([TEAMS.md](TEAMS.md)). `<slug>.ROOT_DOMAIN` is that team's host; `ROOT_DOMAIN`, the `APP_URL` hostname, and local/internal hosts resolve to root. Verified custom domains resolve to their team; other public hosts return 404. An unknown or deleted slug is a 404 on every route, a suspended team a 403. Empty = single tenant, every host is root, nothing changes. Needs wildcard DNS (`*.ROOT_DOMAIN`) and the on-demand TLS block in `caddyfile`. `ROOT_DOMAIN=localhost` works in dev with no DNS (`acme.localhost:3001`). Also the default `RP_ID` when set |
 
 ### Email (Resend)
 
@@ -56,7 +56,7 @@ Stohr ships two storage drivers. All file CRUD always goes through the API regar
 
 ### WebAuthn / passkeys
 
-These three must be set together. A passkey created against one `RP_ID` cannot be used against another.
+Set the display name and origin for your deployment. `RP_ID` defaults to `ROOT_DOMAIN` when teams are enabled; otherwise configure it to match the app hostname. A passkey cannot move between unrelated domains. See [Teams](TEAMS.md#custom-domains) for custom-domain registration.
 
 | var | default | purpose |
 | --- | --- | --- |
@@ -114,13 +114,14 @@ Uploads can be scanned for malware with a ClamAV daemon (`clamd`). The whole fea
 
 | var | default | purpose |
 | --- | --- | --- |
-| `CLAMD_HOST` | (empty) | Hostname of the `clamd` daemon. **When empty, scanning is disabled** — every upload is recorded with scan status `skipped` and is never gated. When set, new uploads are scanned (in the background sweep) and a download of a file that came back `infected` is blocked |
+| `CLAMD_HOST` | (empty) | Hostname of the `clamd` daemon. **When empty, scanning is disabled** — new uploads receive scan status `skipped` and remain downloadable; existing infected verdicts still block delivery. When set, only files with a `clean` verdict can deliver bytes or search snippets. Pending, error, skipped, and infected files are blocked |
 | `CLAMD_PORT` | `3310` | TCP port of the `clamd` daemon. Only used when `CLAMD_HOST` is set |
+| `CLAMD_MAX_BYTES` | `26214400` | Largest blob scanned. Match the daemon's `StreamMaxLength`. Larger files remain unavailable while scanning is enabled |
 
 Behavior:
 
-- **Disabled** (`CLAMD_HOST` empty): uploads succeed and the file's scan status is `skipped`. A `skipped` result never blocks an upload or a download, so existing deployments are unaffected.
-- **Enabled** (`CLAMD_HOST` set): each new file is scanned via `clamd`; a download of a file flagged `infected` returns **403 Forbidden**. Files larger than clamd's 25 MB `INSTREAM` limit are recorded `skipped`. Point `CLAMD_HOST` only at a local / self-hosted `clamd` — never a third-party API — so file bytes never leave the host.
+- **Disabled** (`CLAMD_HOST` empty): uploads succeed and the file's scan status is `skipped`. A `skipped` result does not block delivery when scanning is disabled. Previously infected files remain blocked.
+- **Enabled** (`CLAMD_HOST` set): current files and archived versions are scanned via `clamd`; downloads and thumbnails return **403 Forbidden** until a clean verdict exists. Failures are retried, and previously skipped files within `CLAMD_MAX_BYTES` are scanned when scanning is enabled. Files above that limit remain unavailable; raise both `CLAMD_MAX_BYTES` and the daemon's `StreamMaxLength` together to support them. Point `CLAMD_HOST` only at a local / self-hosted `clamd` — never a third-party API — so file bytes stay within your infrastructure.
 
 `compose.yaml` ships a commented-out `clamav` sidecar (`clamav/clamav:latest`, port `3310`). To enable it: uncomment that service, set `CLAMD_HOST=clamav` in your `.env` (`CLAMD_PORT` defaults to `3310`), and add `clamav` to the `api` service's `depends_on`.
 
@@ -158,9 +159,9 @@ If `RESEND_API_KEY` is empty, Stohr boots fine — emails are written to the API
 
 ## WebAuthn requirements in production
 
-- `RP_ID`, `RP_NAME`, `RP_ORIGIN` must all be set.
+- Confirm `RP_ID`, `RP_NAME`, and `RP_ORIGIN` match your deployment; with teams, leave `RP_ID` unset to use `ROOT_DOMAIN`.
 - `RP_ORIGIN` must be **HTTPS** in production. Browsers refuse passkey registration over HTTP except on `localhost`.
-- `RP_ID` must match the eTLD+1 of `RP_ORIGIN`. Mixing `RP_ID=stohr.io` with `RP_ORIGIN=https://app.example.com` fails.
+- `RP_ID` must be the origin hostname or an allowed registrable suffix of it, with no scheme or port. For `https://files.example.com`, either `files.example.com` or `example.com` can work; `stohr.io` cannot.
 - Passkeys created against `RP_ID=localhost` will not work after you flip `RP_ID` to your real domain — users have to re-register.
 
 ## Database

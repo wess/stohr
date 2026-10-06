@@ -1,6 +1,7 @@
 import { from } from "@atlas/db"
 import sharp from "sharp"
-import { fetchObject, makeKey, put } from "../../../storage/index.ts"
+import { drop, fetchObject, makeKey, put } from "../../../storage/index.ts"
+import { checkActionQuota, finishActionWrite } from "../../quota.ts"
 import type { Primitive } from "../types.ts"
 
 const SUPPORTED_MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"])
@@ -45,14 +46,21 @@ const transformThumbnail: Primitive = {
 
     const cfg = config as { width?: number; height?: number }
     const width = Math.max(16, Math.min(2048, Number(cfg.width ?? 256) || 256))
-    const height = cfg.height && Number(cfg.height) > 0 ? Number(cfg.height) : undefined
+    const height =
+      cfg.height && Number.isFinite(Number(cfg.height)) && Number(cfg.height) > 0
+        ? Math.min(2048, Math.round(Number(cfg.height)))
+        : undefined
 
     const obj = await fetchObject(ctx.store, file.storage_key)
     const sourceBytes = new Uint8Array(await obj.arrayBuffer())
 
-    const outBuffer = await sharp(sourceBytes).resize({ width, height, fit: "inside" }).webp({ quality: 80 }).toBuffer()
+    const outBuffer = await sharp(sourceBytes, { limitInputPixels: 40_000_000 })
+      .resize({ width, height, fit: "inside" })
+      .webp({ quality: 80 })
+      .toBuffer()
     const outBytes = new Uint8Array(outBuffer)
 
+    const quota = await checkActionQuota(ctx.db, ctx.ownerId, outBytes.byteLength)
     const thumbName = buildThumbName(file.name)
     const thumbKey = makeKey(ctx.ownerId, thumbName)
     await put(ctx.store, thumbKey, outBytes, "image/webp")
@@ -68,29 +76,22 @@ const transformThumbnail: Primitive = {
     )) as { id: number } | null
 
     if (existing) {
-      await ctx.db.execute(
-        from("files")
-          .where(q => q("id").equals(existing.id))
-          .update({
-            mime: "image/webp",
-            size: outBytes.byteLength,
-            storage_key: thumbKey,
-          }),
-      )
-    } else {
-      await ctx.db.execute(
-        from("files").insert({
-          user_id: ctx.ownerId,
-          folder_id: file.folder_id,
-          name: thumbName,
-          mime: "image/webp",
-          size: outBytes.byteLength,
-          storage_key: thumbKey,
-          thumb_key: null,
-          version: 1,
-        }),
-      )
+      await drop(ctx.store, thumbKey)
+      return { kind: "halt", reason: "thumbnail already exists" }
     }
+    await ctx.db.execute(
+      from("files").insert({
+        user_id: ctx.ownerId,
+        folder_id: file.folder_id,
+        name: thumbName,
+        mime: "image/webp",
+        size: outBytes.byteLength,
+        storage_key: thumbKey,
+        thumb_key: null,
+        version: 1,
+      }),
+    )
+    await finishActionWrite(ctx.db, ctx.store, ctx.ownerId, quota, outBytes.byteLength, thumbKey)
 
     /* Doesn't change the subject — the original stays as-is. */
     return { kind: "continue" }

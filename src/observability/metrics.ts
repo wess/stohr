@@ -41,7 +41,22 @@ const histogramFor = (key: string): Histogram => {
 }
 
 // Normalize the method so a flood of odd verbs can't blow up the label space.
-const normMethod = (method: string): string => method.toUpperCase()
+const METHODS = new Set([
+  "GET",
+  "HEAD",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "OPTIONS",
+  "PROPFIND",
+  "MKCOL",
+  "MOVE",
+  "COPY",
+  "LOCK",
+  "UNLOCK",
+])
+const normMethod = (method: string): string => (METHODS.has(method.toUpperCase()) ? method.toUpperCase() : "OTHER")
 
 export const recordRequest = (method: string, status: number, ms: number): void => {
   const m = normMethod(method)

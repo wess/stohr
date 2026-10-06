@@ -6,7 +6,7 @@ Stohr is an OAuth 2.0 provider supporting the **Authorization Code flow with PKC
 
 ## Endpoints
 
-Discoverable at `/.well-known/oauth-authorization-server` (RFC 8414). The `issuer` and every endpoint URL there are built from the instance's `APP_URL`, not from the request's `Host` header:
+Discoverable at `/.well-known/oauth-authorization-server` (RFC 8414). The `issuer` and endpoint URLs use the resolved team's request URL: the root address, team subdomain, or verified custom domain. Use discovery on the same hostname where the user signs in. With teams enabled, unknown public hostnames are refused by team resolution:
 
 | Endpoint                              | Purpose                                       |
 |---------------------------------------|-----------------------------------------------|
@@ -161,9 +161,11 @@ grant_type=refresh_token
 &client_id=<your client_id>
 ```
 
-You get a **new pair**: `access_token` and `refresh_token`. The old refresh token is now revoked.
+You get a **new pair**: `access_token` and `refresh_token`. The old refresh token is now revoked. Serialize refresh requests for each connection: two requests using the same token are treated as reuse, so overlapping retries can disconnect the app.
 
 **This rotation is mandatory.** If you reuse an old refresh token, Stohr treats it as a leak signal and revokes the entire token family for that user/client — the user has to authorize again.
+
+Password changes and password resets revoke app credentials, including refresh tokens and already-issued access tokens through an account revocation epoch. Disabling or deleting an OAuth client also blocks its access tokens immediately. Treat a revoked connection as requiring fresh authorization.
 
 ### 6. Revoke (optional, on logout)
 

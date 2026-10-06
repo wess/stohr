@@ -14,7 +14,8 @@ In-depth guides for installing, deploying, and integrating with Stohr.
 - [**WebDAV**](WEBDAV.md) — mount Stohr as a network drive from macOS Finder, Windows Explorer, GNOME, `rclone`, etc.
 - [**Action folders**](ACTIONS.md) — folders that run actions on file/folder events; how to write a built-in
 - [**Search**](SEARCH.md) — filename + full-text content search, extractor pipeline, indexer tuning
-- [**Spaces**](SPACES.md) — team workspaces with per-space membership and permissions
+- [**Teams**](TEAMS.md) — tenant isolation, team admins, quotas, subdomains, and custom domains
+- [**Spaces**](SPACES.md) — shared workspaces within a team, with per-space membership and permissions
 - [**Messaging**](MESSAGING.md) — user↔user and system→user mailbox
 - [**Photo backup**](PHOTO-BACKUP.md) — mobile photo-backup protocol (init / manifest / idempotent upload)
 - [**S3-compatible endpoints**](S3.md) — using Stohr with `aws-cli`, `boto3`, or any AWS SDK

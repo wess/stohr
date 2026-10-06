@@ -43,6 +43,12 @@ describe("isPrivateAddress", () => {
       "::ffff:a9fe:a9fe",
       "64:ff9b::7f00:1",
       "ff02::1",
+      "fec0::1",
+      "100::1",
+      "64:ff9b:1::a00:1",
+      "2002:7f00:1::",
+      "2001::1",
+      "2001:db8::1",
     ]) {
       expect(isPrivateAddress(ip)).toBe(true)
     }

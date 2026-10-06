@@ -74,6 +74,8 @@ export const withSecurityHeaders =
       }
     }
     const res = await fetch(req)
+    // revoking a grant must also revoke cached bytes and metadata
+    res.headers.set("cache-control", "no-store")
     for (const [k, v] of Object.entries(HEADERS)) {
       if (!res.headers.has(k)) res.headers.set(k, v)
     }

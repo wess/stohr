@@ -601,8 +601,8 @@ const Auth: React.FC<{
                 type="button"
                 className="passkey-cta"
                 onClick={() => {
-                  api.markSsoStart()
-                  window.location.href = "/auth/sso/login"
+                  const nonce = api.markSsoStart()
+                  window.location.href = `/auth/sso/login?browser_nonce=${encodeURIComponent(nonce)}`
                 }}
               >
                 <ShieldCheck size={16} /> Sign in with {sso.label}
@@ -619,9 +619,10 @@ const Auth: React.FC<{
                 className="passkey-cta"
                 onClick={() => {
                   const next = oauthNext ?? window.location.pathname + window.location.search
-                  const q = next && next !== "/" ? `?redirect_to=${encodeURIComponent(next)}` : ""
-                  api.markSsoStart()
-                  window.location.href = `/api/auth/oidc/start${q}`
+                  const nonce = api.markSsoStart()
+                  const q = new URLSearchParams({ browser_nonce: nonce })
+                  if (next && next !== "/") q.set("redirect_to", next)
+                  window.location.href = `/api/auth/oidc/start?${q}`
                 }}
               >
                 <ShieldCheck size={16} /> {oidc.label}
@@ -12022,9 +12023,10 @@ const App: React.FC = () => {
     if (loggedIn) return
     const hash = window.location.hash
     if (!hash.startsWith("#token=")) return
-    const t = decodeURIComponent(hash.slice("#token=".length))
+    const p = new URLSearchParams(hash.slice(1))
+    const t = p.get("token")
     history.replaceState(null, "", window.location.pathname + window.location.search)
-    if (!t || !api.consumeSsoStart()) return
+    if (!t || !api.consumeSsoStart(p.get("sso_nonce"))) return
     api.adoptToken(t).then(u => {
       if (u) setLoggedIn(true)
     })

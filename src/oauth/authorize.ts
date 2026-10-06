@@ -1,9 +1,10 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { get, json, parseJson, pipeline, post } from "@atlas/server"
+import { get, json, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
+import { parseJson } from "../util/json/index.ts"
 import {
   AUTH_CODE_TTL_SECONDS,
   formatScope,

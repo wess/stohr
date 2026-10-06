@@ -7,11 +7,13 @@ import { clientIp, userAgent } from "../../security/ratelimit.ts"
 import { issueSession } from "../../security/sessions.ts"
 import { rootOnly } from "../../teams/guards.ts"
 import { teamFor } from "../../teams/request.ts"
+import { responseJson } from "../../util/response/index.ts"
 import { randomToken } from "../../util/token.ts"
 import { upsertFromExternal } from "../external.ts"
 import { fetchDiscovery } from "../oidc/discovery.ts"
 import { verifyIdToken } from "../oidc/jwks.ts"
 import { safeRedirectPath } from "../redirect.ts"
+import { bindLoginState, clearLoginState, loginStateNonce } from "../state.ts"
 import { configFor, enabledProviders, type SocialProvider, type SocialProviderConfig } from "./config.ts"
 import { exchangeGithubCode, fetchGithubProfile, githubAuthorizeUrl } from "./github.ts"
 
@@ -44,8 +46,10 @@ const renderRedirect = (c: Conn, toUrl: string, token: string): Conn => {
   // Hand the JWT to the SPA via the URL fragment (#) exactly as the OIDC
   // flow does — the login screen reads location.hash on mount, stores the
   // token, and replaces the URL.
-  const url = `${toUrl}#token=${encodeURIComponent(token)}`
-  return putHeader(halt(c, 302, ""), "location", url)
+  const state = new URL(c.request.url).searchParams.get("state") ?? ""
+  const nonce = loginStateNonce(c.request, state)
+  const url = `${toUrl}#token=${encodeURIComponent(token)}&sso_nonce=${encodeURIComponent(nonce ?? "")}`
+  return clearLoginState(putHeader(halt(c, 302, ""), "location", url))
 }
 
 // Encode the originating provider into the stored state's nonce slot so the
@@ -72,17 +76,12 @@ const insertState = async (
 type StateRow = { nonce: string; code_verifier: string; redirect_to: string | null; expires_at: string }
 
 const consumeState = async (db: Connection, state: string): Promise<StateRow | null> => {
-  const row = (await db.one(
-    from("oidc_states")
-      .where(q => q("state").equals(state))
-      .select("nonce", "code_verifier", "redirect_to", "expires_at"),
-  )) as StateRow | null
+  const rows = (await db.execute({
+    text: "DELETE FROM oidc_states WHERE state = $1 RETURNING nonce, code_verifier, redirect_to, expires_at",
+    values: [state],
+  })) as StateRow[]
+  const row = rows[0]
   if (!row) return null
-  await db.execute(
-    from("oidc_states")
-      .where(q => q("state").equals(state))
-      .del(),
-  )
   return row
 }
 
@@ -125,7 +124,7 @@ const finishLogin = async (
     return renderError(c, (err as Error).message)
   }
 
-  if (user.deleted_at) {
+  if (user.deleted_at || user.suspended_at) {
     return renderError(c, "Account is scheduled for deletion. Restore via the cancel link in your email.")
   }
 
@@ -169,7 +168,10 @@ const googleStart =
       code_challenge: codeChallenge,
       code_challenge_method: "S256",
     })
-    return putHeader(halt(c, 302, ""), "location", `${disco.authorization_endpoint}?${params.toString()}`)
+    return bindLoginState(
+      putHeader(halt(c, 302, ""), "location", `${disco.authorization_endpoint}?${params.toString()}`),
+      state,
+    )
   }
 
 const googleCallback =
@@ -184,9 +186,10 @@ const googleCallback =
     const code = url.searchParams.get("code")
     const state = url.searchParams.get("state")
     if (!code || !state) return renderError(c, "Missing code or state on callback")
+    if (!loginStateNonce(c.request, state)) return renderError(c, "Sign-in browser state did not match")
 
     const stateRow = await consumeState(db, state)
-    if (!stateRow || stateRow.nonce !== "google") return renderError(c, "Unknown or expired sign-in state")
+    if (stateRow?.nonce !== "google") return renderError(c, "Unknown or expired sign-in state")
     if (new Date(stateRow.expires_at).getTime() < Date.now()) {
       return renderError(c, "Sign-in state has expired — start over")
     }
@@ -199,6 +202,8 @@ const googleCallback =
     }
 
     const tokenRes = await fetch(disco.token_endpoint, {
+      signal: AbortSignal.timeout(10_000),
+      redirect: "error",
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
       body: new URLSearchParams({
@@ -211,14 +216,14 @@ const googleCallback =
       }),
     })
     if (!tokenRes.ok) {
-      const body = await tokenRes.text().catch(() => "")
+      await tokenRes.body?.cancel()
       logEvent(db, {
         event: "google.token_exchange_failed",
-        metadata: { status: tokenRes.status, body: body.slice(0, 500) },
+        metadata: { status: tokenRes.status },
       })
       return renderError(c, `Token exchange failed: ${tokenRes.status}`)
     }
-    const tokenBody = (await tokenRes.json()) as { id_token?: string }
+    const tokenBody = (await responseJson(tokenRes)) as { id_token?: string }
     if (!tokenBody.id_token) return renderError(c, "Google did not return an ID token")
 
     let verified: Awaited<ReturnType<typeof verifyIdToken>>
@@ -264,10 +269,9 @@ const githubStart =
     // GitHub has no PKCE; we still persist a state row to bind the callback.
     await insertState(db, state, "github", "", redirect)
 
-    return putHeader(
-      halt(c, 302, ""),
-      "location",
-      githubAuthorizeUrl(cfg.client_id, callbackUrl(appUrl, "github"), state),
+    return bindLoginState(
+      putHeader(halt(c, 302, ""), "location", githubAuthorizeUrl(cfg.client_id, callbackUrl(appUrl, "github"), state)),
+      state,
     )
   }
 
@@ -283,9 +287,10 @@ const githubCallback =
     const code = url.searchParams.get("code")
     const state = url.searchParams.get("state")
     if (!code || !state) return renderError(c, "Missing code or state on callback")
+    if (!loginStateNonce(c.request, state)) return renderError(c, "Sign-in browser state did not match")
 
     const stateRow = await consumeState(db, state)
-    if (!stateRow || stateRow.nonce !== "github") return renderError(c, "Unknown or expired sign-in state")
+    if (stateRow?.nonce !== "github") return renderError(c, "Unknown or expired sign-in state")
     if (new Date(stateRow.expires_at).getTime() < Date.now()) {
       return renderError(c, "Sign-in state has expired — start over")
     }

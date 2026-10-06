@@ -1,7 +1,7 @@
 # Stohr site
 
 The marketing site + rendered docs for [Stohr](https://github.com/wess/stohr).
-Static, deployed to Cloudflare Pages.
+Static output supports Cloudflare Pages or any static-file host. The current hosted site is deployed through the sibling devops project's `stohrsite` service.
 
 ## Stack
 
@@ -52,6 +52,18 @@ dist/
 
 The doc routes map at `src/docs/render.tsx#DOCS_INDEX`. Add a new doc by
 adding an entry there.
+
+## Publishing with an app release
+
+Build documentation from the same release source as the app. Source Markdown is not served by the app container, so an app deployment alone does not publish documentation changes.
+
+For the established gohan deployment, run from the sibling devops project:
+
+```sh
+STOHR_SITE_SOURCE=/absolute/path/to/release bun run scripts/gohan.ts stohrsite
+```
+
+That service builds and deploys the release's static output. For another host, build with `bun run build` and publish `site/dist/` using that host's normal workflow. Verify a changed doc page after deployment.
 
 ## Cloudflare Pages
 

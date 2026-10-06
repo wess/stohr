@@ -134,10 +134,8 @@ const config = defineConfig({
   rpName: env("RP_NAME", { default: "Stohr" }),
   rpOrigin: env("RP_ORIGIN", { default: "http://localhost:3001" }),
   // @atlas/storage buffers the upload body in API memory to compute the
-  // AWS SigV4 payload hash, so this cap is *also* a memory ceiling per
-  // concurrent upload. Plan a future migration to presigned-PUT direct-to-S3
-  // uploads (presign helper already exists in @atlas/storage) to remove the
-  // buffering and raise this cap safely.
+  // AWS SigV4 payload hash, so size this cap for concurrent uploads.
+  // streaming through the API must retain permission and quota checks.
   maxUploadBytes: env("MAX_UPLOAD_BYTES", { parse: Number, default: String(1024 * 1024 * 1024) }),
   // Opt-in M2M token for Castle (single-node homelab control plane). When
   // set, /castle/* routes mount and accept this bearer for user provisioning.

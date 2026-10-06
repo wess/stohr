@@ -1,6 +1,6 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
+import { del, get, json, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import type { Emailer } from "../email/index.ts"
 import { inviteEmail } from "../email/templates/invite.ts"
@@ -8,6 +8,7 @@ import { emit } from "../notifications/emit.ts"
 import { fileAccess, folderAccess, isOwner } from "../permissions/index.ts"
 import { inTeam } from "../teams/members.ts"
 import { requestBaseUrl, teamFor } from "../teams/request.ts"
+import { parseJson } from "../util/json/index.ts"
 import { randomToken, sha256Hex } from "../util/token.ts"
 import { isEmail, normalizeUsername } from "../util/username.ts"
 import { dispatchWebhook } from "../webhooks/dispatch.ts"
@@ -83,6 +84,8 @@ const addCollab = (db: Connection, kind: ResourceKind, emailer: Emailer, appUrl:
   const access = await accessFor(db, userId, kind, id)
   if (!access) return json(c, 404, { error: `${kind} not found` })
   if (!isOwner(access.role)) return json(c, 403, { error: "Only the owner can add collaborators" })
+  const spaceId = "folder" in access ? access.folder.space_id : access.spaceId
+  if (spaceId != null) return json(c, 422, { error: "Manage access through Space membership" })
 
   const body = c.body as { identity?: string; role?: string }
   const identity = body.identity?.trim() ?? ""
@@ -268,6 +271,7 @@ const sharedWithMe = (db: Connection) => async (c: any) => {
           from("folders")
             .where(q => q("id").inList(folderIds))
             .where(q => q("deleted_at").isNull())
+            .where(q => q("space_id").isNull())
             .where(inTeam("folders.user_id", teamId))
             .select("id", "user_id", "parent_id", "name", "created_at"),
         )) as Array<{ id: number; user_id: number; parent_id: number | null; name: string; created_at: string }>)
@@ -279,6 +283,11 @@ const sharedWithMe = (db: Connection) => async (c: any) => {
           from("files")
             .where(q => q("id").inList(fileIds))
             .where(q => q("deleted_at").isNull())
+            .where(q =>
+              q.raw(
+                raw("NOT EXISTS (SELECT 1 FROM folders fo WHERE fo.id = files.folder_id AND fo.space_id IS NOT NULL)"),
+              ),
+            )
             .where(inTeam("files.user_id", teamId))
             .select("id", "user_id", "name", "mime", "size", "folder_id", "version", "created_at"),
         )) as Array<{

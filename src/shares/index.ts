@@ -1,18 +1,18 @@
-import { createHash } from "node:crypto"
-import { hash, token, verify } from "@atlas/auth"
+import { hash, verify } from "@atlas/auth"
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { del, get, json, parseJson, pipeline, post, putHeader, stream } from "@atlas/server"
+import { createConn, del, get, json, pipeline, post, putHeader, stream } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { fileAccess, isOwner } from "../permissions/index.ts"
+import { isScanBlocked } from "../scanning/index.ts"
 import { decideInline } from "../security/inline.ts"
 import { checkRate, clientIp } from "../security/ratelimit.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { fetchObject } from "../storage/index.ts"
 import { teamFor } from "../teams/request.ts"
+import { parseJson } from "../util/json/index.ts"
 import { dispatchWebhook } from "../webhooks/dispatch.ts"
 
-const APP_TOKEN_PREFIX = "stohr_pat_"
 const MAX_EXPIRES_SECONDS = 30 * 24 * 60 * 60
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -67,25 +67,11 @@ export const sweepExpiredShares = async (db: Connection) => {
   }
 }
 
-const hashAppToken = (raw: string): string => createHash("sha256").update(raw).digest("hex")
-
-const resolveViewerId = async (db: Connection, secret: string, header: string | null): Promise<number | null> => {
-  if (!header?.startsWith("Bearer ")) return null
-  const t = header.slice(7).trim()
-  if (t.startsWith(APP_TOKEN_PREFIX)) {
-    const app = (await db.one(
-      from("apps")
-        .where(q => q("token_hash").equals(hashAppToken(t)))
-        .select("user_id"),
-    )) as { user_id: number } | null
-    return app?.user_id ?? null
-  }
-  try {
-    const payload = (await token.verify(t, secret)) as { id?: number }
-    return payload.id ?? null
-  } catch {
-    return null
-  }
+const resolveViewerId = async (db: Connection, secret: string, request: Request): Promise<number | null> => {
+  if (!request.headers.get("authorization")?.startsWith("Bearer ")) return null
+  const checked = await requireAuth({ secret, db, scope: "read" })(createConn(request))
+  if (checked.halted) return null
+  return (checked.assigns.auth as { id: number } | undefined)?.id ?? null
 }
 
 export const shareRoutes = (db: Connection, secret: string, store: StorageHandle) => {
@@ -298,7 +284,7 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
       } | null
       if (!file) return json(c, 404, { error: "File missing" })
       // Same gate as /files/:id/download; a share link is still a download.
-      if (file.scan_status === "infected") return json(c, 403, { error: "File failed malware scan" })
+      if (isScanBlocked(file.scan_status)) return json(c, 403, { error: "File has not passed malware scanning" })
 
       const url = new URL(c.request.url)
       const isMeta = url.searchParams.get("meta") === "1"
@@ -338,7 +324,7 @@ export const shareRoutes = (db: Connection, secret: string, store: StorageHandle
       }
 
       // Owner detection — owner can preview without burning.
-      const viewerId = await resolveViewerId(db, secret, c.request.headers.get("authorization"))
+      const viewerId = await resolveViewerId(db, secret, c.request)
       const isOwner = viewerId === share.user_id
 
       // Atomic claim if burn-on-view applies.

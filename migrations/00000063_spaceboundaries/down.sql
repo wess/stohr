@@ -1,0 +1,1 @@
+-- permission repair is intentionally retained on rollback

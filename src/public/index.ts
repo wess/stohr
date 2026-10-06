@@ -1,6 +1,7 @@
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 import { get, json, putHeader, stream } from "@atlas/server"
+import { isScanBlocked } from "../scanning/index.ts"
 import { decideInline } from "../security/inline.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { fetchObject } from "../storage/index.ts"
@@ -63,7 +64,7 @@ export const publicRoutes = (db: Connection, _secret: string, store: StorageHand
     const id = Number(c.params.id)
     const file = await fileInPublicFolder(db, id, teamFor(c.request).team.id)
     if (!file) return json(c, 404, { error: "Not found" })
-    if (file.scan_status === "infected") return json(c, 403, { error: "File failed malware scan" })
+    if (isScanBlocked(file.scan_status)) return json(c, 403, { error: "File has not passed malware scanning" })
 
     const res = await fetchObject(store, file.storage_key)
     if (!res.body) return json(c, 500, { error: "Storage returned empty body" })
@@ -83,6 +84,7 @@ export const publicRoutes = (db: Connection, _secret: string, store: StorageHand
     const id = Number(c.params.id)
     const file = await fileInPublicFolder(db, id, teamFor(c.request).team.id)
     if (!file?.thumb_key) return json(c, 404, { error: "No thumbnail" })
+    if (isScanBlocked(file.scan_status)) return json(c, 403, { error: "File has not passed malware scanning" })
 
     const res = await fetchObject(store, file.thumb_key)
     if (!res.body) return json(c, 404, { error: "No thumbnail" })

@@ -2,10 +2,11 @@ import { timingSafeEqual } from "node:crypto"
 import { token as jwt } from "@atlas/auth"
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { json, parseForm, parseJson, pipeline, post } from "@atlas/server"
+import { json, parseForm, pipeline, post } from "@atlas/server"
 import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
 import { teamFor } from "../teams/request.ts"
+import { parseJson } from "../util/json/index.ts"
 import {
   ACCESS_TOKEN_TTL_SECONDS,
   DEVICE_POLL_INTERVAL_SECONDS,
@@ -56,6 +57,9 @@ type UserRow = {
   name: string
   is_owner: boolean
   team_id: number
+  oauth_epoch: number
+  deleted_at: string | null
+  suspended_at: string | null
 }
 
 const findClient = async (db: Connection, clientId: string): Promise<ClientRow | null> =>
@@ -65,7 +69,7 @@ const findUser = async (db: Connection, id: number): Promise<UserRow | null> =>
   (await db.one(
     from("users")
       .where(q => q("id").equals(id))
-      .select("id", "email", "username", "name", "is_owner", "team_id"),
+      .select("id", "email", "username", "name", "is_owner", "team_id", "deleted_at", "suspended_at", "oauth_epoch"),
   )) as UserRow | null
 
 // A grant (code, refresh token, device code) belongs to its user's team and
@@ -94,6 +98,7 @@ const issueTokens = async (
       is_owner: user.is_owner,
       client_id: clientId,
       scope,
+      oauth_epoch: Number(user.oauth_epoch),
       jti: randomId(16),
     },
     secret,
@@ -163,51 +168,61 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
         return oauthError(c, 401, "invalid_client", "Bad client credentials")
       }
 
-      // Atomic single-use: only succeed if used_at was still null.
-      const claimed = (await db.execute(
-        from("oauth_authorization_codes")
-          .where(q => q("code").equals(code))
-          .where(q => q("used_at").isNull())
-          .update({ used_at: raw("NOW()") })
-          .returning("code", "client_id", "user_id", "redirect_uri", "code_challenge", "scope", "expires_at"),
-      )) as Array<
-        Pick<AuthCodeRow, "code" | "client_id" | "user_id" | "redirect_uri" | "code_challenge" | "scope" | "expires_at">
-      >
+      return db.transaction(async tx => {
+        await tx.execute({
+          text: `SELECT u.id FROM users u JOIN oauth_authorization_codes a ON a.user_id = u.id
+                  WHERE a.code = $1 FOR UPDATE OF u`,
+          values: [code],
+        })
+        // Atomic single-use: only succeed if used_at was still null.
+        const claimed = (await tx.execute(
+          from("oauth_authorization_codes")
+            .where(q => q("code").equals(code))
+            .where(q => q("used_at").isNull())
+            .update({ used_at: raw("NOW()") })
+            .returning("code", "client_id", "user_id", "redirect_uri", "code_challenge", "scope", "expires_at"),
+        )) as Array<
+          Pick<
+            AuthCodeRow,
+            "code" | "client_id" | "user_id" | "redirect_uri" | "code_challenge" | "scope" | "expires_at"
+          >
+        >
 
-      const claimedCode = claimed[0]
-      if (!claimedCode) {
-        return oauthError(c, 400, "invalid_grant", "Code not found or already used")
-      }
-      if (new Date(claimedCode.expires_at).getTime() < Date.now()) {
-        return oauthError(c, 400, "invalid_grant", "Code expired")
-      }
-      if (claimedCode.client_id !== clientId) {
-        return oauthError(c, 400, "invalid_grant", "Code was issued for a different client")
-      }
-      if (claimedCode.redirect_uri !== redirectUri) {
-        return oauthError(c, 400, "invalid_grant", "redirect_uri does not match the one used at /oauth/authorize")
-      }
-      if (!verifyPkceS256(codeVerifier, claimedCode.code_challenge)) {
-        return oauthError(c, 400, "invalid_grant", "PKCE verifier did not match the challenge")
-      }
+        const claimedCode = claimed[0]
+        if (!claimedCode) {
+          return oauthError(c, 400, "invalid_grant", "Code not found or already used")
+        }
+        if (new Date(claimedCode.expires_at).getTime() < Date.now()) {
+          return oauthError(c, 400, "invalid_grant", "Code expired")
+        }
+        if (claimedCode.client_id !== clientId) {
+          return oauthError(c, 400, "invalid_grant", "Code was issued for a different client")
+        }
+        if (claimedCode.redirect_uri !== redirectUri) {
+          return oauthError(c, 400, "invalid_grant", "redirect_uri does not match the one used at /oauth/authorize")
+        }
+        if (!verifyPkceS256(codeVerifier, claimedCode.code_challenge)) {
+          return oauthError(c, 400, "invalid_grant", "PKCE verifier did not match the challenge")
+        }
 
-      const user = await findUser(db, claimedCode.user_id)
-      if (!user) {
-        return oauthError(c, 400, "invalid_grant", "User no longer exists")
-      }
-      if (!onThisHost(c, user)) {
-        return oauthError(c, 400, "invalid_grant", "Code was issued on a different host")
-      }
+        const user = await findUser(tx, claimedCode.user_id)
+        if (!user || user.deleted_at || user.suspended_at) {
+          return oauthError(c, 400, "invalid_grant", "User no longer exists")
+        }
+        if (!onThisHost(c, user)) {
+          return oauthError(c, 400, "invalid_grant", "Code was issued on a different host")
+        }
 
-      const tokens = await issueTokens(db, secret, user, clientId, claimedCode.scope)
-      logEvent(db, {
-        userId: user.id,
-        event: "oauth.token_issued",
-        metadata: { client_id: clientId, grant: "authorization_code", scope: claimedCode.scope },
-        ip,
-        userAgent: ua,
+        const tokens = await issueTokens(tx, secret, user, clientId, claimedCode.scope)
+        logEvent(db, {
+          userId: user.id,
+          event: "oauth.token_issued",
+          metadata: { client_id: clientId, grant: "authorization_code", scope: claimedCode.scope },
+          ip,
+          userAgent: ua,
+        })
+        return json(c, 200, tokens)
       })
-      return json(c, 200, tokens)
     }
 
     if (grantType === "refresh_token") {
@@ -227,78 +242,85 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
         return oauthError(c, 401, "invalid_client", "Bad client credentials")
       }
 
-      const tokenHash = sha256(refreshToken)
-      const row = (await db.one(
-        from("oauth_refresh_tokens").where(q => q("token_hash").equals(tokenHash)),
-      )) as RefreshRow | null
+      return db.transaction(async tx => {
+        const tokenHash = sha256(refreshToken)
+        await tx.execute({
+          text: `SELECT u.id FROM users u JOIN oauth_refresh_tokens r ON r.user_id = u.id
+                WHERE r.token_hash = $1 FOR UPDATE OF u`,
+          values: [tokenHash],
+        })
+        const row = (await tx.one(
+          from("oauth_refresh_tokens").where(q => q("token_hash").equals(tokenHash)),
+        )) as RefreshRow | null
 
-      if (!row) {
-        return oauthError(c, 400, "invalid_grant", "Unknown refresh token")
-      }
-      if (row.client_id !== clientId) {
-        return oauthError(c, 400, "invalid_grant", "Token was issued for a different client")
-      }
-      if (new Date(row.expires_at).getTime() < Date.now()) {
-        return oauthError(c, 400, "invalid_grant", "Refresh token expired")
-      }
-      if (row.revoked_at) {
-        // A revoked-but-presented token is a strong signal of leakage —
-        // burn the entire chain that descended from this token's parent.
-        await db.execute(
+        if (!row) {
+          return oauthError(c, 400, "invalid_grant", "Unknown refresh token")
+        }
+        if (row.client_id !== clientId) {
+          return oauthError(c, 400, "invalid_grant", "Token was issued for a different client")
+        }
+        if (new Date(row.expires_at).getTime() < Date.now()) {
+          return oauthError(c, 400, "invalid_grant", "Refresh token expired")
+        }
+        // Before rotation: a refresh presented on the wrong host is refused
+        // without touching the chain, so the client at home keeps working.
+        const user = await findUser(tx, row.user_id)
+        if (!user || user.deleted_at || user.suspended_at) {
+          return oauthError(c, 400, "invalid_grant", "User no longer exists")
+        }
+        if (!onThisHost(c, user)) {
+          return oauthError(c, 400, "invalid_grant", "Refresh token was issued on a different host")
+        }
+
+        if (row.revoked_at) {
+          // A revoked-but-presented token is a strong signal of leakage —
+          // burn the entire chain that descended from this token's parent.
+          await tx.execute(
+            from("oauth_refresh_tokens")
+              .where(q => q("user_id").equals(row.user_id))
+              .where(q => q("client_id").equals(row.client_id))
+              .where(q => q("revoked_at").isNull())
+              .update({ revoked_at: raw("NOW()") }),
+          )
+          logEvent(db, {
+            userId: row.user_id,
+            event: "oauth.refresh_reuse_detected",
+            metadata: { client_id: row.client_id },
+            ip,
+            userAgent: ua,
+          })
+          return oauthError(c, 400, "invalid_grant", "Refresh token has been revoked")
+        }
+
+        // Rotate: revoke this refresh, mint a new pair.
+        await tx.execute(
           from("oauth_refresh_tokens")
-            .where(q => q("user_id").equals(row.user_id))
-            .where(q => q("client_id").equals(row.client_id))
-            .where(q => q("revoked_at").isNull())
+            .where(q => q("token_hash").equals(tokenHash))
             .update({ revoked_at: raw("NOW()") }),
         )
+
+        // Scope down-narrowing only — never widen.
+        let scope = row.scope
+        if (requestedScope) {
+          const requested = parseScope(requestedScope)
+          const original = parseScope(row.scope)
+          const downscoped = requested.filter(s => original.includes(s))
+          if (downscoped.length === 0) {
+            return oauthError(c, 400, "invalid_scope", "Requested scope must be a subset of the original grant")
+          }
+          scope = formatScope(downscoped)
+        }
+
+        const tokens = await issueTokens(tx, secret, user, clientId, scope, tokenHash)
         logEvent(db, {
-          userId: row.user_id,
-          event: "oauth.refresh_reuse_detected",
-          metadata: { client_id: row.client_id },
+          userId: user.id,
+          event: "oauth.token_refreshed",
+          metadata: { client_id: clientId, scope },
           ip,
           userAgent: ua,
         })
-        return oauthError(c, 400, "invalid_grant", "Refresh token has been revoked")
-      }
-
-      // Before rotation: a refresh presented on the wrong host is refused
-      // without touching the chain, so the client at home keeps working.
-      const user = await findUser(db, row.user_id)
-      if (!user) {
-        return oauthError(c, 400, "invalid_grant", "User no longer exists")
-      }
-      if (!onThisHost(c, user)) {
-        return oauthError(c, 400, "invalid_grant", "Refresh token was issued on a different host")
-      }
-
-      // Rotate: revoke this refresh, mint a new pair.
-      await db.execute(
-        from("oauth_refresh_tokens")
-          .where(q => q("token_hash").equals(tokenHash))
-          .update({ revoked_at: raw("NOW()") }),
-      )
-
-      // Scope down-narrowing only — never widen.
-      let scope = row.scope
-      if (requestedScope) {
-        const requested = parseScope(requestedScope)
-        const original = parseScope(row.scope)
-        const downscoped = requested.filter(s => original.includes(s))
-        if (downscoped.length === 0) {
-          return oauthError(c, 400, "invalid_scope", "Requested scope must be a subset of the original grant")
-        }
-        scope = formatScope(downscoped)
-      }
-
-      const tokens = await issueTokens(db, secret, user, clientId, scope, tokenHash)
-      logEvent(db, {
-        userId: user.id,
-        event: "oauth.token_refreshed",
-        metadata: { client_id: clientId, scope },
-        ip,
-        userAgent: ua,
+        return json(c, 200, tokens)
       })
-      return json(c, 200, tokens)
     }
 
     if (grantType === DEVICE_CODE_GRANT) {
@@ -316,72 +338,82 @@ export const oauthTokenRoutes = (db: Connection, secret: string) => {
         return oauthError(c, 401, "invalid_client", "Bad client credentials")
       }
 
-      const row = (await db.one(from("oauth_device_codes").where(q => q("device_code").equals(deviceCode)))) as {
-        device_code: string
-        user_code: string
-        client_id: string
-        scope: string
-        user_id: number | null
-        approved_at: string | null
-        denied_at: string | null
-        last_polled_at: string | null
-        expires_at: string
-      } | null
+      return db.transaction(async tx => {
+        await tx.execute({
+          text: `SELECT u.id FROM users u JOIN oauth_device_codes d ON d.user_id = u.id
+                  WHERE d.device_code = $1 FOR UPDATE OF u`,
+          values: [deviceCode],
+        })
+        const row = (await tx.one(from("oauth_device_codes").where(q => q("device_code").equals(deviceCode)))) as {
+          device_code: string
+          user_code: string
+          client_id: string
+          scope: string
+          user_id: number | null
+          approved_at: string | null
+          denied_at: string | null
+          last_polled_at: string | null
+          expires_at: string
+        } | null
 
-      if (!row) return oauthError(c, 400, "invalid_grant", "Unknown device_code")
-      if (row.client_id !== clientId)
-        return oauthError(c, 400, "invalid_grant", "Code was issued for a different client")
+        if (!row) return oauthError(c, 400, "invalid_grant", "Unknown device_code")
+        if (row.client_id !== clientId)
+          return oauthError(c, 400, "invalid_grant", "Code was issued for a different client")
 
-      const expiredAt = new Date(row.expires_at).getTime()
-      if (expiredAt < Date.now()) return oauthError(c, 400, "expired_token", "Device code expired")
+        const expiredAt = new Date(row.expires_at).getTime()
+        if (expiredAt < Date.now()) return oauthError(c, 400, "expired_token", "Device code expired")
 
-      // Per RFC 8628: enforce slow_down if the client polls faster than the
-      // advertised interval.
-      const now = Date.now()
-      const last = row.last_polled_at ? new Date(row.last_polled_at).getTime() : 0
-      if (last && now - last < (DEVICE_POLL_INTERVAL_SECONDS - 1) * 1000) {
-        await db.execute(
+        // Per RFC 8628: enforce slow_down if the client polls faster than the
+        // advertised interval.
+        const now = Date.now()
+        const last = row.last_polled_at ? new Date(row.last_polled_at).getTime() : 0
+        if (last && now - last < (DEVICE_POLL_INTERVAL_SECONDS - 1) * 1000) {
+          await tx.execute(
+            from("oauth_device_codes")
+              .where(q => q("device_code").equals(deviceCode))
+              .update({ last_polled_at: raw("NOW()") }),
+          )
+          return oauthError(c, 400, "slow_down", "Polling too fast — wait at least the advertised interval")
+        }
+        await tx.execute(
           from("oauth_device_codes")
             .where(q => q("device_code").equals(deviceCode))
             .update({ last_polled_at: raw("NOW()") }),
         )
-        return oauthError(c, 400, "slow_down", "Polling too fast — wait at least the advertised interval")
-      }
-      await db.execute(
-        from("oauth_device_codes")
-          .where(q => q("device_code").equals(deviceCode))
-          .update({ last_polled_at: raw("NOW()") }),
-      )
 
-      if (row.denied_at) {
-        return oauthError(c, 400, "access_denied", "User denied the authorization request")
-      }
-      if (!row.approved_at || !row.user_id) {
-        return oauthError(c, 400, "authorization_pending", "Waiting for user approval")
-      }
+        if (row.denied_at) {
+          return oauthError(c, 400, "access_denied", "User denied the authorization request")
+        }
+        if (!row.approved_at || !row.user_id) {
+          return oauthError(c, 400, "authorization_pending", "Waiting for user approval")
+        }
 
-      // Approved — burn the code (single use) and issue tokens.
-      await db.execute(
-        from("oauth_device_codes")
-          .where(q => q("device_code").equals(deviceCode))
-          .del(),
-      )
+        const user = await findUser(tx, row.user_id)
+        if (!user || user.deleted_at || user.suspended_at)
+          return oauthError(c, 400, "invalid_grant", "User no longer exists")
+        if (!onThisHost(c, user)) {
+          return oauthError(c, 400, "invalid_grant", "Device code was approved on a different host")
+        }
 
-      const user = await findUser(db, row.user_id)
-      if (!user) return oauthError(c, 400, "invalid_grant", "User no longer exists")
-      if (!onThisHost(c, user)) {
-        return oauthError(c, 400, "invalid_grant", "Device code was approved on a different host")
-      }
+        const claimed = (await tx.execute({
+          text: `DELETE FROM oauth_device_codes
+                WHERE device_code = $1 AND approved_at IS NOT NULL
+                  AND denied_at IS NULL AND expires_at >= NOW()
+                RETURNING device_code`,
+          values: [deviceCode],
+        })) as Array<{ device_code: string }>
+        if (claimed.length === 0) return oauthError(c, 400, "invalid_grant", "Device code already used")
 
-      const tokens = await issueTokens(db, secret, user, clientId, row.scope)
-      logEvent(db, {
-        userId: user.id,
-        event: "oauth.token_issued",
-        metadata: { client_id: clientId, grant: "device_code", scope: row.scope },
-        ip,
-        userAgent: ua,
+        const tokens = await issueTokens(tx, secret, user, clientId, row.scope)
+        logEvent(db, {
+          userId: user.id,
+          event: "oauth.token_issued",
+          metadata: { client_id: clientId, grant: "device_code", scope: row.scope },
+          ip,
+          userAgent: ua,
+        })
+        return json(c, 200, tokens)
       })
-      return json(c, 200, tokens)
     }
 
     return oauthError(c, 400, "unsupported_grant_type", `Unknown grant_type: ${grantType ?? "(missing)"}`)

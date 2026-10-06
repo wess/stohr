@@ -1,6 +1,6 @@
 # SDKs
 
-Four official client libraries live in [`sdks/`](../sdks/README.md). They all wrap the same v1 REST surface (`https://stohr.io/api`) in idiomatic per-language shapes.
+Four official client libraries live in [`sdks/`](../sdks/README.md). They all wrap the same v1 REST surface (`https://your-stohr.example.com/api`) in idiomatic per-language shapes.
 
 | Language   | Path                                         | Targets                                    | Status |
 | ---------- | -------------------------------------------- | ------------------------------------------ | :----: |
@@ -75,7 +75,7 @@ For anything marked `—`, hit the REST endpoint directly. The SDK's `StohrError
 // TypeScript
 import { createClient } from "@stohr/sdk"
 
-const stohr = createClient({ baseUrl: "https://stohr.io/api" })
+const stohr = createClient({ baseUrl: "https://your-stohr.example.com/api" })
 await stohr.auth.login("you@example.com", "your-password")
 
 const blob = new Blob(["hello, stohr"], { type: "text/plain" })
@@ -90,7 +90,7 @@ await stohr.collaborators.add("folder", folder.id, "alice@example.com", "editor"
 import 'dart:typed_data';
 import 'package:stohr/stohr.dart';
 
-final client = StohrClient(baseUrl: 'https://stohr.io/api');
+final client = StohrClient(baseUrl: 'https://your-stohr.example.com/api');
 await client.login('you@example.com', 'your-password');
 
 final bytes = Uint8List.fromList('hello, stohr'.codeUnits);
@@ -105,7 +105,7 @@ client.close();
 // Swift
 import Stohr
 
-let client = StohrClient(baseURL: URL(string: "https://stohr.io/api")!)
+let client = StohrClient(baseURL: URL(string: "https://your-stohr.example.com/api")!)
 _ = try await client.login(identity: "you@example.com", password: "your-password")
 
 let bytes = "hello, stohr".data(using: .utf8)!
@@ -118,7 +118,7 @@ let folder = try await client.createFolder(name: "Italy 2025", kind: "photos", i
 // Kotlin
 import io.stohr.StohrClient
 
-val client = StohrClient(baseUrl = "https://stohr.io/api")
+val client = StohrClient(baseUrl = "https://your-stohr.example.com/api")
 client.login("you@example.com", "your-password")
 
 val uploaded = client.uploadFile(
@@ -215,7 +215,7 @@ Each SDK accepts a swap-in HTTP layer for tests, polyfills, proxies, or alternat
 
 ```ts
 const stohr = createClient({
-  baseUrl: "https://stohr.io/api",
+  baseUrl: "https://your-stohr.example.com/api",
   fetch: (url, init) => fetch(url, { ...init, mode: "cors" }),
 })
 ```

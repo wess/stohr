@@ -1,5 +1,5 @@
-import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
+import { findOrCreateFolder } from "../primitives/util/folders.ts"
 import type { Action } from "../types.ts"
 
 const PAD = (n: number) => String(n).padStart(2, "0")
@@ -10,31 +10,6 @@ const formatSegments = (date: Date, pattern: string): string[] => {
   const D = PAD(date.getUTCDate())
   if (pattern === "YYYY/MM/DD") return [Y, M, D]
   return [Y, M]
-}
-
-const findOrCreateFolder = async (db: Connection, ownerId: number, parentId: number, name: string): Promise<number> => {
-  const existing = (await db.one(
-    from("folders")
-      .where(q => q("user_id").equals(ownerId))
-      .where(q => q("parent_id").equals(parentId))
-      .where(q => q("name").equals(name))
-      .where(q => q("deleted_at").isNull())
-      .select("id"),
-  )) as { id: number } | null
-  if (existing) return existing.id
-
-  const inserted = (await db.execute(
-    from("folders")
-      .insert({
-        user_id: ownerId,
-        parent_id: parentId,
-        name,
-        kind: "standard",
-        is_public: false,
-      })
-      .returning("id"),
-  )) as Array<{ id: number }>
-  return inserted[0]!.id
 }
 
 const action: Action = {

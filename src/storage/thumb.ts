@@ -15,7 +15,7 @@ export const generateImageThumb = async (bytes: Uint8Array, mime: string): Promi
   if (bytes.byteLength > THUMB_MAX_BYTES) return null
   if (mime === PDF_MIME) return generatePdfThumb(bytes)
   try {
-    const out = await sharp(bytes)
+    const out = await sharp(bytes, { limitInputPixels: 40_000_000 })
       .resize({ width: THUMB_MAX_DIM, height: THUMB_MAX_DIM, fit: "inside" })
       .webp({ quality: THUMB_QUALITY })
       .toBuffer()

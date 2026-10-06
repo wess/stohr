@@ -1,3 +1,5 @@
+import { responseJson } from "../../util/response/index.ts"
+
 // Cache the issuer's discovery document and JWKS in memory for an hour.
 // Most providers rotate signing keys infrequently; refetching every request
 // would hammer the IdP unnecessarily.
@@ -27,11 +29,16 @@ export const fetchDiscovery = async (issuerUrl: string): Promise<Discovery> => {
   if (hit && hit.expiresAt > Date.now()) return hit.value
 
   const url = `${key}/.well-known/openid-configuration`
-  const res = await fetch(url, { headers: { accept: "application/json" } })
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(10_000),
+    redirect: "error",
+    headers: { accept: "application/json" },
+  })
   if (!res.ok) {
     throw new Error(`OIDC discovery failed: ${res.status} ${res.statusText}`)
   }
-  const value = (await res.json()) as Discovery
+  const value = (await responseJson(res)) as Discovery
+  if (value.issuer !== issuerUrl) throw new Error("OIDC discovery issuer mismatch")
   if (!value.authorization_endpoint || !value.token_endpoint || !value.jwks_uri) {
     throw new Error("OIDC discovery document missing required endpoints")
   }

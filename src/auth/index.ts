@@ -2,14 +2,15 @@ import { randomUUID } from "node:crypto"
 import { hash, token, verify } from "@atlas/auth"
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { get, json, parseJson, pipeline, post } from "@atlas/server"
+import { get, json, pipeline, post } from "@atlas/server"
 import { sendSystem } from "../messages/system.ts"
 import { logEvent } from "../security/audit.ts"
 import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
 import { issueSession } from "../security/sessions.ts"
-import { verifyTotp } from "../security/totp.ts"
+import { claimTotp } from "../security/totpclaims.ts"
 import { inTeam, teamIdOf } from "../teams/members.ts"
 import { teamFor } from "../teams/request.ts"
+import { parseJson } from "../util/json/index.ts"
 import { limitBody } from "../util/limitbody/index.ts"
 import { sha256Hex } from "../util/token.ts"
 import { isEmail, isValidUsername, normalizeUsername } from "../util/username.ts"
@@ -91,7 +92,7 @@ export const resolvePendingCollabs = async (db: Connection, userId: number, emai
   const pending = (await db.all(
     from("collaborations")
       .where(q => q("user_id").isNull())
-      .where(q => q("email").ilike(email))
+      .where(q => q("email").ilike(email.replace(/[\\%_]/g, c => `\\${c}`)))
       .where(inTeam("invited_by", teamId))
       .select("id", "resource_type", "resource_id"),
   )) as Array<{ id: number; resource_type: string; resource_id: number }>
@@ -135,14 +136,14 @@ const consumeBackupCode = async (
     const ok = await verify(candidate, storedCodes[i]!).catch(() => false)
     if (ok) {
       const remaining = [...storedCodes.slice(0, i), ...storedCodes.slice(i + 1)]
-      await db.execute(
+      const claimed = (await db.execute(
         from("users")
           .where(q => q("id").equals(userId))
-          .update({
-            totp_backup_codes: JSON.stringify(remaining),
-          }),
-      )
-      return true
+          .where(q => q("totp_backup_codes").equals(JSON.stringify(storedCodes)))
+          .update({ totp_backup_codes: JSON.stringify(remaining) })
+          .returning("id"),
+      )) as Array<{ id: number }>
+      return claimed.length === 1
     }
   }
   return false
@@ -213,72 +214,82 @@ export const authRoutes = (db: Connection, secret: string) => {
         // host only. Tenant hosts never self-bootstrap: their users come
         // from a team admin, directly or through an invite for that team.
         const host = teamFor(c.request)
-        const isFirstUser = host.isRoot && (await userCount(db)) === 0
-
-        let invite: { id: number; email: string | null; used_at: string | null; team_id: number } | null = null
-        if (!isFirstUser) {
-          if (!inviteToken) {
-            return json(c, 403, {
-              error: host.isRoot ? "Invite token required" : "Signup on this team is by invitation only",
-            })
-          }
-          invite = (await db.one(
-            from("invites")
-              .where(q => q("token_hash").equals(sha256Hex(inviteToken)))
-              .select("id", "email", "used_at", "team_id"),
-          )) as { id: number; email: string | null; used_at: string | null; team_id: number } | null
-          // an invite for another team is indistinguishable from a bad one
-          if (!invite || Number(invite.team_id) !== host.team.id) {
-            return json(c, 403, { error: "Invalid invite token" })
-          }
-          if (invite.used_at) return json(c, 403, { error: "Invite already used" })
-          if (invite.email && invite.email.toLowerCase() !== email) {
-            return json(c, 403, { error: "Invite is bound to a different email" })
-          }
-        }
-
-        const emailTaken = await db.one(
-          from("users")
-            .where(q => q("email").equals(email))
-            .select("id"),
-        )
-        if (emailTaken) return json(c, 409, { error: "Email already in use" })
-
-        const usernameTaken = await db.one(
-          from("users")
-            .where(q => q("username").equals(username))
-            .select("id"),
-        )
-        if (usernameTaken) return json(c, 409, { error: "Username already in use" })
-
         const hashed = await hash(password)
-        // New accounts have no storage cap (storage_quota_bytes defaults to 0,
-        // meaning unlimited). The owner can set a per-user cap from
-        // Admin → Users if they want one.
-        const inserted = (await db.execute(
-          from("users")
-            .insert({
-              name: displayName,
-              email,
-              username,
-              password: hashed,
-              is_owner: isFirstUser,
-              team_id: host.team.id,
-            })
-            .returning("id", "email", "username", "name", "is_owner"),
-        )) as Array<AuthUser>
-        const user = inserted[0]!
+        const created = await db.transaction(async tx => {
+          // serialize setup and invite consumption on the host's team
+          await tx.execute({ text: "SELECT id FROM teams WHERE id = $1 FOR UPDATE", values: [host.team.id] })
+          const isFirstUser = host.isRoot && (await userCount(tx)) === 0
 
-        if (invite) {
-          await db.execute(
-            from("invites")
-              .where(q => q("id").equals(invite!.id))
-              .update({
-                used_at: raw("NOW()"),
-                used_by: user.id,
-              }),
+          let invite: { id: number; email: string | null; used_at: string | null; team_id: number } | null = null
+          if (!isFirstUser) {
+            if (!inviteToken) {
+              return {
+                error: json(c, 403, {
+                  error: host.isRoot ? "Invite token required" : "Signup on this team is by invitation only",
+                }),
+              }
+            }
+            invite = (await tx.one(
+              from("invites")
+                .where(q => q("token_hash").equals(sha256Hex(inviteToken)))
+                .select("id", "email", "used_at", "team_id"),
+            )) as { id: number; email: string | null; used_at: string | null; team_id: number } | null
+            // an invite for another team is indistinguishable from a bad one
+            if (!invite || Number(invite.team_id) !== host.team.id) {
+              return { error: json(c, 403, { error: "Invalid invite token" }) }
+            }
+            if (invite.used_at) return { error: json(c, 403, { error: "Invite already used" }) }
+            if (invite.email && invite.email.toLowerCase() !== email) {
+              return { error: json(c, 403, { error: "Invite is bound to a different email" }) }
+            }
+          }
+
+          const emailTaken = await tx.one(
+            from("users")
+              .where(q => q("email").equals(email))
+              .select("id"),
           )
-        }
+          if (emailTaken) return { error: json(c, 409, { error: "Email already in use" }) }
+
+          const usernameTaken = await tx.one(
+            from("users")
+              .where(q => q("username").equals(username))
+              .select("id"),
+          )
+          if (usernameTaken) return { error: json(c, 409, { error: "Username already in use" }) }
+
+          // New accounts have no storage cap (storage_quota_bytes defaults to 0,
+          // meaning unlimited). The owner can set a per-user cap from
+          // Admin → Users if they want one.
+          const inserted = (await tx.execute(
+            from("users")
+              .insert({
+                name: displayName,
+                email,
+                username,
+                password: hashed,
+                is_owner: isFirstUser,
+                team_id: host.team.id,
+              })
+              .returning("id", "email", "username", "name", "is_owner"),
+          )) as Array<AuthUser>
+          const user = inserted[0]!
+
+          if (invite) {
+            await tx.execute(
+              from("invites")
+                .where(q => q("id").equals(invite!.id))
+                .update({
+                  used_at: raw("NOW()"),
+                  used_by: user.id,
+                }),
+            )
+          }
+
+          return { user, invite, isFirstUser }
+        })
+        if (created.error) return created.error
+        const { user, invite, isFirstUser } = created
 
         // The address was typed into a form. Only an invite that was mailed
         // to that address proves the signer-up can read it, so pending
@@ -392,66 +403,73 @@ export const authRoutes = (db: Connection, secret: string) => {
           })
           return json(c, 401, { error: "Invalid credentials" })
         }
-        // If the account is mid-grace-window, reject login. The user has the
-        // cancel link in their email — they should restore via that, not by
-        // logging in (which could be an attacker who triggered the deletion).
-        if (user.deleted_at) {
-          logEvent(db, {
-            userId: user.id,
-            event: "login.fail",
-            metadata: { reason: "account_deleted" },
-            ip,
-            userAgent: ua,
-          })
-          return json(c, 403, {
-            error: "Account is scheduled for deletion. Click the cancel link in your email to restore it.",
-            account_deleted: true,
-          })
-        }
-        // Suspended accounts: reject after password verify so we don't leak
-        // suspension state to unauthenticated probes.
-        if (user.suspended_at) {
-          logEvent(db, {
-            userId: user.id,
-            event: "login.fail",
-            metadata: { reason: "account_suspended" },
-            ip,
-            userAgent: ua,
-          })
-          return json(c, 403, {
-            error: "Account has been suspended by the owner. Contact the instance owner to restore access.",
-            account_suspended: true,
-          })
-        }
+        return db.transaction(async tx => {
+          const current = (await tx.one({
+            text: "SELECT * FROM users WHERE id = $1 FOR UPDATE",
+            values: [user.id],
+          })) as (UserRow & { deleted_at: string | null; suspended_at: string | null }) | null
+          if (!current || current.password !== user.password) return json(c, 401, { error: "Invalid credentials" })
+          // If the account is mid-grace-window, reject login. The user has the
+          // cancel link in their email — they should restore via that, not by
+          // logging in (which could be an attacker who triggered the deletion).
+          if (current.deleted_at) {
+            logEvent(db, {
+              userId: current.id,
+              event: "login.fail",
+              metadata: { reason: "account_deleted" },
+              ip,
+              userAgent: ua,
+            })
+            return json(c, 403, {
+              error: "Account is scheduled for deletion. Click the cancel link in your email to restore it.",
+              account_deleted: true,
+            })
+          }
+          // Suspended accounts: reject after password verify so we don't leak
+          // suspension state to unauthenticated probes.
+          if (current.suspended_at) {
+            logEvent(db, {
+              userId: current.id,
+              event: "login.fail",
+              metadata: { reason: "account_suspended" },
+              ip,
+              userAgent: ua,
+            })
+            return json(c, 403, {
+              error: "Account has been suspended by the owner. Contact the instance owner to restore access.",
+              account_suspended: true,
+            })
+          }
 
-        if (user.totp_enabled) {
-          logEvent(db, { userId: user.id, event: "login.mfa_required", ip, userAgent: ua })
+          if (current.totp_enabled) {
+            logEvent(db, { userId: current.id, event: "login.mfa_required", ip, userAgent: ua })
+            return json(c, 200, {
+              mfa_required: true,
+              mfa_token: await issueMfaChallenge(tx, secret, current.id),
+            })
+          }
+
+          logEvent(db, { userId: current.id, event: "login.ok", ip, userAgent: ua })
+          const sess = await issueSession(
+            tx,
+            {
+              id: current.id,
+              email: current.email,
+              username: current.username,
+              name: current.name,
+              is_owner: current.is_owner,
+            },
+            secret,
+            { ip, userAgent: ua },
+          )
           return json(c, 200, {
-            mfa_required: true,
-            mfa_token: await issueMfaChallenge(db, secret, user.id),
+            id: current.id,
+            email: current.email,
+            username: current.username,
+            name: current.name,
+            is_owner: current.is_owner,
+            token: sess.token,
           })
-        }
-
-        logEvent(db, { userId: user.id, event: "login.ok", ip, userAgent: ua })
-        const sess = await issueSession(
-          db,
-          {
-            id: user.id,
-            email: user.email,
-            username: user.username,
-            name: user.name,
-            is_owner: user.is_owner,
-          },
-          secret,
-          { ip, userAgent: ua },
-        )
-        return json(c, 200, {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          name: user.name,
-          is_owner: user.is_owner,
-          token: sess.token,
         })
       }),
     ),
@@ -474,16 +492,33 @@ export const authRoutes = (db: Connection, secret: string) => {
         if (!mfaToken) return json(c, 422, { error: "mfa_token required" })
         if (!code && !backupCode) return json(c, 422, { error: "code or backup_code required" })
 
-        let payload: { kind?: string; uid?: number; jti?: string }
+        let payload: { kind?: string; uid?: number; jti?: string; exp?: number; iat?: number }
         try {
-          payload = (await token.verify(mfaToken, secret)) as { kind?: string; uid?: number; jti?: string }
+          payload = (await token.verify(mfaToken, secret)) as {
+            kind?: string
+            uid?: number
+            jti?: string
+            exp?: number
+            iat?: number
+          }
         } catch {
           return json(c, 401, { error: "Invalid or expired MFA challenge — start over" })
         }
-        if (payload.kind !== "mfa" || typeof payload.uid !== "number" || typeof payload.jti !== "string") {
+        if (
+          payload.kind !== "mfa" ||
+          !Number.isSafeInteger(payload.uid) ||
+          (payload.uid ?? 0) <= 0 ||
+          typeof payload.jti !== "string" ||
+          typeof payload.exp !== "number" ||
+          !Number.isFinite(payload.exp) ||
+          payload.exp <= Date.now() / 1000 ||
+          typeof payload.iat !== "number" ||
+          !Number.isFinite(payload.iat) ||
+          payload.iat > Date.now() / 1000 + 60
+        ) {
           return json(c, 401, { error: "Invalid MFA challenge" })
         }
-        const uid = payload.uid
+        const uid = payload.uid!
         const jti = payload.jti
 
         const ipRate = await checkRate(db, `mfa:ip:${ip}`, 30, 900)
@@ -499,117 +534,92 @@ export const authRoutes = (db: Connection, secret: string) => {
           })
         }
 
-        // Checked before the code so a replayed challenge can't burn a
-        // backup code; consumed only after the code verifies.
-        if (!(await mfaChallengeOpen(db, jti, uid))) {
-          return json(c, 401, { error: "MFA challenge already used or expired — sign in again" })
-        }
-
-        const user = (await db.one(
-          from("users")
-            .where(q => q("id").equals(uid))
-            .select(
-              "id",
-              "email",
-              "username",
-              "name",
-              "is_owner",
-              "team_id",
-              "totp_enabled",
-              "totp_secret",
-              "totp_backup_codes",
-              "deleted_at",
-              "suspended_at",
-            ),
-        )) as
-          | (Pick<
-              UserRow,
-              | "id"
-              | "email"
-              | "username"
-              | "name"
-              | "is_owner"
-              | "team_id"
-              | "totp_enabled"
-              | "totp_secret"
-              | "totp_backup_codes"
-            > & { deleted_at: string | null; suspended_at: string | null })
-          | null
-        // the challenge was issued on this team's host and completes there
-        if (!user || Number(user.team_id) !== teamFor(c.request).team.id) {
-          return json(c, 401, { error: "Invalid MFA challenge" })
-        }
-        if (!user.totp_enabled || !user.totp_secret) {
-          return json(c, 401, { error: "MFA not enabled for this user" })
-        }
-        // The account can be scheduled for deletion or suspended between the
-        // password step and this one; the challenge must not outlive that.
-        if (user.deleted_at) {
-          logEvent(db, {
-            userId: user.id,
-            event: "login.fail",
-            metadata: { reason: "account_deleted" },
-            ip,
-            userAgent: ua,
-          })
-          return json(c, 403, {
-            error: "Account is scheduled for deletion. Click the cancel link in your email to restore it.",
-            account_deleted: true,
-          })
-        }
-        if (user.suspended_at) {
-          logEvent(db, {
-            userId: user.id,
-            event: "login.fail",
-            metadata: { reason: "account_suspended" },
-            ip,
-            userAgent: ua,
-          })
-          return json(c, 403, {
-            error: "Account has been suspended by the owner. Contact the instance owner to restore access.",
-            account_suspended: true,
-          })
-        }
-
-        let verified = false
-        if (code) {
-          verified = verifyTotp(user.totp_secret, code)
-        } else if (backupCode) {
-          const stored = user.totp_backup_codes ? (JSON.parse(user.totp_backup_codes) as string[]) : []
-          verified = await consumeBackupCode(db, user.id, stored, backupCode)
-          if (verified) {
-            logEvent(db, { userId: user.id, event: "login.mfa_backup_used", ip, userAgent: ua })
+        return db.transaction(async tx => {
+          const user = (await tx.one({ text: "SELECT * FROM users WHERE id = $1 FOR UPDATE", values: [uid] })) as
+            | (UserRow & { deleted_at: string | null; suspended_at: string | null })
+            | null
+          // Checked before the code so a replayed challenge can't burn a
+          // backup code; consumed only after the code verifies.
+          if (!(await mfaChallengeOpen(tx, jti, uid))) {
+            return json(c, 401, { error: "MFA challenge already used or expired — sign in again" })
           }
-        }
 
-        if (!verified) {
-          logEvent(db, { userId: user.id, event: "login.mfa_fail", ip, userAgent: ua })
-          return json(c, 401, { error: "Invalid code" })
-        }
-        if (!(await consumeMfaChallenge(db, jti))) {
-          return json(c, 401, { error: "MFA challenge already used or expired — sign in again" })
-        }
+          // the challenge was issued on this team's host and completes there
+          if (!user || Number(user.team_id) !== teamFor(c.request).team.id) {
+            return json(c, 401, { error: "Invalid MFA challenge" })
+          }
+          if (!user.totp_enabled || !user.totp_secret) {
+            return json(c, 401, { error: "MFA not enabled for this user" })
+          }
+          // The account can be scheduled for deletion or suspended between the
+          // password step and this one; the challenge must not outlive that.
+          if (user.deleted_at) {
+            logEvent(db, {
+              userId: user.id,
+              event: "login.fail",
+              metadata: { reason: "account_deleted" },
+              ip,
+              userAgent: ua,
+            })
+            return json(c, 403, {
+              error: "Account is scheduled for deletion. Click the cancel link in your email to restore it.",
+              account_deleted: true,
+            })
+          }
+          if (user.suspended_at) {
+            logEvent(db, {
+              userId: user.id,
+              event: "login.fail",
+              metadata: { reason: "account_suspended" },
+              ip,
+              userAgent: ua,
+            })
+            return json(c, 403, {
+              error: "Account has been suspended by the owner. Contact the instance owner to restore access.",
+              account_suspended: true,
+            })
+          }
 
-        logEvent(db, { userId: user.id, event: "login.ok", metadata: { mfa: true }, ip, userAgent: ua })
-        const sess = await issueSession(
-          db,
-          {
+          let verified = false
+          if (code) {
+            verified = await claimTotp(tx, user.id, user.totp_secret, code)
+          } else if (backupCode) {
+            const stored = user.totp_backup_codes ? (JSON.parse(user.totp_backup_codes) as string[]) : []
+            verified = await consumeBackupCode(tx, user.id, stored, backupCode)
+            if (verified) {
+              logEvent(db, { userId: user.id, event: "login.mfa_backup_used", ip, userAgent: ua })
+            }
+          }
+
+          if (!verified) {
+            logEvent(db, { userId: user.id, event: "login.mfa_fail", ip, userAgent: ua })
+            return json(c, 401, { error: "Invalid or already used code. Wait for a new code." })
+          }
+          if (!(await consumeMfaChallenge(tx, jti))) {
+            return json(c, 401, { error: "MFA challenge already used or expired — sign in again" })
+          }
+
+          logEvent(db, { userId: user.id, event: "login.ok", metadata: { mfa: true }, ip, userAgent: ua })
+          const sess = await issueSession(
+            tx,
+            {
+              id: user.id,
+              email: user.email,
+              username: user.username,
+              name: user.name,
+              is_owner: user.is_owner,
+            },
+            secret,
+            { ip, userAgent: ua },
+          )
+          return json(c, 200, {
             id: user.id,
             email: user.email,
             username: user.username,
             name: user.name,
             is_owner: user.is_owner,
-          },
-          secret,
-          { ip, userAgent: ua },
-        )
-        return json(c, 200, {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          name: user.name,
-          is_owner: user.is_owner,
-          token: sess.token,
+            token: sess.token,
+          })
         })
       }),
     ),

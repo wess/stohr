@@ -1,8 +1,9 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
+import { del, get, json, patch, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { teamFor } from "../teams/request.ts"
+import { parseJson } from "../util/json/index.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 
@@ -63,7 +64,7 @@ export const spaceMembership = async (db: Connection, userId: number, spaceId: n
     text: `
       SELECT m.role
         FROM space_members m
-        JOIN spaces s ON s.id = m.space_id
+        JOIN spaces s ON s.id = m.space_id AND s.deleted_at IS NULL
        WHERE m.space_id = $1 AND m.user_id = $2
          AND ${SPACE_IN_CALLER_TEAM}
        LIMIT 1
@@ -327,6 +328,14 @@ export const spaceRoutes = (db: Connection, secret: string) => {
         }
         if (!target) return json(c, 404, { error: "User not found" })
         const member = target
+        const space = await db.one(
+          from("spaces")
+            .where(q => q("id").equals(id))
+            .select("owner_id"),
+        )
+        if (space?.owner_id === member.id && memberRole !== "admin") {
+          return json(c, 422, { error: "The space owner must remain an admin" })
+        }
 
         const existing = (await db.one(
           from("space_members")

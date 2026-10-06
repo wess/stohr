@@ -8,13 +8,13 @@ WebDAV is an instance-wide, owner-controlled feature. The instance owner enables
 
 ## Mount URL
 
-WebDAV clients talk to the API directly under the `/webdav` prefix:
+WebDAV clients use the public app hostname under the `/webdav` prefix:
 
 ```
 https://your-stohr.example.com/webdav/
 ```
 
-The web app proxies `/api/*` to the API (stripping `/api`), but WebDAV clients are not browsers and connect straight to the API host. If you deploy the API behind a reverse proxy (Caddy/Nginx), expose `/webdav` on the public host that your clients reach.
+The bundled web server forwards `/webdav/*` to the API. Point the TLS edge at the web service, just as for the browser app; do not expose the API port publicly. Use your team's subdomain or verified custom domain, since credentials only work on their team's host.
 
 ## Authentication
 
@@ -73,4 +73,6 @@ curl -u 'you@example.com:stohr_pat_xxxxx' \
 
 - Writes into federation-linked folders are not supported over WebDAV — use the web app or API for those.
 - `PROPPATCH` and persistent locking are not implemented; `LOCK`/`UNLOCK` are accepted as no-ops so OS clients that probe them can still write.
-- Each WebDAV path maps to a folder/file by name under your own root. You only ever see and touch your own files.
+- Each WebDAV path maps to a folder/file by name under your personal root. Space content is excluded even when you uploaded it.
+- With ClamAV configured, file GET and COPY require a clean scan verdict. Pending, failed, skipped, and infected blobs are blocked.
+- Password changes and resets revoke PATs. Create a new dedicated token and update your mount credentials afterward.

@@ -3,7 +3,7 @@ import { from } from "@atlas/db"
 import type { Conn, PipeFn, Route } from "@atlas/server"
 import { halt, pipeline, putHeader, setStatus, stream, text } from "@atlas/server"
 import { dropFederationBlob, fetchFederationBytes, isFederationKey } from "../federation/files.ts"
-import { clamdConfig } from "../scanning/index.ts"
+import { clamdConfig, isScanBlocked } from "../scanning/index.ts"
 import { requireSettingEnabledBasic, SETTING_WEBDAV_ENABLED, webdavEnabled } from "../settings/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { drop, fetchObject, makeKey, put } from "../storage/index.ts"
@@ -213,7 +213,7 @@ export const webdavRoutes = (db: Connection, store: StorageHandle): Route[] => {
         const resolved = await resolvePath(db, u.userId, segments)
         if (!resolved.file) return halt(c, 404, { error: "Not found" })
         const f = resolved.file
-        if (f.scan_status === "infected") return halt(c, 403, { error: "File failed malware scan" })
+        if (isScanBlocked(f.scan_status)) return halt(c, 403, { error: "File has not passed malware scanning" })
 
         if (isFederationKey(f.storage_key)) {
           const bytes = await fetchFederationBytes(db, store, f.storage_key)
@@ -310,6 +310,9 @@ export const webdavRoutes = (db: Connection, store: StorageHandle): Route[] => {
               mime: prior.mime,
               size: prior.size,
               storage_key: prior.storage_key,
+              scan_status: prior.scan_status,
+              scan_signature: prior.scan_signature,
+              scanned_at: prior.scanned_at,
               uploaded_by: u.userId,
             }),
           )
@@ -567,6 +570,7 @@ export const webdavRoutes = (db: Connection, store: StorageHandle): Route[] => {
         if (!src.file) return halt(c, 422, { error: "Only file COPY is supported in MVP" })
 
         const f = src.file
+        if (isScanBlocked(f.scan_status)) return halt(c, 403, { error: "File has not passed malware scanning" })
         const newName = destSegments[destSegments.length - 1]!
         const dstParent = await resolveDestination(db, u.userId, destSegments)
         if (!dstParent) return halt(c, 409, { error: "Destination parent collection does not exist" })

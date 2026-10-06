@@ -22,38 +22,47 @@ export const parseAuthHeader = (header: string): SigInfo | null => {
     const trimmed = segment.trim()
     const eq = trimmed.indexOf("=")
     if (eq < 0) continue
-    parts[trimmed.slice(0, eq)] = trimmed.slice(eq + 1)
+    const name = trimmed.slice(0, eq)
+    if (parts[name] !== undefined) return null
+    parts[name] = trimmed.slice(eq + 1)
   }
   const cred = parts.Credential
   const signed = parts.SignedHeaders
   const sig = parts.Signature
   if (!cred || !signed || !sig) return null
   const credParts = cred.split("/")
-  if (credParts.length !== 5) return null
+  if (
+    credParts.length !== 5 ||
+    !credParts[0] ||
+    !/^\d{8}$/.test(credParts[1]!) ||
+    !credParts[2] ||
+    credParts[3] !== "s3" ||
+    credParts[4] !== "aws4_request"
+  )
+    return null
+  if (!/^[0-9a-f]{64}$/.test(sig)) return null
+  const signedHeaders = signed.split(";")
+  if (!signedHeaders.includes("host") || !signedHeaders.includes("x-amz-date")) return null
+  if (signedHeaders.some((h, i) => !/^[a-z0-9-]+$/.test(h) || (i > 0 && signedHeaders[i - 1]! >= h))) return null
   return {
     accessKey: credParts[0]!,
     date: credParts[1]!,
     region: credParts[2]!,
     service: credParts[3]!,
     scope: credParts.slice(1).join("/"),
-    signedHeaders: signed.split(";"),
+    signedHeaders,
     signature: sig,
   }
 }
 
-const RFC3986_UNRESERVED = /^[A-Za-z0-9\-._~]$/
-
-const encodeURIComponentRFC3986 = (s: string): string => {
-  let out = ""
-  for (const ch of s) {
-    if (RFC3986_UNRESERVED.test(ch)) out += ch
-    else out += encodeURIComponent(ch).replace(/[!*'()]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
-  }
-  return out
-}
+const encodeURIComponentRFC3986 = (s: string): string =>
+  encodeURIComponent(s).replace(/[!*'()]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
 
 export const canonicalPath = (rawPath: string): string => {
-  return rawPath.split("/").map(encodeURIComponentRFC3986).join("/")
+  return rawPath
+    .split("/")
+    .map(segment => encodeURIComponentRFC3986(decodeURIComponent(segment)))
+    .join("/")
 }
 
 export const canonicalQuery = (search: string): string => {
@@ -66,7 +75,11 @@ export const canonicalQuery = (search: string): string => {
     const v = eq < 0 ? "" : pair.slice(eq + 1)
     return [encodeURIComponentRFC3986(decodeURIComponent(k)), encodeURIComponentRFC3986(decodeURIComponent(v))] as const
   })
-  pairs.sort((a, b) => (a[0] === b[0] ? a[1].localeCompare(b[1]) : a[0].localeCompare(b[0])))
+  pairs.sort((a, b) => {
+    const left = a[0] === b[0] ? a[1] : a[0]
+    const right = a[0] === b[0] ? b[1] : b[0]
+    return left < right ? -1 : left > right ? 1 : 0
+  })
   return pairs.map(([k, v]) => `${k}=${v}`).join("&")
 }
 
@@ -120,7 +133,13 @@ export const parseAmzDate = (value: string): number | null => {
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(value)
   if (!m) return null
   const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6]))
-  return Number.isFinite(t) ? t : null
+  if (!Number.isFinite(t)) return null
+  return new Date(t)
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z") === value
+    ? t
+    : null
 }
 
 // AWS rejects requests whose signing time is more than 15 minutes off the

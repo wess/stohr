@@ -55,22 +55,28 @@ const hotp = (secret: string, counter: bigint, digits = 6): string => {
 export const totpAt = (secret: string, when: Date = new Date(), step = 30): string =>
   hotp(secret, BigInt(Math.floor(when.getTime() / 1000 / step)))
 
-export const verifyTotp = (
+export const verifyTotpStep = (
   secret: string,
   code: string,
   opts: { when?: Date; step?: number; window?: number } = {},
-): boolean => {
+): number | null => {
   const cleaned = code.replace(/\s+/g, "")
-  if (!/^\d{6}$/.test(cleaned)) return false
+  if (!/^\d{6}$/.test(cleaned)) return null
   const now = opts.when ?? new Date()
   const step = opts.step ?? 30
   const window = opts.window ?? 1
   const counter = Math.floor(now.getTime() / 1000 / step)
   for (let i = -window; i <= window; i++) {
-    if (hotp(secret, BigInt(counter + i)) === cleaned) return true
+    if (hotp(secret, BigInt(counter + i)) === cleaned) return counter + i
   }
-  return false
+  return null
 }
+
+export const verifyTotp = (
+  secret: string,
+  code: string,
+  opts: { when?: Date; step?: number; window?: number } = {},
+): boolean => verifyTotpStep(secret, code, opts) !== null
 
 export const otpauthUrl = (opts: {
   secret: string

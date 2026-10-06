@@ -1,6 +1,6 @@
 import React from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { marked } from "marked"
+import { marked, Renderer } from "marked"
 import { Nav } from "../components/nav"
 import { Footer } from "../components/footer"
 
@@ -40,6 +40,16 @@ export const DOCS_INDEX: DocEntry[] = [
 export const findDoc = (slug: string): DocEntry | null =>
   DOCS_INDEX.find(d => d.slug === slug) ?? null
 
+const docHref = (entry: DocEntry, href: string): string => {
+  if (/^(?:[a-z][a-z\d+.-]*:|\/|#)/i.test(href)) return href
+  const resolved = new URL(href, `https://repo.invalid/${entry.file}`)
+  const path = resolved.pathname.slice(1)
+  const doc = DOCS_INDEX.find(item => item.file === path)
+  const target = path === "docs/README.md" ? "/docs/" : doc ? `/docs/${doc.slug}/` :
+    `https://github.com/wess/stohr/blob/main/${path}`
+  return `${target}${resolved.search}${resolved.hash}`
+}
+
 const Sidebar: React.FC<{ activeSlug: string }> = ({ activeSlug }) => {
   const groups = new Map<string, DocEntry[]>()
   for (const d of DOCS_INDEX) {
@@ -69,7 +79,24 @@ const Sidebar: React.FC<{ activeSlug: string }> = ({ activeSlug }) => {
 
 // Render a single doc to a complete HTML page string.
 export const renderDocPage = (entry: DocEntry, markdown: string): string => {
-  const bodyHtml = marked.parse(markdown, { async: false }) as string
+  const headings = new Set<string>()
+  const renderer = new Renderer()
+  renderer.heading = ({ depth, tokens, text }) => {
+    const slug = text.toLowerCase().replace(/<[^>]*>/g, "")
+      .replace(/[^\p{L}\p{N}_\s-]/gu, "").replace(/\s/g, "-")
+    let id = slug
+    let count = 0
+    while (headings.has(id)) id = `${slug}-${++count}`
+    headings.add(id)
+    return `<h${depth} id="${escapeAttr(id)}">${renderer.parser.parseInline(tokens)}</h${depth}>\n`
+  }
+  const bodyHtml = marked.parse(markdown, {
+    async: false,
+    renderer,
+    walkTokens: token => {
+      if (token.type === "link") token.href = docHref(entry, token.href)
+    },
+  }) as string
 
   const page = (
     <div className="lp devp-page">

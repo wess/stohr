@@ -1,7 +1,9 @@
 import { from } from "@atlas/db"
 import sharp from "sharp"
+import { clamdConfig } from "../../../scanning/index.ts"
 import { drop, fetchObject, makeKey, put } from "../../../storage/index.ts"
 import { generateImageThumb, isThumbable, thumbKeyFor } from "../../../storage/thumb.ts"
+import { checkActionQuota, finishActionWrite } from "../../quota.ts"
 import type { Primitive } from "../types.ts"
 
 const SUPPORTED_MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"])
@@ -62,7 +64,7 @@ const transformCompress: Primitive = {
     const obj = await fetchObject(ctx.store, file.storage_key)
     const sourceBytes = new Uint8Array(await obj.arrayBuffer())
 
-    let pipeline = sharp(sourceBytes)
+    let pipeline = sharp(sourceBytes, { limitInputPixels: 40_000_000 })
     let outMime: string
     let outExt: string
 
@@ -89,6 +91,7 @@ const transformCompress: Primitive = {
 
     const outBytes = new Uint8Array(await pipeline.toBuffer())
     const newName = swapExtension(file.name, outExt)
+    const quota = await checkActionQuota(ctx.db, ctx.ownerId, outBytes.byteLength)
     const newKey = makeKey(ctx.ownerId, newName)
     await put(ctx.store, newKey, outBytes, outMime)
 
@@ -113,6 +116,9 @@ const transformCompress: Primitive = {
         size: file.size,
         storage_key: file.storage_key,
         uploaded_by: ctx.actor.id,
+        scan_status: file.scan_status,
+        scan_signature: file.scan_signature,
+        scanned_at: file.scanned_at,
       }),
     )
     const oldThumb = file.thumb_key
@@ -127,8 +133,12 @@ const transformCompress: Primitive = {
           storage_key: newKey,
           thumb_key: newThumbKey,
           version: newVersion,
+          scan_status: clamdConfig() ? "pending" : "skipped",
+          scan_signature: null,
+          scanned_at: null,
         }),
     )
+    await finishActionWrite(ctx.db, ctx.store, ctx.ownerId, quota, outBytes.byteLength, newKey, file, newThumbKey)
     if (oldThumb && oldThumb !== newThumbKey) {
       await Promise.allSettled([drop(ctx.store, oldThumb)])
     }
@@ -147,6 +157,9 @@ const transformCompress: Primitive = {
             storage_key: newKey,
             thumb_key: newThumbKey,
             version: newVersion,
+            scan_status: clamdConfig() ? "pending" : "skipped",
+            scan_signature: null,
+            scanned_at: null,
           },
         },
       },

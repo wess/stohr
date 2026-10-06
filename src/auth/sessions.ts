@@ -1,9 +1,10 @@
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
-import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
+import { del, get, json, pipeline, post } from "@atlas/server"
 import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
 import { revokeAllSessions, revokeSession } from "../security/sessions.ts"
+import { parseJson } from "../util/json/index.ts"
 import { requireAuth } from "./guard.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id

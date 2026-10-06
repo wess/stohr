@@ -7,6 +7,12 @@ export const findOrCreateFolder = async (
   parentId: number,
   name: string,
 ): Promise<number> => {
+  const parent = (await db.one(
+    from("folders")
+      .where(q => q("id").equals(parentId))
+      .select("space_id"),
+  )) as { space_id: number | null } | null
+  if (!parent) throw new Error("Parent folder not found")
   const existing = (await db.one(
     from("folders")
       .where(q => q("user_id").equals(ownerId))
@@ -21,6 +27,7 @@ export const findOrCreateFolder = async (
       .insert({
         user_id: ownerId,
         parent_id: parentId,
+        space_id: parent.space_id,
         name,
         kind: "standard",
         is_public: false,

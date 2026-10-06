@@ -1,6 +1,6 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
+import { del, get, json, pipeline, post } from "@atlas/server"
 import { purgeUser } from "../auth/deletion.ts"
 import { requireAuth } from "../auth/guard.ts"
 import { logEvent } from "../security/audit.ts"
@@ -8,6 +8,7 @@ import { ownerOnly } from "../security/owner.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { unlessLastAdmin } from "../teams/members.ts"
 import { ROOT_TEAM_ID } from "../teams/resolve.ts"
+import { parseJson } from "../util/json/index.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
 

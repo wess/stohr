@@ -1,3 +1,4 @@
+import { responseJson } from "../../util/response/index.ts"
 import type { AiDriver, AiMessage, ChatOpts, ChatResult } from "../index.ts"
 
 export type OpenAiConfig = {
@@ -19,6 +20,8 @@ export const createOpenAiDriver = (cfg: OpenAiConfig): AiDriver => {
     chat: async (messages: AiMessage[], opts?: ChatOpts): Promise<ChatResult> => {
       const res = await fetch(`${base}/chat/completions`, {
         method: "POST",
+        redirect: "error",
+        signal: AbortSignal.timeout(30_000),
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${cfg.apiKey}`,
@@ -31,10 +34,10 @@ export const createOpenAiDriver = (cfg: OpenAiConfig): AiDriver => {
         }),
       })
       if (!res.ok) {
-        const text = await res.text().catch(() => "")
-        throw new Error(`OpenAI chat failed (${res.status}): ${text.slice(0, 500)}`)
+        await res.body?.cancel().catch(() => {})
+        throw new Error(`OpenAI chat failed (${res.status})`)
       }
-      const data = (await res.json()) as OpenAiResponse
+      const data = (await responseJson(res)) as OpenAiResponse
       return { content: data.choices[0]?.message?.content ?? "", model: data.model }
     },
   }

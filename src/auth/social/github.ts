@@ -1,3 +1,5 @@
+import { responseJson } from "../../util/response/index.ts"
+
 // GitHub OAuth helpers. GitHub is a plain OAuth2 provider (no OIDC, no
 // PKCE), so we exchange the code for an access token and then read the
 // profile + verified primary email from the REST API.
@@ -25,6 +27,8 @@ export const exchangeGithubCode = async (opts: {
   redirectUri: string
 }): Promise<string> => {
   const res = await fetch(GITHUB_TOKEN, {
+    signal: AbortSignal.timeout(10_000),
+    redirect: "error",
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
     body: new URLSearchParams({
@@ -35,10 +39,10 @@ export const exchangeGithubCode = async (opts: {
     }),
   })
   if (!res.ok) {
-    const body = await res.text().catch(() => "")
-    throw new Error(`GitHub token exchange failed: ${res.status} ${body.slice(0, 200)}`)
+    await res.body?.cancel()
+    throw new Error(`GitHub token exchange failed: ${res.status}`)
   }
-  const json = (await res.json()) as { access_token?: string; error?: string; error_description?: string }
+  const json = (await responseJson(res)) as { access_token?: string; error?: string; error_description?: string }
   if (!json.access_token) {
     throw new Error(json.error_description || json.error || "GitHub did not return an access token")
   }
@@ -81,18 +85,26 @@ const primaryVerifiedEmail = (emails: GithubEmail[]): string | null => {
 }
 
 export const fetchGithubProfile = async (accessToken: string): Promise<GithubProfile> => {
-  const userRes = await fetch(GITHUB_USER, { headers: ghHeaders(accessToken) })
+  const userRes = await fetch(GITHUB_USER, {
+    signal: AbortSignal.timeout(10_000),
+    redirect: "error",
+    headers: ghHeaders(accessToken),
+  })
   if (!userRes.ok) throw new Error(`GitHub user fetch failed: ${userRes.status}`)
-  const user = (await userRes.json()) as GithubUser
+  const user = (await responseJson(userRes)) as GithubUser
 
   // The public-profile email is free text the user typed, so it is never
   // treated as verified. The emails endpoint (user:email scope) says which
   // addresses GitHub actually confirmed.
   let email = user.email ? user.email.toLowerCase() : null
   let verified = false
-  const emailsRes = await fetch(GITHUB_EMAILS, { headers: ghHeaders(accessToken) })
+  const emailsRes = await fetch(GITHUB_EMAILS, {
+    signal: AbortSignal.timeout(10_000),
+    redirect: "error",
+    headers: ghHeaders(accessToken),
+  })
   if (emailsRes.ok) {
-    const emails = (await emailsRes.json()) as GithubEmail[]
+    const emails = (await responseJson(emailsRes)) as GithubEmail[]
     const found = primaryVerifiedEmail(emails)
     if (found) {
       email = found

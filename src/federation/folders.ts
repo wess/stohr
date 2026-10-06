@@ -1,10 +1,11 @@
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
-import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
+import { del, get, json, patch, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { folderAccess } from "../permissions/index.ts"
 import { requireSettingEnabled, SETTING_FEDERATION_ENABLED } from "../settings/index.ts"
 import { rootOnlyRoutes } from "../teams/guards.ts"
+import { parseJson } from "../util/json/index.ts"
 import { federationById, localMemberFor } from "./membership.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -14,11 +15,13 @@ const MAX_QUOTA = 1024 * 1024 * 1024 * 1024 * 10 // 10 TB ceiling
 
 type ContributeBody = {
   quota_bytes?: number
+  quotaBytes?: number
 }
 
 type MountBody = {
   name?: string
   parent_id?: number | null
+  parentId?: number | null
 }
 
 type EnsureMemberOk = {
@@ -56,7 +59,7 @@ export const federationFolderRoutes = (db: Connection, secret: string) => {
         const id = Number(c.params.id)
         const folderId = Number(c.params.folder_id)
         const body = c.body as ContributeBody
-        const quotaBytes = Number(body.quota_bytes ?? 0)
+        const quotaBytes = Number(body.quota_bytes ?? body.quotaBytes ?? 0)
         if (!Number.isFinite(quotaBytes) || quotaBytes < MIN_QUOTA || quotaBytes > MAX_QUOTA) {
           return json(c, 422, { error: `quota_bytes must be ${MIN_QUOTA}-${MAX_QUOTA}` })
         }
@@ -65,7 +68,7 @@ export const federationFolderRoutes = (db: Connection, secret: string) => {
         if (!ctx.ok) return json(c, ctx.status, ctx.body)
 
         const access = await folderAccess(db, userId, folderId)
-        if (!access || access.folder.user_id !== userId) {
+        if (!access || access.role !== "owner" || access.folder.user_id !== userId || access.folder.space_id != null) {
           return json(c, 404, { error: "Folder not found" })
         }
         if (access.folder.federation_id && access.folder.federation_id !== id) {
@@ -78,6 +81,7 @@ export const federationFolderRoutes = (db: Connection, secret: string) => {
         const existing = (await db.one(
           from("folders")
             .where(q => q("user_id").equals(userId))
+            .where(q => q("space_id").isNull())
             .where(q => q("federation_id").equals(id))
             .where(q => q("federation_role").equals("contribution"))
             .where(q => q("deleted_at").isNull())
@@ -118,7 +122,7 @@ export const federationFolderRoutes = (db: Connection, secret: string) => {
         const id = Number(c.params.id)
         const folderId = Number(c.params.folder_id)
         const body = c.body as ContributeBody
-        const quotaBytes = Number(body.quota_bytes ?? 0)
+        const quotaBytes = Number(body.quota_bytes ?? body.quotaBytes ?? 0)
         if (!Number.isFinite(quotaBytes) || quotaBytes < MIN_QUOTA || quotaBytes > MAX_QUOTA) {
           return json(c, 422, { error: `quota_bytes must be ${MIN_QUOTA}-${MAX_QUOTA}` })
         }
@@ -130,6 +134,7 @@ export const federationFolderRoutes = (db: Connection, secret: string) => {
           from("folders")
             .where(q => q("id").equals(folderId))
             .where(q => q("user_id").equals(userId))
+            .where(q => q("space_id").isNull())
             .where(q => q("federation_id").equals(id))
             .where(q => q("federation_role").equals("contribution"))
             .where(q => q("deleted_at").isNull()),
@@ -179,6 +184,7 @@ export const federationFolderRoutes = (db: Connection, secret: string) => {
           from("folders")
             .where(q => q("id").equals(folderId))
             .where(q => q("user_id").equals(userId))
+            .where(q => q("space_id").isNull())
             .where(q => q("federation_id").equals(id))
             .where(q => q("federation_role").equals("contribution"))
             .where(q => q("deleted_at").isNull()),
@@ -225,6 +231,7 @@ export const federationFolderRoutes = (db: Connection, secret: string) => {
         const existing = (await db.one(
           from("folders")
             .where(q => q("user_id").equals(userId))
+            .where(q => q("space_id").isNull())
             .where(q => q("federation_id").equals(id))
             .where(q => q("federation_role").equals("mount"))
             .where(q => q("deleted_at").isNull())
@@ -233,7 +240,15 @@ export const federationFolderRoutes = (db: Connection, secret: string) => {
         if (existing) return json(c, 200, { folder_id: existing.id, name: existing.name })
 
         const name = (body.name ?? `${ctx.fed.name} (federation)`).trim()
-        const parentId = body.parent_id == null ? null : Number(body.parent_id)
+        const parentValue = body.parent_id ?? body.parentId
+        const parentId = parentValue == null ? null : Number(parentValue)
+        if (!name || name.length > 255) return json(c, 422, { error: "Name must be 1-255 characters" })
+        if (parentId != null) {
+          if (!Number.isSafeInteger(parentId) || parentId < 1) return json(c, 422, { error: "Invalid parent folder" })
+          const parent = await folderAccess(db, userId, parentId)
+          if (!parent || parent.role !== "owner" || parent.folder.user_id !== userId || parent.folder.space_id != null)
+            return json(c, 404, { error: "Parent folder not found" })
+        }
         const inserted = (await db.execute(
           from("folders")
             .insert({

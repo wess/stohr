@@ -5,7 +5,7 @@ import { del, get, json, parseMultipart, pipeline, post, putHeader, stream } fro
 import { requireAuth } from "../auth/guard.ts"
 import { requireSettingEnabled, SETTING_FEDERATION_ENABLED } from "../settings/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
-import { drop, fetchObject, put } from "../storage/index.ts"
+import { drop, fetchObject, makeKey, put } from "../storage/index.ts"
 import { rootOnlyRoutes } from "../teams/guards.ts"
 import { aesGcmDecrypt, aesGcmEncrypt, generateSymmetricKey, openSealedX25519, sealForX25519 } from "./crypto.ts"
 import { decode, encode, erasureConfig } from "./erasure.ts"
@@ -43,7 +43,7 @@ const _localContributionFolder = async (db: Connection, federationId: number, us
 
 const localStorageKeyForFedBlob = (userId: number, blobId: string, shardIndex: number | null) => {
   const suffix = shardIndex === null ? "blob" : `shard-${shardIndex}`
-  return `u${userId}/fed/${blobId}/${suffix}`
+  return makeKey(userId, `fed-${blobId}-${suffix}`)
 }
 
 // Pushes bytes to a peer's blob receiver. Returns true on success. Failures
@@ -826,9 +826,7 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
         if (size === 0) return json(c, 422, { error: "Empty blob" })
         if (!declaredSizeMatches(sizeHeader, size)) return json(c, 422, { error: "x-fed-size does not match body" })
 
-        // A placement we already hold is refused up front. The storage key is
-        // deterministic, so writing first and sorting it out on the unique
-        // violation used to overwrite the existing object and then drop it.
+        // refuse duplicate placements before writing; each attempt owns a fresh key
         const keys = await getInstanceKeys(db)
         const held = await db.one(
           from("federation_blobs")
@@ -877,9 +875,7 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
             }),
           )
         } catch {
-          // Lost a race with a concurrent PUT of the same blob. Only drop our
-          // object if the surviving row points somewhere else — if it shares
-          // our key we just rewrote it with identical bytes.
+          // a concurrent placement won; clean up only this attempt's object
           const survivor = (await db.one(
             from("federation_blobs")
               .where(q => q("federation_id").equals(fed.id))
@@ -1001,8 +997,7 @@ export const federationFilesRoutes = (db: Connection, secret: string, store: Sto
         if (size === 0) return json(c, 422, { error: "Empty shard" })
         if (!declaredSizeMatches(sizeHeader, size)) return json(c, 422, { error: "x-fed-size does not match body" })
 
-        // see the blob receiver: refuse a shard we already hold before the
-        // deterministic key gets overwritten
+        // refuse duplicate shards before writing
         const keys = await getInstanceKeys(db)
         const held = await db.one(
           from("federation_shards")

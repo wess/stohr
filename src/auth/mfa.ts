@@ -1,11 +1,13 @@
 import { hash, verify } from "@atlas/auth"
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { get, json, parseJson, pipeline, post } from "@atlas/server"
+import { get, json, pipeline, post } from "@atlas/server"
 import { logEvent } from "../security/audit.ts"
 import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
 import { revokeAllSessions } from "../security/sessions.ts"
-import { generateBackupCodes, generateSecret, otpauthUrl, verifyTotp } from "../security/totp.ts"
+import { generateBackupCodes, generateSecret, otpauthUrl } from "../security/totp.ts"
+import { claimTotp } from "../security/totpclaims.ts"
+import { parseJson } from "../util/json/index.ts"
 import { requireAuth } from "./guard.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id
@@ -51,11 +53,14 @@ export const mfaRoutes = (db: Connection, secret: string) => {
         if (user.totp_enabled) return json(c, 409, { error: "MFA already enabled — disable first to re-enroll" })
 
         const totpSecret = generateSecret()
-        await db.execute(
+        const prepared = (await db.execute(
           from("users")
             .where(q => q("id").equals(userId))
-            .update({ totp_secret: totpSecret }),
-        )
+            .where(q => q("totp_enabled").equals(false))
+            .update({ totp_secret: totpSecret, totp_last_step: null })
+            .returning("id"),
+        )) as Array<{ id: number }>
+        if (!prepared.length) return json(c, 409, { error: "MFA already enabled" })
         const url = otpauthUrl({
           secret: totpSecret,
           account: user.email || user.username,
@@ -83,21 +88,25 @@ export const mfaRoutes = (db: Connection, secret: string) => {
         if (!user?.totp_secret) return json(c, 409, { error: "Run setup first" })
         if (user.totp_enabled) return json(c, 409, { error: "MFA already enabled" })
 
-        if (!verifyTotp(user.totp_secret, code)) {
-          return json(c, 401, { error: "Code did not match — try again" })
+        if (!(await claimTotp(db, userId, user.totp_secret, code))) {
+          return json(c, 401, { error: "Invalid or already used code. Wait for a new code." })
         }
 
         const codes = generateBackupCodes(10)
         const hashed = await hashCodes(codes)
-        await db.execute(
+        const enabled = (await db.execute(
           from("users")
             .where(q => q("id").equals(userId))
+            .where(q => q("totp_secret").equals(user.totp_secret))
+            .where(q => q("totp_enabled").equals(false))
             .update({
               totp_enabled: true,
               totp_enabled_at: raw("NOW()"),
               totp_backup_codes: JSON.stringify(hashed),
-            }),
-        )
+            })
+            .returning("id"),
+        )) as Array<{ id: number }>
+        if (!enabled.length) return json(c, 409, { error: "MFA setup changed — start over" })
         const revoked = await revokeAllSessions(db, userId, authJti(c) ?? undefined)
         logEvent(db, { userId, event: "mfa.enabled", metadata: { revoked_other_sessions: revoked }, ip, userAgent: ua })
         return json(c, 200, { ok: true, backup_codes: codes })
@@ -132,7 +141,8 @@ export const mfaRoutes = (db: Connection, secret: string) => {
 
         const passOk = await verify(password, user.password)
         if (!passOk) return json(c, 401, { error: "Password is incorrect" })
-        if (!verifyTotp(user.totp_secret, code)) return json(c, 401, { error: "Code did not match" })
+        if (!(await claimTotp(db, userId, user.totp_secret, code)))
+          return json(c, 401, { error: "Invalid or already used code. Wait for a new code." })
 
         await db.execute(
           from("users")
@@ -140,6 +150,7 @@ export const mfaRoutes = (db: Connection, secret: string) => {
             .update({
               totp_enabled: false,
               totp_secret: null,
+              totp_last_step: null,
               totp_backup_codes: null,
               totp_enabled_at: null,
             }),

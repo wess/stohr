@@ -1,6 +1,6 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
+import { del, get, json, patch, pipeline, post } from "@atlas/server"
 import type { AuthenticatorTransportFuture } from "@simplewebauthn/server"
 import {
   generateAuthenticationOptions,
@@ -9,9 +9,10 @@ import {
   verifyRegistrationResponse,
 } from "@simplewebauthn/server"
 import { logEvent } from "../security/audit.ts"
-import { clientIp, userAgent } from "../security/ratelimit.ts"
+import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
 import { issueSession, revokeAllSessions } from "../security/sessions.ts"
 import { requestBaseUrl, teamFor } from "../teams/request.ts"
+import { parseJson } from "../util/json/index.ts"
 import { requireAuth } from "./guard.ts"
 
 // rpId is ROOT_DOMAIN when host routing is on: it is a registrable suffix of
@@ -89,18 +90,14 @@ const consumeChallenge = async (
   challenge: string,
   kind: "register" | "authenticate",
 ): Promise<{ user_id: number | null } | null> => {
-  const row = (await db.one(
-    from("webauthn_challenges")
-      .where(q => q("challenge").equals(challenge))
-      .where(q => q("kind").equals(kind)),
-  )) as { challenge: string; user_id: number | null; expires_at: string } | null
+  const rows = (await db.execute({
+    text: `DELETE FROM webauthn_challenges
+            WHERE challenge = $1 AND kind = $2 AND expires_at >= NOW()
+            RETURNING user_id`,
+    values: [challenge, kind],
+  })) as Array<{ user_id: number | null }>
+  const row = rows[0]
   if (!row) return null
-  await db.execute(
-    from("webauthn_challenges")
-      .where(q => q("challenge").equals(challenge))
-      .del(),
-  )
-  if (new Date(row.expires_at).getTime() < Date.now()) return null
   return { user_id: row.user_id }
 }
 
@@ -164,7 +161,7 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
           attestationType: "none",
           authenticatorSelection: {
             residentKey: "preferred",
-            userVerification: "preferred",
+            userVerification: "required",
           },
           excludeCredentials: existing.map(e => ({
             id: e.credential_id,
@@ -205,7 +202,7 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
             expectedChallenge: challenge,
             expectedOrigin: expectedOrigin(c.request, rp),
             expectedRPID: rpIdFor(c.request, rp),
-            requireUserVerification: false,
+            requireUserVerification: true,
           })
         } catch (e) {
           return json(c, 400, { error: e instanceof Error ? e.message : "Verification failed" })
@@ -325,9 +322,11 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
     post(
       "/login/passkey/discover/start",
       open(async c => {
+        const rate = await checkRate(db, `passkey:start:ip:${clientIp(c.request)}`, 30, 900)
+        if (!rate.ok) return json(c, 429, { error: "Too many attempts.", retry_after: rate.retryAfterSeconds })
         const options = await generateAuthenticationOptions({
           rpID: rpIdFor(c.request, rp),
-          userVerification: "preferred",
+          userVerification: "required",
           // No allowCredentials → browser handles credential discovery
         })
         await insertChallenge(db, options.challenge, null, "authenticate")
@@ -340,6 +339,8 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
       open(async c => {
         const ip = clientIp(c.request)
         const ua = userAgent(c.request)
+        const rate = await checkRate(db, `passkey:finish:ip:${ip}`, 30, 900)
+        if (!rate.ok) return json(c, 429, { error: "Too many attempts.", retry_after: rate.retryAfterSeconds })
         const body = c.body as { response?: any }
         const response = body.response
         if (!response || typeof response !== "object") {
@@ -380,7 +381,7 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
               counter: Number(cred.counter),
               transports: parseTransports(cred.transports),
             },
-            requireUserVerification: false,
+            requireUserVerification: true,
           })
         } catch (e) {
           logEvent(db, {
@@ -410,9 +411,17 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
         const user = (await db.one(
           from("users")
             .where(q => q("id").equals(cred.user_id))
-            .select("id", "email", "username", "name", "is_owner"),
-        )) as { id: number; email: string; username: string; name: string; is_owner: boolean } | null
-        if (!user) return json(c, 404, { error: "User not found" })
+            .select("id", "email", "username", "name", "is_owner", "deleted_at", "suspended_at"),
+        )) as {
+          id: number
+          email: string
+          username: string
+          name: string
+          is_owner: boolean
+          deleted_at: string | null
+          suspended_at: string | null
+        } | null
+        if (!user || user.deleted_at || user.suspended_at) return json(c, 401, { error: "Account unavailable" })
 
         logEvent(db, {
           userId: user.id,

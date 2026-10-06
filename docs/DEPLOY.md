@@ -110,8 +110,6 @@ The `Dockerfile` builds one image that runs the API and the SPA web server toget
 You bring your own **Postgres**, and — if you want HTTPS — your own TLS terminator (this image has no Caddy). Migrations run automatically on API startup.
 
 ```sh
-# The libs/atlas submodule must be checked out before building.
-git submodule update --init
 docker build -t stohr .
 
 docker run -d --name stohr -p 80:3001 \
@@ -140,7 +138,7 @@ Put a reverse proxy (Caddy, nginx, your PaaS edge) in front for TLS and point it
 Update by rebuilding and recreating:
 
 ```sh
-git pull && git submodule update --init
+git pull
 docker build -t stohr .
 docker rm -f stohr && docker run -d --name stohr … stohr
 ```
@@ -177,11 +175,13 @@ The `caddyfile` shipped in the repo reads `{$DOMAIN}` and proxies to `web:3001`.
 Each team is reached on its own subdomain (`acme.your.tld`), so the edge needs two things beyond the single-tenant setup — see [TEAMS.md](TEAMS.md) for the model.
 
 1. **Wildcard DNS.** Add `*.your.tld` (A/AAAA, or a CNAME to the apex) pointing at the host, next to the `your.tld` record.
-2. **On-demand TLS.** Set `ROOT_DOMAIN=your.tld` (same value as `DOMAIN`) in `.env`. The shipped `caddyfile` has a second site block, `*.{$ROOT_DOMAIN}`, with `tls { on_demand }` and a global `on_demand_tls { ask http://api:3000/internal/tls/allow }`. Caddy issues one certificate per team host on its first visit, and only after the API answers `200` for that name — `ROOT_DOMAIN` itself and live team slugs; anything else (including reserved labels such as `root.your.tld`) is `404` and gets no certificate, so stray names pointed at your box cannot exhaust Let's Encrypt rate limits. The API answers the ask only for loopback or `TRUSTED_PROXIES` peers, at most 60 asks a minute per peer; in compose Caddy is on the bridge, which `TRUSTED_PROXIES=172.16.0.0/12` covers.
+2. **On-demand TLS.** Set `ROOT_DOMAIN=your.tld` (same value as `DOMAIN`) in `.env`. The shipped `caddyfile` has a second site block, `*.{$ROOT_DOMAIN}`, with `tls { on_demand }` and a global `on_demand_tls { ask http://api:3000/internal/tls/allow }`. Caddy issues one certificate per team host on its first visit, and only after the API answers `200` for that name — `ROOT_DOMAIN`, the configured `APP_URL` host, live team slugs, and DNS-verified custom domains; anything else (including reserved labels such as `root.your.tld`) is `404` and gets no certificate, so stray names pointed at your box cannot exhaust Let's Encrypt rate limits. The API answers the ask only for loopback or `TRUSTED_PROXIES` peers, at most 60 asks a minute per peer; in compose Caddy is on the bridge, which `TRUSTED_PROXIES=172.16.0.0/12` covers.
 
-   The ask goes to the api container directly, never through the web proxy: both Caddy site blocks answer `/api/internal/*` with `404`, and the web process refuses that prefix too, so the allow-list is unreachable from the public hostname. Keep it that way if you edit the `caddyfile`.
+   The ask goes to the api container directly, never through the web proxy: all Caddy site blocks answer `/api/internal/*` with `404`, and the web process refuses that prefix too, so the allow-list is unreachable from the public hostname. Keep it that way if you edit the `caddyfile`.
 
 Then `docker compose up -d --force-recreate api caddy`. Create the first team from the root host (`POST /admin/teams` as the owner); the response carries a one-time set-password link on the new team's host for its first admin.
+
+The HTTPS catch-all also serves verified custom domains. Team admins supply both routing records and the TXT ownership record described in [Teams](TEAMS.md#custom-domains). A shared edge needs Stohr's certificate ask and private domain resolver; a managed edge requires a separate hostname/certificate registration.
 
 No wildcard certificate is involved — DNS-challenge credentials are not needed. If you front Stohr with something other than Caddy, terminate TLS for `*.your.tld` however that proxy does it and make sure it forwards the original `Host` (the web proxy turns it into `X-Forwarded-Host` for the API).
 
@@ -221,7 +221,9 @@ docker compose up -d --build
 docker compose logs -f api    # watch for migration application + clean boot
 ```
 
-For zero-downtime swaps, `docker compose up -d --build --no-deps api web` builds new containers behind the scenes and replaces them while postgres and caddy keep running.
+`docker compose up -d --build --no-deps api web` replaces only the application services while Postgres and Caddy keep running. A single replica can have a brief interruption; this command does not guarantee zero downtime. Take a database backup before releases that apply migrations, then verify `/api/readyz`, the deployed version, and a normal sign-in after replacement.
+
+Documentation is published separately from the app container. When a release changes `docs/*.md` or `SECURITY.md`, run `cd site && bun run build` and deploy that release's `site/dist/` to the documentation host too. See [site hosting](../site/README.md).
 
 ## Backups
 

@@ -1,8 +1,9 @@
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
-import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
+import { del, get, json, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { teamFor } from "../teams/request.ts"
+import { parseJson } from "../util/json/index.ts"
 import { randomToken, sha256Hex } from "../util/token.ts"
 import { isEmail } from "../util/username.ts"
 

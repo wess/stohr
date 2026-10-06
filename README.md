@@ -6,7 +6,9 @@ Bun + React + Postgres + S3-compatible blob store.
 
 ## Features
 
-- **Files & folders** — versioned uploads, soft-delete + trash, image thumbnails, photo-gallery folders.
+- **Files & folders** — versioned uploads, soft-delete + trash, authenticated thumbnails, and selectable Grid, List, and Gallery views. Your view choice is remembered in the browser.
+- **Search** — find files and folders by name or search document contents. In the file browser, open search with `⌘K` / `Ctrl+K`. See [Search](docs/SEARCH.md).
+- **Teams & Spaces** — isolated teams with their own admins, quotas, subdomains, and DNS-verified custom domains; shared Spaces use membership-based access. See [Teams](docs/TEAMS.md) and [Spaces](docs/SPACES.md).
 - **Sharing** — link-based shares with expiry, password gate, burn-on-view; public folders served at `/p/:user/:folder`.
 - **Collaboration** — folder/file collaborators with viewer/editor roles; cascade through subfolders.
 - **Federation** — invite-gated peer networks. Pool storage with friends in **content-sharing** mode (group-encrypted, browseable) or **space-offering** mode (end-to-end encrypted, zero-knowledge hosting). Ed25519-signed peer transport, replication or erasure coding, drain-on-departure. See [`docs/FEDERATION.md`](docs/FEDERATION.md).
@@ -14,7 +16,8 @@ Bun + React + Postgres + S3-compatible blob store.
 - **Auth** — email + password, TOTP 2FA, WebAuthn passkeys, password reset, full session list with per-device revoke.
 - **OAuth provider** — third-party apps integrate via authorization-code with PKCE, refresh-token rotation, device flow.
 - **S3-compatible API** — point any S3 SDK or `s3cmd`/`rclone` at Stohr; reuses your account quota. `bun run connect` prints a one-paste token that points another service — such as [Inkling](https://github.com/wess/inkling) — at your storage.
-- **Storage quotas** — optional per-user storage caps the owner sets from the admin panel.
+- **Storage quotas** — optional per-user and per-team caps managed from the admin panel.
+- **Malware scanning** — optional private ClamAV integration. When configured, downloads wait for a clean verdict, including archived versions. See [Configuration](docs/CONFIGURATION.md#antivirus-scanning-clamav).
 - **Admin** — invite issuance, audit log, user/owner management, OAuth client registry, per-user storage caps, **owner-toggleable feature flags** (federation, WebDAV) — no restart needed.
 
 ## Quick start
@@ -39,6 +42,8 @@ Full docs live in [`docs/`](docs/README.md) — architecture, every endpoint, de
 - [Configuration reference](docs/CONFIGURATION.md) — every env var
 - [Deploy guide](docs/DEPLOY.md) — DigitalOcean, App Platform, manual Docker
 - [API reference](docs/API.md) — complete endpoint surface
+- [Teams](docs/TEAMS.md) — tenant isolation, team administration, and custom domains
+- [Search](docs/SEARCH.md) — names, folders, and document contents
 - [Federation](docs/FEDERATION.md) — encrypted peer networks for pooled storage
 - [WebDAV](docs/WEBDAV.md) — mount Stohr as a network drive
 - [Security model](SECURITY.md)

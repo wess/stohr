@@ -1,5 +1,6 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
+import { clamdConfig } from "../../scanning/index.ts"
 import { fetchObject, type StorageHandle } from "../../storage/index.ts"
 import { extractText, MAX_TEXT_BYTES } from "./extract.ts"
 
@@ -59,11 +60,12 @@ const claim = async (db: Connection, batchSize: number): Promise<Pending[]> => {
       SELECT id, user_id, storage_key, name, mime, size, version
         FROM files
        WHERE deleted_at IS NULL
+         AND scan_status <> 'infected' AND ($2 = FALSE OR scan_status = 'clean')
          AND (text_indexed_at IS NULL OR text_indexed_version IS NULL OR text_indexed_version < version)
        ORDER BY id ASC
        LIMIT $1
     `,
-    values: [batchSize],
+    values: [batchSize, !!clamdConfig()],
   })) as Pending[]
   return rows
 }

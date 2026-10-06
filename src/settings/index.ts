@@ -1,10 +1,11 @@
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
 import type { Conn } from "@atlas/server"
-import { get, halt, json, parseJson, patch, pipeline } from "@atlas/server"
+import { get, halt, json, patch, pipeline } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { ownerOnly } from "../security/owner.ts"
 import { rootOnly } from "../teams/guards.ts"
+import { parseJson } from "../util/json/index.ts"
 
 // Owner-controlled feature toggles. Stored as JSON-encoded strings so the
 // same table can hold booleans, ints, or small objects. Routes that gate on

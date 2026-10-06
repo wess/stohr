@@ -9,6 +9,7 @@ import { resolvePendingCollabs } from "./index.ts"
 export type ExternalProfile = {
   provider: "oidc" | "ldap" | "google" | "github"
   subject: string
+  issuer?: string
   email: string | null
   // whether the provider vouches for the address. an unverified email is a
   // display string: it never links to an existing account, never resolves
@@ -26,6 +27,7 @@ type LocalUser = {
   is_owner: boolean
   team_id: number
   deleted_at: string | null
+  suspended_at: string | null
 }
 
 // External sign-in (oidc, ldap, social) is a root-team surface: tenant users
@@ -82,97 +84,104 @@ export const upsertFromExternal = async (
   profile: ExternalProfile,
   opts: { autoProvision: boolean },
 ): Promise<{ user: LocalUser; created: boolean }> => {
-  const existing = (await db.one(
-    from("external_identities")
-      .where(q => q("provider").equals(profile.provider))
-      .where(q => q("subject").equals(profile.subject))
-      .select("id", "user_id"),
-  )) as { id: number; user_id: number } | null
+  return db.transaction(async tx => {
+    await tx.execute({ text: "SELECT id FROM teams WHERE id = $1 FOR UPDATE", values: [ROOT_TEAM_ID] })
+    const issuer = profile.issuer ?? ""
+    const existing = (await tx.one(
+      from("external_identities")
+        .where(q => q("provider").equals(profile.provider))
+        .where(q => q("subject").equals(profile.subject))
+        .where(q => q("issuer").equals(issuer))
+        .select("id", "user_id"),
+    )) as { id: number; user_id: number } | null
 
-  if (existing) {
-    const user = (await db.one(
-      from("users")
-        .where(q => q("id").equals(existing.user_id))
-        .select("id", "email", "username", "name", "is_owner", "team_id", "deleted_at"),
-    )) as LocalUser | null
-    if (!user) throw new Error("Linked external identity points to a missing user")
-    if (Number(user.team_id) !== ROOT_TEAM_ID) throw new Error(ROOT_ONLY_ERROR)
-    await touchIdentity(db, existing.id)
-    return { user, created: false }
-  }
-
-  const email = profile.email?.toLowerCase() ?? null
-  const verifiedEmail = email && profile.email_verified === true ? email : null
-
-  if (verifiedEmail) {
-    const byEmail = (await db.one(
-      from("users")
-        .where(q => q("email").equals(verifiedEmail))
-        .where(q => q("team_id").equals(ROOT_TEAM_ID))
-        .select("id", "email", "username", "name", "is_owner", "team_id", "deleted_at"),
-    )) as LocalUser | null
-    if (byEmail) {
-      await db.execute(
-        from("external_identities").insert({
-          user_id: byEmail.id,
-          provider: profile.provider,
-          subject: profile.subject,
-          email: verifiedEmail,
-          display_name: profile.display_name,
-          last_login_at: raw("NOW()"),
-        }),
-      )
-      return { user: byEmail, created: false }
+    if (existing) {
+      const user = (await tx.one(
+        from("users")
+          .where(q => q("id").equals(existing.user_id))
+          .select("id", "email", "username", "name", "is_owner", "team_id", "deleted_at", "suspended_at"),
+      )) as LocalUser | null
+      if (!user) throw new Error("Linked external identity points to a missing user")
+      if (Number(user.team_id) !== ROOT_TEAM_ID) throw new Error(ROOT_ONLY_ERROR)
+      await touchIdentity(tx, existing.id)
+      return { user, created: false }
     }
-  }
 
-  if (!opts.autoProvision) {
-    throw new Error("No matching local account and auto-provision is disabled")
-  }
-  if (!email) {
-    throw new Error("Cannot auto-provision without an email claim")
-  }
-  // The address becomes the account's unique email and its password-reset
-  // channel; seeding it unverified would let the next verified login for
-  // the same address land in this account.
-  if (!verifiedEmail) {
-    throw new Error("Identity provider did not mark the email as verified — cannot create an account")
-  }
+    const email = profile.email?.toLowerCase() ?? null
+    const verifiedEmail = email && profile.email_verified === true ? email : null
 
-  const isFirstUser = !(await db.one(from("users").select("id").limit(1)))
-  const baseUsername = suggestUsernameFrom(profile)
-  const username = await uniqueUsername(db, baseUsername)
-  // Generate a random throwaway password — the user authenticates through
-  // the IdP, never password-locally. They can set one later via password
-  // reset if they want to (the email is verified by the IdP).
-  const passwordHash = await hash(randomToken(32))
+    if (verifiedEmail) {
+      const byEmail = (await tx.one(
+        from("users")
+          .where(q => q("email").equals(verifiedEmail))
+          .where(q => q("team_id").equals(ROOT_TEAM_ID))
+          .select("id", "email", "username", "name", "is_owner", "team_id", "deleted_at", "suspended_at"),
+      )) as LocalUser | null
+      if (byEmail) {
+        await tx.execute(
+          from("external_identities").insert({
+            user_id: byEmail.id,
+            provider: profile.provider,
+            issuer,
+            subject: profile.subject,
+            email: verifiedEmail,
+            display_name: profile.display_name,
+            last_login_at: raw("NOW()"),
+          }),
+        )
+        return { user: byEmail, created: false }
+      }
+    }
 
-  const inserted = (await db.execute(
-    from("users")
-      .insert({
+    if (!opts.autoProvision) {
+      throw new Error("No matching local account and auto-provision is disabled")
+    }
+    if (!email) {
+      throw new Error("Cannot auto-provision without an email claim")
+    }
+    // The address becomes the account's unique email and its password-reset
+    // channel; seeding it unverified would let the next verified login for
+    // the same address land in this account.
+    if (!verifiedEmail) {
+      throw new Error("Identity provider did not mark the email as verified — cannot create an account")
+    }
+
+    const isFirstUser = !(await tx.one(from("users").select("id").limit(1)))
+    const baseUsername = suggestUsernameFrom(profile)
+    const username = await uniqueUsername(tx, baseUsername)
+    // Generate a random throwaway password — the user authenticates through
+    // the IdP, never password-locally. They can set one later via password
+    // reset if they want to (the email is verified by the IdP).
+    const passwordHash = await hash(randomToken(32))
+
+    const inserted = (await tx.execute(
+      from("users")
+        .insert({
+          email: verifiedEmail,
+          username,
+          name: profile.display_name ?? verifiedEmail.split("@")[0] ?? username,
+          password: passwordHash,
+          is_owner: isFirstUser,
+          team_id: ROOT_TEAM_ID,
+        })
+        .returning("id", "email", "username", "name", "is_owner", "team_id", "deleted_at", "suspended_at"),
+    )) as Array<LocalUser>
+    const user = inserted[0]!
+
+    await tx.execute(
+      from("external_identities").insert({
+        user_id: user.id,
+        provider: profile.provider,
+        issuer,
+        subject: profile.subject,
         email: verifiedEmail,
-        username,
-        name: profile.display_name ?? verifiedEmail.split("@")[0] ?? username,
-        password: passwordHash,
-        is_owner: isFirstUser,
-        team_id: ROOT_TEAM_ID,
-      })
-      .returning("id", "email", "username", "name", "is_owner", "team_id", "deleted_at"),
-  )) as Array<LocalUser>
-  const user = inserted[0]!
+        display_name: profile.display_name,
+        last_login_at: raw("NOW()"),
+      }),
+    )
 
-  await db.execute(
-    from("external_identities").insert({
-      user_id: user.id,
-      provider: profile.provider,
-      subject: profile.subject,
-      email: verifiedEmail,
-      display_name: profile.display_name,
-      last_login_at: raw("NOW()"),
-    }),
-  )
+    await resolvePendingCollabs(tx, user.id, verifiedEmail)
 
-  await resolvePendingCollabs(db, user.id, verifiedEmail)
-
-  return { user, created: true }
+    return { user, created: true }
+  })
 }

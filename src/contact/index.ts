@@ -1,9 +1,10 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { del, get, json, parseJson, patch, pipeline, post } from "@atlas/server"
+import { del, get, json, patch, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { ownerOnly } from "../security/owner.ts"
 import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
+import { parseJson } from "../util/json/index.ts"
 import { limitBody } from "../util/limitbody/index.ts"
 import { isEmail } from "../util/username.ts"
 

@@ -1,3 +1,4 @@
+import { responseJson } from "../util/response/index.ts"
 // Minimal outbound MCP client. Talks JSON-RPC 2.0 over HTTP POST. Stohr uses
 // this to mount third-party MCP servers (the operator pastes a URL + bearer
 // token into Admin → MCP) and re-expose their tool catalogs alongside Stohr's
@@ -28,15 +29,16 @@ const rpc = async (server: RemoteServer, req: JsonRpcRequest): Promise<JsonRpcRe
     if (server.authToken) headers.authorization = `Bearer ${server.authToken}`
     const res = await fetch(server.url, {
       method: "POST",
+      redirect: "error",
       headers,
       body: JSON.stringify(req),
       signal: controller.signal,
     })
     if (!res.ok) {
-      const text = await res.text().catch(() => "")
-      throw new Error(`Remote MCP returned ${res.status}: ${text.slice(0, 200)}`)
+      await res.body?.cancel().catch(() => {})
+      throw new Error(`Remote MCP returned ${res.status}`)
     }
-    return (await res.json()) as JsonRpcResponse
+    return (await responseJson(res)) as JsonRpcResponse
   } finally {
     clearTimeout(timer)
   }

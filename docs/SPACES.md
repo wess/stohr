@@ -47,7 +47,7 @@ GET    /spaces/:id/folders           top-level folders
 POST   /spaces/:id/folders           create top-level folder (editor+)
 ```
 
-Folders inside a Space behave like regular folders for upload, rename, share, comment, etc. — the only difference is that access is resolved through `space_members` rather than the personal-drive ownership + collaboration tables.
+Folders inside a Space support upload, rename, share, and comment through Space membership. Personal collaborator grants cannot be added to Space resources; manage access in the Space's **Members** tab. Personal S3 and WebDAV mounts exclude Space content.
 
 ## Permissions model
 
@@ -59,6 +59,8 @@ Every folder and file carries an optional `space_id`. When non-null, the permiss
 
 The folder's `user_id` is the *creator* (used for attribution, audit, and storage-key prefixing) — it does **not** grant access. Likewise the file's `user_id` doesn't grant access inside a Space; only membership does.
 
+A file in a deleted parent folder cannot be restored into the personal root to bypass membership. Restore its parent folder first. Account deletion preserves surviving Space content: uploader attribution is reassigned, and an owned Space transfers to an eligible active member. A Space with no remaining eligible member is purged during account deletion.
+
 ## Soft-delete
 
-Deleting a space is owner-only. It sets `spaces.deleted_at` and cascades a `deleted_at` to every folder pinned to the space. Files inside those folders inherit the `deleted_at` of their folder for listing purposes (you'll see them in the owner's `/trash` until a future hard-delete sweep purges them).
+Deleting a space is owner-only. It sets `spaces.deleted_at` and cascades a `deleted_at` to every folder pinned to the space. Files inside those folders become unavailable through the deleted Space and folder boundary. Membership alone does not grant access to a deleted Space.

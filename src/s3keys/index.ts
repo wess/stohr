@@ -1,7 +1,8 @@
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
-import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
+import { del, get, json, pipeline, post } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
+import { parseJson } from "../util/json/index.ts"
 import { generateAccessKey, generateSecretKey } from "./generate.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id

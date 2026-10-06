@@ -109,6 +109,9 @@ export const finalizeUpload = async (
         mime: existing.mime,
         size: existing.size,
         storage_key: existing.storage_key,
+        scan_status: existing.scan_status,
+        scan_signature: existing.scan_signature,
+        scanned_at: existing.scanned_at,
         uploaded_by: ownerId,
       }),
     )

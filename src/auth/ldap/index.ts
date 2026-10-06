@@ -1,10 +1,11 @@
 import type { Connection } from "@atlas/db"
-import { get, json, parseJson, pipeline, post } from "@atlas/server"
+import { get, json, pipeline, post } from "@atlas/server"
 import { logEvent } from "../../security/audit.ts"
 import { checkRate, clientIp, userAgent } from "../../security/ratelimit.ts"
 import { issueSession } from "../../security/sessions.ts"
 import { rootOnly } from "../../teams/guards.ts"
 import { teamFor } from "../../teams/request.ts"
+import { parseJson } from "../../util/json/index.ts"
 import { upsertFromExternal } from "../external.ts"
 import { authenticateLdap } from "./client.ts"
 import { isLdapReady, loadLdapConfig } from "./config.ts"
@@ -87,7 +88,7 @@ export const ldapRoutes = (db: Connection, secret: string) => {
           return json(c, 403, { error: (err as Error).message })
         }
 
-        if (user.deleted_at) {
+        if (user.deleted_at || user.suspended_at) {
           return json(c, 403, {
             error: "Account is scheduled for deletion. Click the cancel link in your email to restore it.",
             account_deleted: true,

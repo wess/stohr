@@ -45,9 +45,9 @@ With `ROOT_DOMAIN` set ([TEAMS.md](TEAMS.md)), every route is served for the tea
 | method | path | body | returns |
 | --- | --- | --- | --- |
 | `POST` | `/password/forgot` | `{ email }` | always `{ ok: true, message }` (does not reveal whether the email is on file) |
-| `POST` | `/password/reset` | `{ token, new_password }` | `{ ok: true }` (token consumed; all sessions revoked) |
+| `POST` | `/password/reset` | `{ token, new_password }` | `{ ok: true }` (token consumed; sessions and app credentials revoked) |
 
-The reset token is a `stohr_pwr_…` value delivered by email. 1-hour TTL, single-use. Per-email and per-IP rate-limited. The token in the email URL is the only handle — query-string interception in Referer is mitigated by the global `Referrer-Policy: strict-origin-when-cross-origin` and by the reset-page being on Stohr's own origin.
+The reset token is a `stohr_pwr_…` value delivered by email. 1-hour TTL, atomically single-use. Successful reset revokes sessions, pending MFA challenges, PATs, S3 keys, OAuth credentials, and other reset links; app clients must reconnect. Per-email and per-IP rate-limited. The token in the email URL is the only handle — query-string interception in Referer is mitigated by the global `Referrer-Policy: strict-origin-when-cross-origin` and by the reset-page being on Stohr's own origin.
 
 ## Passkeys / WebAuthn
 
@@ -159,6 +159,8 @@ See [S3.md](S3.md) for using the keys.
 | `POST` | `/files/:id/versions/:v/restore` | promote to live |
 | `DELETE` | `/files/:id/versions/:v` | delete archived |
 | `GET/POST/DELETE` | `/files/:id/collaborators[/:cid]` | collaborator CRUD |
+
+Private downloads and thumbnails require authentication, including when used as browser image sources. With ClamAV configured, downloads, thumbnails, and archived-version downloads return 403 until the matching blob has a clean verdict. API responses use `Cache-Control: no-store`.
 
 Re-uploading to the same `(folder, name)` archives the previous live version and increments `version`. Upload returns `402` if the new size would exceed the user's storage quota.
 

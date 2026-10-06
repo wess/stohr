@@ -7,7 +7,9 @@ Once enabled:
 - **OIDC** — adds a "Sign in with SSO" button on the login screen. Clicking it kicks off the standard authorization-code flow with PKCE. After the IdP redirects back, Stohr verifies the ID token signature against the issuer's JWKS, applies the configured claim mapping, and either links the OIDC subject to an existing local user (matched by email, only when the ID token carries `email_verified: true`) or auto-provisions a new account.
 - **LDAP** — adds a "Sign in with LDAP" toggle on the login screen. Submitting the form binds against your directory using the configured service account, looks the user up by filter, then re-binds as the user with the supplied password.
 
-Both providers store a row in `external_identities` keyed on `(provider, subject)`. The "subject" is the OIDC `sub` claim or the user's LDAP DN — durable enough to survive an email change on the IdP side.
+External login is available only on the root host; tenant teams use passwords and passkeys.
+
+Both providers store a row in `external_identities` keyed on `(provider, issuer, subject)`. The "subject" is the OIDC `sub` claim or the user's LDAP DN — durable enough to survive an email change on the IdP side.
 
 A single local account can carry multiple linked identities (password + OIDC, password + LDAP, etc.). The user retains a hashed throwaway password from auto-provisioning; they can claim it via **Forgot your password?** if they ever need a local fallback.
 
@@ -37,14 +39,14 @@ Where `APP_URL` is the value of your `APP_URL` env var (defaults to `http://loca
 ### What happens on first login
 
 1. User clicks the SSO button → browser navigates to `/api/auth/oidc/start`.
-2. Stohr generates a `state` + `nonce` + PKCE verifier, persists them in `oidc_states` for 10 minutes, and 302s to the IdP's authorize endpoint.
+2. Stohr generates a `state` + `nonce` + PKCE verifier, persists them in `oidc_states` for 10 minutes, binds state to an HttpOnly host-only browser cookie, and 302s to the IdP's authorize endpoint.
 3. After the user authenticates at the IdP, the IdP redirects to `/api/auth/oidc/callback?code=…&state=…`.
-4. Stohr exchanges the code at the token endpoint (using the PKCE verifier), verifies the ID token against the IdP's JWKS (RS256 / RS384 / RS512 / ES256 / ES384 supported), and looks up `external_identities` by `(oidc, sub)`.
+4. Stohr exchanges the code at the token endpoint (using the PKCE verifier), verifies the ID token against the IdP's JWKS (RS256 / RS384 / RS512 / ES256 / ES384 supported), and looks up `external_identities` by `(oidc, configured issuer, sub)`.
 5. If a link exists → log the existing user in.
    - Else if the email is **verified** (`email_verified: true` in the ID token) and already exists locally → link the OIDC identity and log in.
    - Else if `auto_provision` is on and the email is verified → create a local account and log in. Pending collaborator invites addressed to that email are attached to the new account.
    - Else → reject with a clear error. An unverified email is never used to match, link, or create an account: anyone who can type an address into their IdP profile would otherwise inherit the account that owns it. Keycloak marks admin-created users unverified by default — tick "Email verified" there, or have users confirm their address.
-6. Stohr issues a normal session JWT and redirects back to the SPA with the token in the URL fragment. An optional `redirect_to` on `/api/auth/oidc/start` is resolved against `APP_URL` and must land on the same origin (path + query only); anything else falls back to `/`.
+6. Stohr issues a normal session JWT and redirects back to the SPA with the token in the URL fragment. The callback requires the matching browser-state cookie, and the SPA accepts the handoff only when the returned nonce matches the tab that started sign-in. An optional `redirect_to` on `/api/auth/oidc/start` is resolved against `APP_URL` and must land on the same origin (path + query only); anything else falls back to `/`.
 
 GitHub reports which addresses it has confirmed, and only those count as verified. Google always sends `email_verified`. LDAP has no such claim: the directory is admin-run, so a `mail` attribute is treated as verified.
 

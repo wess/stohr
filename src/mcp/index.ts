@@ -1,5 +1,5 @@
 import type { Connection } from "@atlas/db"
-import { get, json, parseJson, pipeline, post } from "@atlas/server"
+import { get, json, pipeline, post } from "@atlas/server"
 import type { TeamClaims } from "../auth/guard.ts"
 import { requireAuth } from "../auth/guard.ts"
 import { parseScope, type Scope } from "../oauth/helpers.ts"
@@ -8,6 +8,7 @@ import { mcpEnabled, mcpToolEnabled } from "../settings/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { rootOnly } from "../teams/guards.ts"
 import { requestBaseUrl } from "../teams/request.ts"
+import { parseJson } from "../util/json/index.ts"
 import {
   ERR_INTERNAL,
   ERR_INVALID_PARAMS,
@@ -163,6 +164,7 @@ export const mcpRoutes = (db: Connection, secret: string, store: StorageHandle, 
         // entry in the response array; if the whole batch is notifications
         // we return an empty 204.
         const requests = Array.isArray(body) ? body : [body]
+        if (requests.length > 50) return json(c, 413, fail(null, ERR_INVALID_REQUEST, "Batch exceeds 50 requests"))
         if (requests.length === 0) {
           return json(c, 400, fail(null, ERR_INVALID_REQUEST, "Empty batch"))
         }

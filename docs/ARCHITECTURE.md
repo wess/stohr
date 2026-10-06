@@ -38,6 +38,7 @@ src/
     index.ts            — signup / login / MFA challenge
     guard.ts            — requireAuth pipeline guard (JWT, PAT, OAuth + scope derivation)
     redirect.ts         — same-origin clamp for post-sign-in redirect_to
+    state.ts            — host-only SSO state cookie and originating-tab nonce
     sessions.ts         — list + revoke sessions, periodic sweep
     mfa.ts              — TOTP setup / enable / disable / backup codes
     passkeys.ts         — WebAuthn registration + discoverable login
@@ -70,6 +71,8 @@ src/
     audit.ts            — structured event logger
     sessions.ts         — JWT session activeness check
     totp.ts             — RFC 6238 verifier
+    totpclaims.ts       — atomic, monotonic authenticator timestep consumption
+    credentials.ts      — account credential revocation and OAuth epoch changes
     inline.ts           — inline-Content-Type allowlist for downloads
     owner.ts            — DB-backed `is_owner` guard
   permissions/          — unified folder/file access resolver (incl. Space membership lookup)
@@ -92,7 +95,13 @@ src/
   auth/ldap/            — LDAP bind+search login (ldapts) + admin config + test endpoint
   auth/external.ts      — shared external-identity → user resolver (link/auto-provision)
   admin/users.ts        — owner-only user-management routes: edit, suspend/unsuspend, reset-password, message, broadcast
-  util/                 — small helpers (token, username)
+  util/
+    json/index.ts       — request JSON parser capped at 1 MiB
+    response/index.ts   — remote JSON reader capped at 2 MiB
+    process/index.ts    — timeout/output-bounded parser subprocesses
+    safeurl/index.ts    — DNS validation and IP-pinned outbound requests
+    limitbody/index.ts  — bounded request bodies, preserves peer/team metadata
+    …                   — paging, token, username, and other shared helpers
   web/                  — single-file React SPA + serve.ts proxy
 migrations/             — hand-written SQL, applied at API startup via @atlas/migrate
 scripts/deploy/         — DigitalOcean provisioning automation
@@ -123,9 +132,9 @@ Before the router runs, `withTeams` (`src/teams/request.ts`) resolves the reques
 
 - **JWT** — issued by `/login`, `/signup`, `/login/mfa`. Carries a `jti` checked against the `sessions` table on every request, so revocation is immediate.
 - **PAT** — strings prefixed `stohr_pat_…`, minted via `POST /me/apps`. Stored as SHA-256 hashes; `last_used_at` updated on each call.
-- **OAuth access token** — JWT issued by `/oauth/token`. Routes that mint further credentials (PATs, MFA, OAuth clients, password change, account deletion) opt out via `noOAuth: true`.
+- **OAuth access token** — JWT issued by `/oauth/token`. Routes that mint further credentials (PATs, MFA, OAuth clients, password change, account deletion) opt out via `noOAuth: true`. Access tokens carry an account revocation epoch and the guard checks both that epoch and the active client.
 
-`parseJson` populates `c.body`. `pipeline()` halts on the first failure (e.g. missing token → 401).
+`parseJson` from `src/util/json/` caps JSON bodies at 1 MiB before parsing and populates `c.body`; malformed JSON returns 400. `pipeline()` halts on the first failure (e.g. missing token → 401).
 
 ## Permissions
 
@@ -139,7 +148,7 @@ src/permissions/index.ts
   isOwner(role)                      → role === "owner"
 ```
 
-Roles: `owner` (the user the file/folder belongs to), `editor` (write), `viewer` (read-only). Folder grants cascade — if you're a viewer of `/photos`, you're a viewer of every file and subfolder underneath.
+For personal files, roles are `owner` (the user the file/folder belongs to), `editor` (write), and `viewer` (read-only). Folder grants cascade to descendants. For Space resources, membership determines access and uploader attribution grants nothing; personal collaborator grants cannot override that boundary.
 
 ## Security middleware
 
@@ -162,17 +171,13 @@ Audit events (`audit_events` table) are emitted from auth, MFA, sessions, passwo
 
 **All file CRUD goes through the API.** Clients never get presigned URLs or direct-to-bucket access; the driver interface intentionally omits `signedUrl` so that contract is enforced at the type level.
 
+File and archived-version scan verdicts are tied to the storage key. With ClamAV enabled, only clean verdicts permit byte delivery or content snippets. API responses are never cached.
+
 Every blob is keyed `u<userId>/<timestamp><rand>/<sanitized-name>`. Deleting a file requires deleting the DB row **and** the storage object — purges and account-deletion always do both.
 
 ## SPA routing
 
-`src/web/serve.ts` declares the routes Bun's HTML bundler should resolve to `index.html`:
-
-```ts
-"/", "/s/:token", "/signup", "/login", "/developers", "/contact",
-"/app/*", "/p/:username/:folderId", "/oauth/authorize", "/pair",
-"/password/forgot", "/password/reset",
-```
+`src/web/serve.ts` bundles the SPA at startup and serves `index.html` for browser paths that are not API/protocol routes or built assets. This allows direct navigation to login, folders, shares, Spaces, and admin pages without maintaining a second route list. `/api/*` is forwarded with the prefix stripped; `/webdav`, `/s3`, and external-auth paths are forwarded to their API routes. The marketing site is built separately from `site/`.
 
 Inside the SPA, `parseRoute(window.location)` returns a discriminated `Route` union; the App component dispatches:
 
@@ -192,8 +197,13 @@ Started from `src/server.ts` on a `setInterval`. Each one is wrapped in a "runni
 - Expired password-reset tokens (1 h TTL) — every hour
 - Expired WebAuthn challenges (5 min TTL) — every 5 min
 - Soft-deleted teams past the 24h grace window — every hour; members go through the account hard-delete path (`purgeUser`), then the team row
-- Expired share rows — every hour (started from `shareRoutes`)
+- Expired sessions, share rows, and rate-limit rows — every hour
+- Deleted accounts past the 24h grace window — every hour
+- Expired OIDC states and federation replay nonces — every 5 min
+- Expired resumable uploads and staged parts — every hour
+- Content indexing — every 30s, up to 5 files
+- Pending/retryable current and archived malware scans — every 20s, up to 5 current files and 5 archived versions, when ClamAV is configured
 - Expired federation invites (7-day default TTL) — every hour
 - Federation drain re-replication — every 10 min; moves blobs off members marked `draining` until empty, then flips them to `left`
 
-All sweeps also run once at boot so the first request after restart doesn't see stale rows.
+Sweeps also run at boot. The ordinary sweeps are staggered 750 ms apart to avoid exhausting the shared DB pool; the configured scanner starts separately. API and web processes drain in-flight requests on SIGTERM/SIGINT before exit.

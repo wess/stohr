@@ -1,5 +1,6 @@
 import { from } from "@atlas/db"
-import { fileAccess, folderAccess } from "../../permissions/index.ts"
+import { fileAccess, folderAccess, visibleFileSql, visibleFolderSql } from "../../permissions/index.ts"
+import { isScanBlocked } from "../../scanning/index.ts"
 import { escapeLike } from "../../search/parse.ts"
 import { fetchObject } from "../../storage/index.ts"
 import { asError, asText, type Tool, type ToolContext } from "./index.ts"
@@ -15,7 +16,7 @@ const listFolders = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const parentId = parentRaw === null || parentRaw === undefined ? null : Number(parentRaw)
   const rows = await ctx.db.all(
     from("folders")
-      .where(q => q("user_id").equals(ctx.userId))
+      .where(q => q.raw(visibleFolderSql(ctx.userId)))
       .where(q => q("deleted_at").isNull())
       .where(q => (parentId === null ? q("parent_id").isNull() : q("parent_id").equals(parentId)))
       .select("id", "name", "parent_id", "created_at")
@@ -33,7 +34,7 @@ const listFiles = async (ctx: ToolContext, args: Record<string, unknown>) => {
   }
   const rows = await ctx.db.all(
     from("files")
-      .where(q => q("user_id").equals(ctx.userId))
+      .where(q => q.raw(visibleFileSql(ctx.userId)))
       .where(q => q("deleted_at").isNull())
       .where(q => (folderId === null ? q("folder_id").isNull() : q("folder_id").equals(folderId)))
       .select("id", "name", "mime", "size", "folder_id", "version", "created_at")
@@ -45,9 +46,12 @@ const listFiles = async (ctx: ToolContext, args: Record<string, unknown>) => {
 const readFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const id = Number(args.id ?? args.file_id ?? args.fileId)
   if (!Number.isFinite(id)) return asError("id is required")
-  const maxBytes = Math.min(MAX_INLINE_BYTES, Number(args.max_bytes ?? args.maxBytes ?? MAX_INLINE_BYTES))
+  const requested = Number(args.max_bytes ?? args.maxBytes ?? MAX_INLINE_BYTES)
+  if (!Number.isFinite(requested) || requested <= 0) return asError("max_bytes must be positive")
+  const maxBytes = Math.min(MAX_INLINE_BYTES, requested)
   const access = await fileAccess(ctx.db, ctx.userId, id)
   if (!access) return asError("File not found or no access")
+  if (isScanBlocked(access.file.scan_status)) return asError("File failed malware scan")
   if (access.file.size > maxBytes) {
     return asText({
       id: access.file.id,
@@ -94,7 +98,7 @@ const search = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const [files, folders] = await Promise.all([
     ctx.db.all(
       from("files")
-        .where(p => p("user_id").equals(ctx.userId))
+        .where(p => p.raw(visibleFileSql(ctx.userId)))
         .where(p => p("deleted_at").isNull())
         .where(p => p("name").ilike(pattern))
         .select("id", "name", "mime", "size", "folder_id", "version", "created_at")
@@ -103,7 +107,7 @@ const search = async (ctx: ToolContext, args: Record<string, unknown>) => {
     ),
     ctx.db.all(
       from("folders")
-        .where(p => p("user_id").equals(ctx.userId))
+        .where(p => p.raw(visibleFolderSql(ctx.userId)))
         .where(p => p("deleted_at").isNull())
         .where(p => p("name").ilike(pattern))
         .select("id", "name", "parent_id", "created_at")

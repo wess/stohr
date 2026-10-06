@@ -1,3 +1,4 @@
+import { responseJson } from "../../util/response/index.ts"
 import type { AiDriver, AiMessage, ChatOpts, ChatResult } from "../index.ts"
 
 export type AnthropicConfig = {
@@ -27,6 +28,8 @@ export const createAnthropicDriver = (cfg: AnthropicConfig): AiDriver => {
 
       const res = await fetch(`${base}/v1/messages`, {
         method: "POST",
+        redirect: "error",
+        signal: AbortSignal.timeout(30_000),
         headers: {
           "content-type": "application/json",
           "x-api-key": cfg.apiKey,
@@ -41,10 +44,10 @@ export const createAnthropicDriver = (cfg: AnthropicConfig): AiDriver => {
         }),
       })
       if (!res.ok) {
-        const text = await res.text().catch(() => "")
-        throw new Error(`Anthropic chat failed (${res.status}): ${text.slice(0, 500)}`)
+        await res.body?.cancel().catch(() => {})
+        throw new Error(`Anthropic chat failed (${res.status})`)
       }
-      const data = (await res.json()) as AnthropicResponse
+      const data = (await responseJson(res)) as AnthropicResponse
       const content = data.content
         .filter(b => b.type === "text")
         .map(b => b.text ?? "")

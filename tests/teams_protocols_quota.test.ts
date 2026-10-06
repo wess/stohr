@@ -171,7 +171,7 @@ describe("s3 put", () => {
     const date = amzDate(Date.now())
     const credDate = date.slice(0, 8)
     const payloadHash = sha256OfBytes(bodyBytes)
-    const headers: Record<string, string> = { "x-amz-date": date, "x-amz-content-sha256": payloadHash }
+    const headers: Record<string, string> = { host, "x-amz-date": date, "x-amz-content-sha256": payloadHash }
     const scope = `${credDate}/us-east-1/s3/aws4_request`
     const signature = computeSignature({
       method: "PUT",
@@ -187,11 +187,11 @@ describe("s3 put", () => {
         region: "us-east-1",
         service: "s3",
         scope,
-        signedHeaders: ["x-amz-content-sha256", "x-amz-date"],
+        signedHeaders: ["host", "x-amz-content-sha256", "x-amz-date"],
         signature: "",
       },
     })
-    headers.authorization = `AWS4-HMAC-SHA256 Credential=${creds.accessKey}/${scope}, SignedHeaders=x-amz-content-sha256;x-amz-date, Signature=${signature}`
+    headers.authorization = `AWS4-HMAC-SHA256 Credential=${creds.accessKey}/${scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=${signature}`
     headers["content-type"] = "text/plain"
     const res = await app(makeRequest(path, { method: "PUT", headers, body: bodyBytes, host }))
     return { status: res.status, text: await res.text() }

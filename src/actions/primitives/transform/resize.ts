@@ -1,7 +1,9 @@
 import { from } from "@atlas/db"
 import sharp from "sharp"
+import { clamdConfig } from "../../../scanning/index.ts"
 import { drop, fetchObject, makeKey, put } from "../../../storage/index.ts"
 import { generateImageThumb, isThumbable, thumbKeyFor } from "../../../storage/thumb.ts"
+import { checkActionQuota, finishActionWrite } from "../../quota.ts"
 import type { Primitive } from "../types.ts"
 
 const SUPPORTED_MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"])
@@ -100,14 +102,14 @@ const transformResize: Primitive = {
     if (widthAbs !== undefined) {
       targetWidth = widthAbs
     } else {
-      const meta = await sharp(sourceBytes).metadata()
+      const meta = await sharp(sourceBytes, { limitInputPixels: 40_000_000 }).metadata()
       if (!meta.width || meta.width <= 0) {
         return { kind: "fail", error: "couldn't determine source image width" }
       }
       targetWidth = Math.min(MAX_DIM, Math.max(1, Math.round((meta.width * widthPct) / 100)))
     }
 
-    let pipeline = sharp(sourceBytes).resize({ width: targetWidth, height, fit })
+    let pipeline = sharp(sourceBytes, { limitInputPixels: 40_000_000 }).resize({ width: targetWidth, height, fit })
     let outMime: string
     let outExt: string
 
@@ -136,6 +138,7 @@ const transformResize: Primitive = {
     const outBytes = new Uint8Array(outBuffer)
 
     const newName = swapExtension(file.name, outExt)
+    const quota = await checkActionQuota(ctx.db, ctx.ownerId, outBytes.byteLength)
     const newKey = makeKey(ctx.ownerId, newName)
     await put(ctx.store, newKey, outBytes, outMime)
 
@@ -160,6 +163,9 @@ const transformResize: Primitive = {
         size: file.size,
         storage_key: file.storage_key,
         uploaded_by: ctx.actor.id,
+        scan_status: file.scan_status,
+        scan_signature: file.scan_signature,
+        scanned_at: file.scanned_at,
       }),
     )
     const oldThumb = file.thumb_key
@@ -174,8 +180,12 @@ const transformResize: Primitive = {
           storage_key: newKey,
           thumb_key: newThumbKey,
           version: newVersion,
+          scan_status: clamdConfig() ? "pending" : "skipped",
+          scan_signature: null,
+          scanned_at: null,
         }),
     )
+    await finishActionWrite(ctx.db, ctx.store, ctx.ownerId, quota, outBytes.byteLength, newKey, file, newThumbKey)
     if (oldThumb && oldThumb !== newThumbKey) {
       await Promise.allSettled([drop(ctx.store, oldThumb)])
     }
@@ -194,6 +204,9 @@ const transformResize: Primitive = {
             storage_key: newKey,
             thumb_key: newThumbKey,
             version: newVersion,
+            scan_status: clamdConfig() ? "pending" : "skipped",
+            scan_signature: null,
+            scanned_at: null,
           },
         },
       },

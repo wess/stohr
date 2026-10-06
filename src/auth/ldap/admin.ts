@@ -1,6 +1,7 @@
 import type { Connection } from "@atlas/db"
-import { get, json, parseJson, pipeline, post, put } from "@atlas/server"
+import { get, json, pipeline, post, put } from "@atlas/server"
 import { ownerOnly } from "../../security/owner.ts"
+import { parseJson } from "../../util/json/index.ts"
 import { requireAuth } from "../guard.ts"
 import { authenticateLdap } from "./client.ts"
 import { isLdapReady, type LdapConfig, loadLdapConfig, updateLdapConfig } from "./config.ts"

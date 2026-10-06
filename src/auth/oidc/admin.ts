@@ -1,6 +1,7 @@
 import type { Connection } from "@atlas/db"
-import { get, json, parseJson, pipeline, put } from "@atlas/server"
+import { get, json, pipeline, put } from "@atlas/server"
 import { ownerOnly } from "../../security/owner.ts"
+import { parseJson } from "../../util/json/index.ts"
 import { requireAuth } from "../guard.ts"
 import { loadOidcConfig, type OidcConfig, updateOidcConfig } from "./config.ts"
 

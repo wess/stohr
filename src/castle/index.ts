@@ -9,13 +9,14 @@
 
 import type { Connection } from "@atlas/db"
 import { from } from "@atlas/db"
-import { del, get, json, parseJson, pipeline, post } from "@atlas/server"
+import { del, get, json, pipeline, post } from "@atlas/server"
 import { resolvePendingCollabs } from "../auth/index.ts"
 import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"
 import { revokeAllSessions } from "../security/sessions.ts"
 import { rootOnly } from "../teams/guards.ts"
 import { ROOT_TEAM_ID } from "../teams/resolve.ts"
+import { parseJson } from "../util/json/index.ts"
 import { isEmail, isValidUsername, normalizeUsername } from "../util/username.ts"
 import { requireCastleToken } from "./guard.ts"
 

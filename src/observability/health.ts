@@ -42,15 +42,35 @@ const checkStorage = async (store: StorageHandle): Promise<boolean> => {
   }
 }
 
-export const healthRoutes = (db: Connection, store: StorageHandle) => [
-  get("/healthz", async c => json(c, 200, { status: "alive" })),
+export const healthRoutes = (db: Connection, store: StorageHandle) => {
+  let expires = 0
+  let checks: { database: boolean; storage: boolean } | null = null
+  let pending: Promise<{ database: boolean; storage: boolean }> | null = null
+  const readiness = async () => {
+    if (checks && Date.now() < expires) return checks
+    if (!pending)
+      pending = (async () => {
+        try {
+          const [database, storage] = await Promise.all([checkDb(db), checkStorage(store)])
+          checks = { database, storage }
+          expires = Date.now() + 5000
+          return checks
+        } finally {
+          pending = null
+        }
+      })()
+    return pending
+  }
+  return [
+    get("/healthz", async c => json(c, 200, { status: "alive" })),
 
-  get("/readyz", async c => {
-    const [database, storage] = await Promise.all([checkDb(db), checkStorage(store)])
-    const ready = database && storage
-    return json(c, ready ? 200 : 503, {
-      status: ready ? "ready" : "not_ready",
-      checks: { database, storage },
-    })
-  }),
-]
+    get("/readyz", async c => {
+      const { database, storage } = await readiness()
+      const ready = database && storage
+      return json(c, ready ? 200 : 503, {
+        status: ready ? "ready" : "not_ready",
+        checks: { database, storage },
+      })
+    }),
+  ]
+}

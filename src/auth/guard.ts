@@ -24,7 +24,13 @@ type UserRow = {
   suspended_at?: string | null
 }
 
-type AccountRow = { team_id: number; team_admin: boolean; deleted_at: string | null; suspended_at: string | null }
+type AccountRow = {
+  oauth_epoch: number
+  team_id: number
+  team_admin: boolean
+  deleted_at: string | null
+  suspended_at: string | null
+}
 
 // What every authenticated handler can rely on finding in c.assigns.auth,
 // whichever credential type got it there.
@@ -148,7 +154,14 @@ export const requireAuth =
       payload === null ||
       typeof payload !== "object" ||
       payload.kind !== undefined ||
-      typeof payload.id !== "number" ||
+      !Number.isSafeInteger(payload.id) ||
+      payload.id <= 0 ||
+      typeof payload.exp !== "number" ||
+      !Number.isFinite(payload.exp) ||
+      payload.exp <= Date.now() / 1000 ||
+      typeof payload.iat !== "number" ||
+      !Number.isFinite(payload.iat) ||
+      payload.iat > Date.now() / 1000 + 60 ||
       typeof payload.jti !== "string"
     ) {
       return halt(conn, 401, { error: INVALID_TOKEN_ERROR })
@@ -170,15 +183,17 @@ export const requireAuth =
       // Reject deleted or suspended users even if their access token is
       // still inside its 1h TTL. One PK lookup; cheap relative to the
       // JWT verify above.
-      const u = (await opts.db.one(
-        from("users")
-          .where(q => q("id").equals(payload.id))
-          .select("team_id", "team_admin", "deleted_at", "suspended_at"),
-      )) as AccountRow | null
-      if (!u) {
-        return halt(conn, 403, { error: ACCOUNT_DELETED_ERROR })
-      }
+      const u = (await opts.db.one({
+        text: `SELECT u.team_id, u.team_admin, u.deleted_at, u.suspended_at, u.oauth_epoch
+                FROM users u JOIN oauth_clients oc ON oc.client_id = $2 AND oc.revoked_at IS NULL
+                WHERE u.id = $1`,
+        values: [payload.id, payload.client_id],
+      })) as AccountRow | null
+      if (!u) return halt(conn, 401, { error: INVALID_TOKEN_ERROR })
       if (Number(u.team_id) !== host.team.id) {
+        return halt(conn, 401, { error: INVALID_TOKEN_ERROR })
+      }
+      if ((payload.oauth_epoch ?? 0) !== Number(u.oauth_epoch)) {
         return halt(conn, 401, { error: INVALID_TOKEN_ERROR })
       }
       if (u.deleted_at) {
@@ -206,11 +221,11 @@ export const requireAuth =
       opts.db.one(
         from("users")
           .where(q => q("id").equals(payload.id))
-          .select("team_id", "team_admin", "deleted_at", "suspended_at"),
+          .select("team_id", "team_admin", "deleted_at", "suspended_at", "oauth_epoch"),
       ) as Promise<AccountRow | null>,
     ])
 
-    if (!sess.active) {
+    if (!sess.active || Number(sess.userId) !== payload.id) {
       return halt(conn, 401, { error: "Session revoked. Sign in again." })
     }
     if (account && Number(account.team_id) !== host.team.id) {

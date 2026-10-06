@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto"
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { json, parseJson, pipeline, post } from "@atlas/server"
+import { json, pipeline, post } from "@atlas/server"
 import type { Emailer } from "../email/index.ts"
 import { accountDeletionEmail } from "../email/templates/deletion.ts"
 import { logEvent } from "../security/audit.ts"
@@ -11,6 +11,7 @@ import type { StorageHandle } from "../storage/index.ts"
 import { drop } from "../storage/index.ts"
 import { teamFor } from "../teams/request.ts"
 import { purgeUserUploads } from "../uploads/index.ts"
+import { parseJson } from "../util/json/index.ts"
 import { hashToken } from "./guard.ts"
 
 export const ACCOUNT_DELETION_PREFIX = "stohr_acd_"
@@ -163,32 +164,81 @@ export const deletionRoutes = (db: Connection, secret: string) => {
 }
 
 /**
- * Hard-delete one user: the row goes first (every FK cascades — files,
- * folders, shares, file_versions, sessions, ...), then the blobs that
- * belonged to it are dropped. Storage failures are tolerated; the rows are
- * already gone. Also used by the team purge sweep.
+ * Hard-delete one user, keeping Space content with surviving members.
+ * Personal and abandoned-Space rows go before their blobs. Storage failures
+ * are tolerated after the transaction commits. Also used by the team sweep.
  */
 export const purgeUser = async (db: Connection, store: StorageHandle, id: number): Promise<void> => {
-  const fileKeys = (await db.all(
-    from("files")
-      .where(q => q("user_id").equals(id))
-      .select("storage_key", "thumb_key"),
-  )) as Array<{ storage_key: string; thumb_key: string | null }>
-  const versionKeys = (await db.all(
-    from("file_versions")
-      .join("files", raw("files.id = file_versions.file_id"))
-      .where(q => q("files.user_id").equals(id))
-      .select("file_versions.storage_key"),
-  )) as unknown as Array<{ storage_key: string }>
-
   // staged multipart bytes aren't reachable once the session rows cascade away
   await purgeUserUploads(db, store, id)
+  const { fileKeys, versionKeys } = await db.transaction(async tx => {
+    const spaces = (await tx.execute({
+      text: "SELECT id FROM spaces WHERE owner_id = $1 FOR UPDATE",
+      values: [id],
+    })) as Array<{ id: number }>
+    const abandoned: number[] = []
+    for (const space of spaces) {
+      const next = (await tx.one({
+        text: `SELECT m.user_id FROM space_members m JOIN users u ON u.id = m.user_id
+          WHERE m.space_id = $1 AND m.user_id <> $2 AND u.deleted_at IS NULL
+            AND u.suspended_at IS NULL
+            AND u.team_id = (SELECT team_id FROM users WHERE id = $2)
+          ORDER BY CASE m.role WHEN 'admin' THEN 0 WHEN 'editor' THEN 1 ELSE 2 END, m.id
+          LIMIT 1`,
+        values: [space.id, id],
+      })) as { user_id: number } | null
+      if (!next) {
+        abandoned.push(space.id)
+        continue
+      }
+      await tx.execute(
+        from("spaces")
+          .where(q => q("id").equals(space.id))
+          .update({ owner_id: next.user_id }),
+      )
+      await tx.execute(
+        from("space_members")
+          .where(q => q("space_id").equals(space.id))
+          .where(q => q("user_id").equals(next.user_id))
+          .update({ role: "admin" }),
+      )
+    }
 
-  await db.execute(
-    from("users")
-      .where(q => q("id").equals(id))
-      .del(),
-  )
+    // attribution must not let an account deletion cascade through a team's tree
+    await tx.execute({
+      text: `UPDATE files f SET user_id = s.owner_id FROM folders fo JOIN spaces s ON s.id = fo.space_id
+        WHERE f.folder_id = fo.id AND f.user_id = $1 AND s.owner_id <> $1`,
+      values: [id],
+    })
+    await tx.execute({
+      text: `UPDATE folders fo SET user_id = s.owner_id FROM spaces s
+        WHERE fo.space_id = s.id AND fo.user_id = $1 AND s.owner_id <> $1`,
+      values: [id],
+    })
+    const fileKeys = (await tx.execute({
+      text: `SELECT f.storage_key, f.thumb_key FROM files f LEFT JOIN folders fo ON fo.id = f.folder_id
+        WHERE f.user_id = $1 OR fo.space_id = ANY($2::int[])`,
+      values: [id, `{${abandoned.join(",")}}`],
+    })) as Array<{ storage_key: string; thumb_key: string | null }>
+    const versionKeys = (await tx.execute({
+      text: `SELECT v.storage_key FROM file_versions v JOIN files f ON f.id = v.file_id
+        LEFT JOIN folders fo ON fo.id = f.folder_id
+        WHERE f.user_id = $1 OR fo.space_id = ANY($2::int[])`,
+      values: [id, `{${abandoned.join(",")}}`],
+    })) as Array<{ storage_key: string }>
+    if (abandoned.length)
+      await tx.execute(
+        from("spaces")
+          .where(q => q("id").inList(abandoned))
+          .del(),
+      )
+    await tx.execute(
+      from("users")
+        .where(q => q("id").equals(id))
+        .del(),
+    )
+    return { fileKeys, versionKeys }
+  })
 
   const drops: Array<Promise<unknown>> = []
   for (const f of fileKeys) {

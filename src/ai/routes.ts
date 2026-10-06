@@ -1,9 +1,10 @@
 import type { Connection } from "@atlas/db"
 import { from, raw } from "@atlas/db"
-import { get, json, parseJson, pipeline, post, put } from "@atlas/server"
+import { get, json, pipeline, post, put } from "@atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import { ownerOnly } from "../security/owner.ts"
 import { rootOnly } from "../teams/guards.ts"
+import { parseJson } from "../util/json/index.ts"
 import { type AiHandle, type AiMessage, createAi } from "./index.ts"
 
 const authId = (c: any) => (c.assigns.auth as { id: number }).id

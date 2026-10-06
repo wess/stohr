@@ -1,5 +1,6 @@
 import { from } from "@atlas/db"
 import { canWrite, fileAccess, folderAccess } from "../../permissions/index.ts"
+import { clamdConfig } from "../../scanning/index.ts"
 import { drop, makeKey, put } from "../../storage/index.ts"
 import { quotaAfterWrite, quotaMessage } from "../../uploads/quota.ts"
 import { checkQuota } from "../../usage/index.ts"
@@ -7,7 +8,16 @@ import { asError, asText, type Tool, type ToolContext } from "./index.ts"
 
 const archiveCurrent = async (
   ctx: ToolContext,
-  file: { id: number; version: number; mime: string; size: number; storage_key: string },
+  file: {
+    id: number
+    version: number
+    mime: string
+    size: number
+    storage_key: string
+    scan_status: string
+    scan_signature: string | null
+    scanned_at: string | null
+  },
   uploaderId: number,
 ) => {
   await ctx.db.execute(
@@ -18,6 +28,9 @@ const archiveCurrent = async (
       size: file.size,
       storage_key: file.storage_key,
       uploaded_by: uploaderId,
+      scan_status: file.scan_status,
+      scan_signature: file.scan_signature,
+      scanned_at: file.scanned_at,
     }),
   )
 }
@@ -25,16 +38,18 @@ const archiveCurrent = async (
 const createFolder = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const name = typeof args.name === "string" ? args.name.trim() : ""
   if (!name) return asError("name is required")
-  const parentRaw = args.parent_id ?? args.parentId
+  const parentRaw = args.parent_id !== undefined ? args.parent_id : args.parentId
   const parentId = parentRaw === null || parentRaw === undefined ? null : Number(parentRaw)
+  let spaceId: number | null = null
   if (parentId !== null) {
     const access = await folderAccess(ctx.db, ctx.userId, parentId)
     if (!access) return asError("Parent folder not found or no access")
     if (!canWrite(access.role)) return asError("Read-only access to parent folder")
+    spaceId = access.folder.space_id
   }
   const rows = (await ctx.db.execute(
     from("folders")
-      .insert({ user_id: ctx.userId, parent_id: parentId, name })
+      .insert({ user_id: ctx.userId, parent_id: parentId, name, space_id: spaceId })
       .returning("id", "name", "parent_id", "created_at"),
   )) as Array<{ id: number; name: string; parent_id: number | null; created_at: string }>
   return asText(rows[0])
@@ -43,7 +58,7 @@ const createFolder = async (ctx: ToolContext, args: Record<string, unknown>) => 
 const writeFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const name = typeof args.name === "string" ? args.name.trim() : ""
   if (!name) return asError("name is required")
-  const folderRaw = args.folder_id ?? args.folderId
+  const folderRaw = args.folder_id !== undefined ? args.folder_id : args.folderId
   const folderId = folderRaw === null || folderRaw === undefined ? null : Number(folderRaw)
   const mime = typeof args.mime === "string" && args.mime ? args.mime : "application/octet-stream"
   const encoding = (typeof args.encoding === "string" ? args.encoding : "utf-8").toLowerCase()
@@ -104,6 +119,9 @@ const writeFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
           size: number
           storage_key: string
           thumb_key: string | null
+          scan_status: string
+          scan_signature: string | null
+          scanned_at: string | null
         } | null)
       : ((await ctx.db.one(
           from("files")
@@ -118,6 +136,9 @@ const writeFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
           size: number
           storage_key: string
           thumb_key: string | null
+          scan_status: string
+          scan_signature: string | null
+          scanned_at: string | null
         } | null)
 
   // The pre-check raced with every other write since; the row is written,
@@ -133,27 +154,42 @@ const writeFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
     await ctx.db.execute(
       from("files")
         .where(q => q("id").equals(existing.id))
-        .update({ mime, size: incoming, storage_key: key, thumb_key: null, version: newVersion }),
+        .update({
+          mime,
+          size: incoming,
+          storage_key: key,
+          thumb_key: null,
+          version: newVersion,
+          scan_status: clamdConfig() ? "pending" : "skipped",
+          scan_signature: null,
+          scanned_at: null,
+        }),
     )
     fileId = existing.id
     isNew = false
     undo = async () => {
-      await ctx.db.execute(
-        from("file_versions")
-          .where(q => q("file_id").equals(snapshot.id))
-          .where(q => q("version").equals(snapshot.version))
-          .del(),
-      )
-      await ctx.db.execute(
+      const restored = (await ctx.db.execute(
         from("files")
           .where(q => q("id").equals(snapshot.id))
+          .where(q => q("storage_key").equals(key))
           .update({
             mime: snapshot.mime,
             size: snapshot.size,
             storage_key: snapshot.storage_key,
             thumb_key: snapshot.thumb_key,
             version: snapshot.version,
-          }),
+            scan_status: snapshot.scan_status,
+            scan_signature: snapshot.scan_signature,
+            scanned_at: snapshot.scanned_at,
+          })
+          .returning("id"),
+      )) as Array<{ id: number }>
+      if (!restored.length) return
+      await ctx.db.execute(
+        from("file_versions")
+          .where(q => q("file_id").equals(snapshot.id))
+          .where(q => q("version").equals(snapshot.version))
+          .del(),
       )
       await Promise.allSettled([drop(ctx.store, key)])
     }
@@ -169,18 +205,21 @@ const writeFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
           storage_key: key,
           thumb_key: null,
           version: 1,
+          scan_status: clamdConfig() ? "pending" : "skipped",
         })
         .returning("id"),
     )) as Array<{ id: number }>
     fileId = rows[0]!.id
     isNew = true
     undo = async () => {
-      await ctx.db.execute(
+      const removed = (await ctx.db.execute(
         from("files")
           .where(q => q("id").equals(fileId))
-          .del(),
-      )
-      await Promise.allSettled([drop(ctx.store, key)])
+          .where(q => q("storage_key").equals(key))
+          .del()
+          .returning("id"),
+      )) as Array<{ id: number }>
+      if (removed.length) await Promise.allSettled([drop(ctx.store, key)])
     }
   }
 
@@ -217,7 +256,7 @@ const renameFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
 
 const moveFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const id = Number(args.id ?? args.file_id ?? args.fileId)
-  const folderRaw = args.folder_id ?? args.folderId
+  const folderRaw = args.folder_id !== undefined ? args.folder_id : args.folderId
   if (!Number.isFinite(id)) return asError("id is required")
   if (folderRaw === undefined) return asError("folder_id is required (null for root)")
   const folderId = folderRaw === null ? null : Number(folderRaw)
@@ -228,7 +267,11 @@ const moveFile = async (ctx: ToolContext, args: Record<string, unknown>) => {
     const target = await folderAccess(ctx.db, ctx.userId, folderId)
     if (!target) return asError("Target folder not found")
     if (!canWrite(target.role)) return asError("No write access on target folder")
-    if (target.folder.user_id !== access.file.user_id) return asError("Cannot move file across owners")
+    if ((target.folder.space_id ?? null) !== access.spaceId) return asError("Cannot move file across spaces")
+    if (access.spaceId === null && target.folder.user_id !== access.file.user_id)
+      return asError("Cannot move file across owners")
+  } else if (access.spaceId !== null) {
+    return asError("Cannot move file out of a space")
   } else if (access.role !== "owner") {
     return asError("Only the owner can move a file to the root")
   }
@@ -257,7 +300,7 @@ const renameFolder = async (ctx: ToolContext, args: Record<string, unknown>) => 
 
 const moveFolder = async (ctx: ToolContext, args: Record<string, unknown>) => {
   const id = Number(args.id ?? args.folder_id ?? args.folderId)
-  const parentRaw = args.parent_id ?? args.parentId
+  const parentRaw = args.parent_id !== undefined ? args.parent_id : args.parentId
   if (!Number.isFinite(id)) return asError("id is required")
   if (parentRaw === undefined) return asError("parent_id is required (null for root)")
   const parentId = parentRaw === null ? null : Number(parentRaw)
@@ -267,8 +310,17 @@ const moveFolder = async (ctx: ToolContext, args: Record<string, unknown>) => {
   if (parentId !== null) {
     const target = await folderAccess(ctx.db, ctx.userId, parentId)
     if (!target || target.role !== "owner") return asError("Target parent folder not found or not owned")
-    if (target.folder.user_id !== access.folder.user_id) return asError("Cannot move folder across owners")
+    if ((target.folder.space_id ?? null) !== (access.folder.space_id ?? null))
+      return asError("Cannot move folder across spaces")
+    const ancestors = (await ctx.db.execute({
+      text: `WITH RECURSIVE chain AS (SELECT id, parent_id FROM folders WHERE id = $1 UNION SELECT f.id, f.parent_id FROM folders f JOIN chain c ON f.id = c.parent_id) SELECT id FROM chain WHERE id = $2`,
+      values: [parentId, id],
+    })) as Array<{ id: number }>
+    if (ancestors.length) return asError("Cannot move a folder inside itself")
+    if (access.folder.space_id == null && target.folder.user_id !== access.folder.user_id)
+      return asError("Cannot move folder across owners")
   }
+  if (parentId === null && access.folder.space_id != null) return asError("Cannot move folder out of a space")
   await ctx.db.execute(
     from("folders")
       .where(q => q("id").equals(id))

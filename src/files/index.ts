@@ -7,7 +7,7 @@ import { requireAuth } from "../auth/guard.ts"
 import { dropFederationBlob, fetchFederationBytes, isFederationKey } from "../federation/files.ts"
 import type { FileRow, FolderRow } from "../permissions/index.ts"
 import { canWrite, fileAccess, folderAccess, isOwner, trashedFileAccess, visibleFileSql } from "../permissions/index.ts"
-import { clamdConfig } from "../scanning/index.ts"
+import { clamdConfig, isScanBlocked } from "../scanning/index.ts"
 import { escapeLike } from "../search/parse.ts"
 import { decideInline } from "../security/inline.ts"
 import type { StorageHandle } from "../storage/index.ts"
@@ -29,6 +29,9 @@ const archiveCurrent = async (db: Connection, file: FileRow, uploaderId: number)
       size: file.size,
       storage_key: file.storage_key,
       uploaded_by: uploaderId,
+      scan_status: file.scan_status,
+      scan_signature: file.scan_signature,
+      scanned_at: file.scanned_at,
     }),
   )
 }
@@ -127,7 +130,7 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         const access = await fileAccess(db, userId, id)
         if (!access) return json(c, 404, { error: "File not found" })
         const row = access.file
-        if (row.scan_status === "infected") return json(c, 403, { error: "File failed malware scan" })
+        if (isScanBlocked(row.scan_status)) return json(c, 403, { error: "File has not passed malware scanning" })
 
         const wantInline = new URL(c.request.url).searchParams.get("inline") === "1"
         const { contentType, disposition } = decideInline(row.mime, row.name, wantInline)
@@ -193,6 +196,8 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         const id = Number(c.params.id)
         const access = await fileAccess(db, userId, id)
         if (!access?.file.thumb_key) return json(c, 404, { error: "No thumbnail" })
+        if (isScanBlocked(access.file.scan_status))
+          return json(c, 403, { error: "File has not passed malware scanning" })
 
         const res = await fetchObject(store, access.file.thumb_key)
         if (!res.body) return json(c, 404, { error: "No thumbnail" })
@@ -351,6 +356,9 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
                     storage_key: snapshot.storage_key,
                     thumb_key: snapshot.thumb_key,
                     version: snapshot.version,
+                    scan_status: snapshot.scan_status,
+                    scan_signature: snapshot.scan_signature,
+                    scanned_at: snapshot.scanned_at,
                   }),
               )
               await Promise.allSettled([drop(store, key), ...(thumbKey ? [drop(store, thumbKey)] : [])])
@@ -662,7 +670,15 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
               .where(q => q("id").equals(folderId))
               .where(q => q("deleted_at").isNull()),
           )
-          if (!folder) folderId = null
+          if (!folder) {
+            const parent = await db.one(
+              from("folders")
+                .where(q => q("id").equals(folderId))
+                .select("space_id"),
+            )
+            if (parent?.space_id != null) return json(c, 409, { error: "Restore the Space folder first" })
+            folderId = null
+          }
         }
 
         await db.execute(
@@ -794,18 +810,19 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         if (!access) return json(c, 404, { error: "File not found" })
         const file = access.file
 
-        let meta: { mime: string; size: number; storage_key: string }
+        let meta: { mime: string; size: number; storage_key: string; scan_status: string }
         if (version === file.version) {
-          meta = { mime: file.mime, size: file.size, storage_key: file.storage_key }
+          meta = { mime: file.mime, size: file.size, storage_key: file.storage_key, scan_status: file.scan_status }
         } else {
           const v = (await db.one(
             from("file_versions")
               .where(q => q("file_id").equals(id))
               .where(q => q("version").equals(version)),
-          )) as { mime: string; size: number; storage_key: string } | null
+          )) as { mime: string; size: number; storage_key: string; scan_status: string } | null
           if (!v) return json(c, 404, { error: "Version not found" })
           meta = v
         }
+        if (isScanBlocked(meta.scan_status)) return json(c, 403, { error: "File has not passed malware scanning" })
 
         const res = await fetchObject(store, meta.storage_key)
         if (!res.body) return json(c, 500, { error: "Storage returned empty body" })
@@ -838,7 +855,16 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
           from("file_versions")
             .where(q => q("file_id").equals(id))
             .where(q => q("version").equals(version)),
-        )) as { id: number; version: number; mime: string; size: number; storage_key: string } | null
+        )) as {
+          id: number
+          version: number
+          mime: string
+          size: number
+          storage_key: string
+          scan_status: string
+          scan_signature: string | null
+          scanned_at: string | null
+        } | null
         if (!target) return json(c, 404, { error: "Version not found" })
 
         const oldThumb = file.thumb_key
@@ -848,7 +874,7 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
         // video, etc.) restoring a multi-GB version no longer round-trips
         // the whole payload through API memory.
         let newThumbKey: string | null = null
-        if (isThumbable(target.mime)) {
+        if (isThumbable(target.mime) && Number(target.size) <= THUMB_MAX_BYTES && target.scan_status !== "infected") {
           const restoredRes = await fetchObject(store, target.storage_key)
           const bytes = new Uint8Array(await restoredRes.arrayBuffer())
           const thumb = await generateImageThumb(bytes, target.mime)
@@ -877,9 +903,9 @@ export const fileRoutes = (db: Connection, secret: string, store: StorageHandle)
               storage_key: target.storage_key,
               thumb_key: newThumbKey,
               version: newVersion,
-              scan_status: clamdConfig() ? "pending" : "skipped",
-              scan_signature: null,
-              scanned_at: null,
+              scan_status: target.scan_status === "infected" ? "infected" : clamdConfig() ? "pending" : "skipped",
+              scan_signature: target.scan_status === "infected" ? target.scan_signature : null,
+              scanned_at: target.scan_status === "infected" ? target.scanned_at : null,
             }),
         )
 
