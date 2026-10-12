@@ -52,10 +52,12 @@ export const withTeams =
     if (INFRA_PATHS.has(path)) return fetch(req, server)
 
     const host = effectiveHost(req, cfg.trusted)
-    const parsed = parseHost(host, cfg.rootDomain)
+    const rootHost = host === cfg.rootDomain?.toLowerCase() || host === new URL(cfg.appUrl).hostname.toLowerCase()
+    // the app host may sit under ROOT_DOMAIN (app.stohr.io under stohr.io),
+    // where its label is a reserved slug that parseHost would refuse
+    const parsed = rootHost ? ({ kind: "root" } as const) : parseHost(host, cfg.rootDomain)
     if (parsed.kind === "invalid") return reject(404, "Unknown team")
 
-    const rootHost = host === cfg.rootDomain?.toLowerCase() || host === new URL(cfg.appUrl).hostname.toLowerCase()
     const localHost = host === "localhost" || !host.includes(".") || isIP(host.replace(/^\[|\]$/g, "")) !== 0
     const custom =
       cfg.rootDomain && parsed.kind === "root" && !rootHost && !localHost ? await teamByDomain(db, host) : null

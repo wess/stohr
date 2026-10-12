@@ -191,3 +191,29 @@ describe("withTeams resolution", () => {
     expect(tls.status).toBe(200)
   })
 })
+
+describe("app host under the root domain", () => {
+  // production shape: APP_URL https://app.stohr.io, ROOT_DOMAIN stohr.io.
+  // "app" is a reserved slug, so the app host must be matched before parsing
+  let app: ReturnType<typeof buildApp>
+
+  beforeAll(() => {
+    app = buildApp(db, TEST_SECRET, { rootDomain: ROOT, appUrl: `https://${hostOf("app")}` })
+  })
+  beforeEach(async () => {
+    await truncateAll()
+  })
+
+  test("the app host serves the root team", async () => {
+    const res = await callJson(app, "/setup", { host: hostOf("app") })
+    expect(res.status).toBe(200)
+    expect(res.body.needsSetup).toBe(true)
+  })
+
+  test("teams still resolve beside it and other reserved labels still 404", async () => {
+    const owner = await signupOwner(app)
+    await createTeam(app, owner, "acme")
+    expect((await callJson(app, "/setup", { host: hostOf("acme") })).status).toBe(200)
+    expect((await callJson(app, "/setup", { host: hostOf("www") })).status).toBe(404)
+  })
+})
