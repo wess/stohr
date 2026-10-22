@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { from } from "@atlas/db"
-import { token } from "@atlas/auth"
+import { from } from "@wess/atlas/db/query";
+import * as token from "@wess/atlas/auth/token";
 import { db, truncateAll, TEST_SECRET } from "./setup.ts"
 import { buildApp, callJson } from "./helpers/http.ts"
 

@@ -1,4 +1,4 @@
-import { createStore, download, presign, remove, upload } from "@atlas/storage"
+import { createStore, download, presign, remove, upload } from "@wess/atlas/storage"
 import type { StorageDriver } from "../index.ts"
 
 export type S3Config = {

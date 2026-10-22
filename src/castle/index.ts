@@ -7,9 +7,9 @@
 // the root host only and every lookup stays inside the root team, so a
 // tenant user with a matching email is never touched.
 
-import type { Connection } from "@atlas/db"
-import { from } from "@atlas/db"
-import { del, get, json, pipeline, post } from "@atlas/server"
+import type { Connection } from "@wess/atlas/db/query"
+import { from } from "@wess/atlas/db/query"
+import { del, get, json, pipeline, post } from "@wess/atlas/server"
 import { resolvePendingCollabs } from "../auth/index.ts"
 import { logEvent } from "../security/audit.ts"
 import { clientIp, userAgent } from "../security/ratelimit.ts"

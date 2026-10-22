@@ -3,12 +3,12 @@
 // by sub (so admins renaming their own Castle account remap cleanly).
 
 import { createHash } from "node:crypto"
-import { token } from "@atlas/auth"
-import type { Connection } from "@atlas/db"
-import { from } from "@atlas/db"
-import type { Conn } from "@atlas/server"
-import { get, halt, json } from "@atlas/server"
-import { ensureSsoStateTable, type IdTokenClaims, mountSso, type SsoConfig } from "@atlas/sso"
+import * as token from "@wess/atlas/auth/token"
+import type { Connection } from "@wess/atlas/db/query"
+import { from } from "@wess/atlas/db/query"
+import type { Conn } from "@wess/atlas/server"
+import { get, halt, json } from "@wess/atlas/server"
+import { ensureSsoStateTable, type IdTokenClaims, mountSso, type SsoConfig } from "@wess/atlas/sso"
 import { upsertFromExternal } from "../auth/external.ts"
 import { fetchDiscovery } from "../auth/oidc/discovery.ts"
 import { bindLoginState, clearLoginState, loginStateNonce } from "../auth/state.ts"

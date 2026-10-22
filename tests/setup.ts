@@ -1,7 +1,7 @@
 import { SQL } from "bun"
-import type { Connection } from "@atlas/db"
-import { connect } from "@atlas/db"
-import { migrate } from "@atlas/migrate"
+import type { Connection } from "@wess/atlas/db/query";
+import { connect } from "@wess/atlas/db/postgres";
+import { migrate } from "@wess/atlas/migrate"
 import { clearTeamCache } from "../src/teams/resolve.ts"
 
 const ADMIN_URL = process.env.TEST_ADMIN_URL ?? "postgres://postgres:postgres@localhost:5432/postgres"

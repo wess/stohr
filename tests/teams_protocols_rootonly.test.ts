@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query";
 import type { App } from "./helpers/http.ts"
 import { callJson } from "./helpers/http.ts"
 import { buildProtocolApp, CASTLE_TOKEN } from "./helpers/protocolapp.ts"

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
-import type { Connection } from "@atlas/db"
-import { from, raw } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
+import { from, raw } from "@wess/atlas/db/query"
 import { pubPemToRaw, randomToken, signEd25519, verifyEd25519Raw } from "./keys.ts"
 
 // Invite tokens are signed JWS-like payloads. The wire format is

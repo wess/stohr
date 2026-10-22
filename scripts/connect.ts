@@ -15,7 +15,8 @@
  * It is not encrypted. It carries a secret key and should be treated like one:
  * shown once, pasted, and not committed.
  */
-import { connect, from } from "@atlas/db"
+import { connect } from "@wess/atlas/db/postgres"
+import { from } from "@wess/atlas/db/query"
 import { generateAccessKey, generateSecretKey } from "../src/s3keys/generate.ts"
 import { normalizeUsername } from "../src/util/username.ts"
 

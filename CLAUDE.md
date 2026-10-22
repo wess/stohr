@@ -9,7 +9,7 @@ Repository guidance for agent sessions.
 Bun is the runtime, package manager, and bundler — never use `node`/`npm`.
 
 - `bun install` — install deps
-- `bun run dev` — start both API (`:3000`) and web (`:3001`) via `@atlas/cli` foreman (`src/dev.ts`)
+- `bun run dev` — start both API (`:3000`) and web (`:3001`) via `@wess/atlas/cli` foreman (`src/dev.ts`)
 - `bun run api` — API only, with `--hot`
 - `bun run web` — web only, with `--hot`
 - `bun src/start.ts` — production entry: runs API + web together **without** `--hot` (the `Dockerfile`'s default `CMD`; `src/dev.ts` is the `--hot` equivalent)
@@ -29,22 +29,22 @@ TypeScript + Bun server + React 19 (client) + Postgres + pluggable blob storage 
 
 ### Monorepo shape
 
-Root `package.json` depends on `atlas`, pinned to a release tag (`github:wess/atlas#v0.3.0`); the git package (`@wess/atlas`) vendors every `@atlas/<name>` subpackage under `node_modules/atlas/web/packages/`. `@atlas/<name>` imports in `src/` resolve through `tsconfig.json` `paths` entries — bun reads tsconfig at runtime. To bump atlas, change the tag in `package.json` and run `bun install`; if the release moved its packages (0.3.0 moved them under `web/`), repoint the `paths` too, or every import breaks at runtime. Atlas's per-package reference docs live at `node_modules/atlas/web/packages/<name>/AGENTS.md`; `node_modules/atlas/web/SOUL.md` and `node_modules/atlas/web/llms.txt` are the AI-session entry points (or read them on GitHub at wess/atlas).
+Root `package.json` depends on `atlas`, pinned to a release tag (`versioned Atlas libraries from GitHub releases`); the git package (`@wess/atlas`) vendors every `@wess/atlas/<name>` subpackage under `node_modules/atlas/web/packages/`. `@wess/atlas/<name>` imports in `src/` resolve through `tsconfig.json` `paths` entries — bun reads tsconfig at runtime. To bump atlas, change the tag in `package.json` and run `bun install`; if the release moved its packages (0.3.0 moved them under `web/`), repoint the `paths` too, or every import breaks at runtime. Atlas's per-package reference docs live at `node_modules/atlas/web/packages/<name>/AGENTS.md`; `node_modules/atlas/web/SOUL.md` and `node_modules/atlas/web/llms.txt` are the AI-session entry points (or read them on GitHub at wess/atlas).
 
 ### Request pipeline
 
 `src/server.ts` is the composition root. It:
-1. Builds a typed config via `@atlas/config`'s `defineConfig` + `env(...)` helpers
-2. Opens a Postgres `Connection` via `@atlas/db#connect`
+1. Builds a typed config via `@wess/atlas/config`'s `defineConfig` + `env(...)` helpers
+2. Opens a Postgres `Connection` via `@wess/atlas/db#connect`
 3. Builds a `StorageHandle` via `src/storage/index.ts#createStorage` — picks a driver from `STORAGE_DRIVER` (`s3` or `local`)
 4. Builds an emailer via `src/email/index.ts#createEmailer`
-5. Runs migrations from `./migrations` via `@atlas/migrate#migrate.up`
-6. Registers routes from ~58 feature-module factories (~242 routes) into the `@atlas/server` router
+5. Runs migrations from `./migrations` via `@wess/atlas/migrate#migrate.up`
+6. Registers routes from ~58 feature-module factories (~242 routes) into the `@wess/atlas/server` router
 7. Starts background sweeps on `setInterval`, then `Bun.serve` wrapped in `withSecurityHeaders`
 
 Boot order matters: `SECRET` is validated **before** the DB connection and migrations, so a misconfigured production boot exits without touching the schema. Don't move it back down.
 
-`connect()` is passed an explicit `pool` (`DB_POOL`, default 20). `@atlas/db` defaults to 5, which is a throughput ceiling — every authenticated request costs 2-3 queries and all the sweeps share the pool.
+`connect()` is passed an explicit `pool` (`DB_POOL`, default 20). `@wess/atlas/db` defaults to 5, which is a throughput ceiling — every authenticated request costs 2-3 queries and all the sweeps share the pool.
 
 **Every background sweep is registered in `src/server.ts`** and wrapped in `guardedSweep` (skips a tick if the previous run is still going, logs failures). Sweeps must not schedule themselves from inside a route factory — `sessionRoutes` and `shareRoutes` used to, which hid them from the composition root, skipped the overlap guard, and started timers in any test that merely built the route table. Boot sweeps are staggered 750ms apart so startup doesn't contend for the whole pool at once.
 
@@ -58,7 +58,7 @@ Handler convention:
 - `pipeline(requireAuth({ secret, db }))` produces a guard; add `parseJson` or `parseMultipart` for bodies. `requireAuth` accepts `{ secret, db, scope?, noOAuth? }` and authenticates three credential types: session JWTs (checked against the `sessions` table via `jti`), PATs (`stohr_pat_…`, SHA-256 hashed in `apps`), and OAuth access tokens. Routes that mint further credentials pass `noOAuth: true`; scoped OAuth routes pass `scope`.
 - `authId(c)` reads `c.assigns.auth.id` — every module redefines this one-liner; `requireAuth` is what populates `c.assigns.auth`.
 - Routes return `json(c, status, body)`; binary downloads use `stream(c, 200, body)` with `putHeader` to set content-type / content-disposition / content-length
-- DB queries use `@atlas/db`'s `from("table").where(q => q("col").equals(x))...` fluent builder; use `raw("NOW()")` when you need literal SQL
+- DB queries use `@wess/atlas/db`'s `from("table").where(q => q("col").equals(x))...` fluent builder; use `raw("NOW()")` when you need literal SQL
 
 API query params and JSON bodies accept both `snake_case` and `camelCase` (e.g. `folder_id` / `folderId`, `parent_id` / `parentId`). When adding new params, keep this dual-form pattern.
 
@@ -66,7 +66,7 @@ API query params and JSON bodies accept both `snake_case` and `camelCase` (e.g. 
 
 ### Data model
 
-Schema lives in two places: `src/schema/index.ts` (TS schema via `@atlas/db` `defineSchema`) **and** `migrations/<seq>_<name>/up.sql` + `down.sql` (hand-written SQL). Migrations are the source of truth at runtime — the TS schema is not auto-synced. When changing the DB, update both, and add a new numbered migration directory (never edit an applied one).
+Schema lives in two places: `src/schema/index.ts` (TS schema via `@wess/atlas/db` `defineSchema`) **and** `migrations/<seq>_<name>/up.sql` + `down.sql` (hand-written SQL). Migrations are the source of truth at runtime — the TS schema is not auto-synced. When changing the DB, update both, and add a new numbered migration directory (never edit an applied one).
 
 ~40 tables across 55 migrations. The core blob model is `users` → `folders` (self-referential `parent_id` for nesting) → `files` → `file_versions`, plus `shares`. The rest back specific features: `collaborations`, `invites`, `apps` (PATs), `s3_access_keys`, `oauth_clients` / `oauth_authorization_codes` / `oauth_device_codes` / `oauth_refresh_tokens`, `sessions`, `webauthn_credentials` / `webauthn_challenges`, `password_resets`, `folder_actions` / `folder_action_runs` / `user_actions`, `rate_limits`, `audit_events`, `contact_messages`. `src/schema/index.ts` is the quickest way to see every column.
 
@@ -79,7 +79,7 @@ File versioning: uploading a file with the same `name` into the same folder arch
 `src/storage/` is the only place blob backends are touched. Layout:
 
 - `src/storage/index.ts` — defines the `StorageDriver` interface (`put / get / drop`), the discriminated `StorageConfig`, and `createStorage(config)` dispatcher. Re-exports `put`, `fetchObject`, `drop`, `makeKey(userId, name)` for consumers — no consumer should ever import a driver directly.
-- `src/storage/s3/index.ts` — S3-compatible driver (wraps `@atlas/storage`).
+- `src/storage/s3/index.ts` — S3-compatible driver (wraps `@wess/atlas/storage`).
 - `src/storage/local/index.ts` — disk-backed driver (single host; uses `Bun.write` / `Bun.file` under `STORAGE_LOCAL_DIR`, with a path-traversal guard).
 - `src/storage/thumb.ts` — `sharp`-based image thumbnail helper invoked from the upload handler; thumbnails are stored as their own keys (`files.thumb_key`).
 

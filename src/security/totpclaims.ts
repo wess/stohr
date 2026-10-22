@@ -1,4 +1,4 @@
-import type { Connection } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
 import { verifyTotpStep } from "./totp.ts"
 
 export const claimTotp = async (db: Connection, userId: number, secret: string, code: string): Promise<boolean> => {

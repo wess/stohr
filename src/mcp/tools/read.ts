@@ -1,4 +1,4 @@
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query"
 import { fileAccess, folderAccess, visibleFileSql, visibleFolderSql } from "../../permissions/index.ts"
 import { isScanBlocked } from "../../scanning/index.ts"
 import { escapeLike } from "../../search/parse.ts"

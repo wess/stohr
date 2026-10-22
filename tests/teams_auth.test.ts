@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query";
 import { buildApp, callJson, resetSentEmails, sentEmails } from "./helpers/http.ts"
 import { addMember, createTeam, hostOf, login, ROOT, setPassword, signupOwner, teamWithAdmin } from "./helpers/teams.ts"
 import { db, TEST_SECRET, truncateAll } from "./setup.ts"

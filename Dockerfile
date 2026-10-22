@@ -7,7 +7,7 @@
 # so you only need to publish :3001. Migrations run automatically on API
 # startup.
 #
-# BUILD — atlas is a normal bun dep (github:wess/atlas), pulled by
+# BUILD — versioned Atlas libraries are pulled by
 # `bun install` inside the deps stage:
 #   docker build -t stohr .
 #
@@ -28,16 +28,13 @@
 # ─────────────────────────────────────────────────────────────────────────
 
 # ---- deps: resolve + install into its own cached layer ------------------
-FROM oven/bun:1-alpine AS deps
+FROM oven/bun:1.4.4-alpine AS deps
 WORKDIR /app
-# atlas is fetched via `bun install` from github:wess/atlas — needs git in
-# the image. Alpine's bun base lacks it.
-RUN apk add --no-cache git
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile --production
+RUN bun install --frozen-lockfile --production --omit=peer
 
 # ---- runtime ------------------------------------------------------------
-FROM oven/bun:1-alpine AS runtime
+FROM oven/bun:1.4.4-alpine AS runtime
 WORKDIR /app
 
 # poppler-utils provides pdftoppm (PDF thumbnails) and pdftotext (content

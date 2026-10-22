@@ -1,9 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query";
 import { db, truncateAll, TEST_SECRET } from "./setup.ts"
 import { buildApp, callJson } from "./helpers/http.ts"
 import { generateBackupCodes, generateSecret, totpAt } from "../src/security/totp.ts"
-import { hash } from "@atlas/auth"
+import { hash } from "@wess/atlas/auth/password";
 
 let app: ReturnType<typeof buildApp>
 

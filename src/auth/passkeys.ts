@@ -1,13 +1,13 @@
-import type { Connection } from "@atlas/db"
-import { from, raw } from "@atlas/db"
-import { del, get, json, patch, pipeline, post } from "@atlas/server"
-import type { AuthenticatorTransportFuture } from "@simplewebauthn/server"
+import type { AuthenticatorTransport } from "@simplewebauthn/server"
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from "@simplewebauthn/server"
+import type { Connection } from "@wess/atlas/db/query"
+import { from, raw } from "@wess/atlas/db/query"
+import { del, get, json, patch, pipeline, post } from "@wess/atlas/server"
 import { logEvent } from "../security/audit.ts"
 import { checkRate, clientIp, userAgent } from "../security/ratelimit.ts"
 import { issueSession, revokeAllSessions } from "../security/sessions.ts"
@@ -59,10 +59,10 @@ const b64ToBytes = (s: string) => new Uint8Array(Buffer.from(s, "base64url")).sl
 const bytesToB64 = (b: Uint8Array): string => Buffer.from(b).toString("base64url")
 const userIdToHandle = (userId: number) => new Uint8Array(Buffer.from(`stohr-user-${userId}`)).slice()
 
-const parseTransports = (raw: string): AuthenticatorTransportFuture[] => {
+const parseTransports = (raw: string): AuthenticatorTransport[] => {
   try {
     const v = JSON.parse(raw || "[]")
-    return Array.isArray(v) ? (v as AuthenticatorTransportFuture[]) : []
+    return Array.isArray(v) ? (v as AuthenticatorTransport[]) : []
   } catch {
     return []
   }
@@ -214,7 +214,7 @@ export const passkeyRoutes = (db: Connection, secret: string, rp: RpConfig) => {
 
         const info = verification.registrationInfo
         const transports = Array.isArray(response?.response?.transports)
-          ? (response.response.transports as AuthenticatorTransportFuture[])
+          ? (response.response.transports as AuthenticatorTransport[])
           : []
         const credId = info.credential.id
         const publicKeyB64 = bytesToB64(info.credential.publicKey)

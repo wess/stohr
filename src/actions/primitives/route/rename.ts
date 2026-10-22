@@ -1,4 +1,4 @@
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query"
 import type { Primitive } from "../types.ts"
 import { expandTemplate } from "../util/template.ts"
 

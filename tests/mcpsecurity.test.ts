@@ -1,4 +1,4 @@
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query";
 import { beforeEach, expect, test } from "bun:test"
 import { buildToolset, type ToolContext } from "../src/mcp/tools/index.ts"
 import { checkActionQuota, finishActionWrite } from "../src/actions/quota.ts"

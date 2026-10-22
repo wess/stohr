@@ -20,7 +20,8 @@
  * The API caches slug lookups for 30s (misses included), so a change made
  * here can take that long to show on the team's host.
  */
-import { connect, from, raw } from "@atlas/db"
+import { connect } from "@wess/atlas/db/postgres"
+import { from, raw } from "@wess/atlas/db/query"
 import type { Emailer } from "../src/email/index.ts"
 import { createEmailer } from "../src/email/index.ts"
 import { computeTeamUsage, countTeamUsers } from "../src/teams/members.ts"

@@ -1,7 +1,7 @@
-import { defineConfig, env } from "@atlas/config"
-import { connect } from "@atlas/db"
-import { migrate } from "@atlas/migrate"
-import { router } from "@atlas/server"
+import { defineConfig, env } from "@wess/atlas/config"
+import { connect } from "@wess/atlas/db/postgres"
+import { migrate } from "@wess/atlas/migrate"
+import { router } from "@wess/atlas/server"
 import { actionRoutes } from "./actions/index.ts"
 import { userActionRoutes } from "./actions/user/index.ts"
 import { activityRoutes } from "./activity/index.ts"
@@ -133,8 +133,8 @@ const config = defineConfig({
   rpId: env("RP_ID", { default: "" }),
   rpName: env("RP_NAME", { default: "Stohr" }),
   rpOrigin: env("RP_ORIGIN", { default: "http://localhost:3001" }),
-  // @atlas/storage buffers the upload body in API memory to compute the
-  // AWS SigV4 payload hash, so size this cap for concurrent uploads.
+  // storage hashes incrementally; one-shot streams spool to private temporary
+  // files, so keep this cap deliberate for concurrent disk use.
   // streaming through the API must retain permission and quota checks.
   maxUploadBytes: env("MAX_UPLOAD_BYTES", { parse: Number, default: String(1024 * 1024 * 1024) }),
   // Opt-in M2M token for Castle (single-node homelab control plane). When

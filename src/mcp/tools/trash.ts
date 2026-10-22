@@ -1,4 +1,4 @@
-import { from, raw } from "@atlas/db"
+import { from, raw } from "@wess/atlas/db/query"
 import { canWrite, fileAccess, folderAccess, trashedFileAccess, trashedFolderAccess } from "../../permissions/index.ts"
 import { asError, asText, type Tool, type ToolContext } from "./index.ts"
 

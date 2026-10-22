@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { encodeCBOR } from "@levischuck/tiny-cbor"
-import { from } from "@atlas/db"
-import { router } from "@atlas/server"
+import { from } from "@wess/atlas/db/query";
+import { router } from "@wess/atlas/server"
 import { db, truncateAll, TEST_SECRET } from "./setup.ts"
 import { buildApp, callJson } from "./helpers/http.ts"
 import { passkeyRoutes } from "../src/auth/passkeys.ts"

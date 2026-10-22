@@ -1,5 +1,5 @@
-import type { Connection } from "@atlas/db"
-import { from, raw } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
+import { from, raw } from "@wess/atlas/db/query"
 import { APP_TOKEN_PREFIX, hashToken } from "../auth/guard.ts"
 
 // WebDAV clients (macOS Finder, Windows File Explorer, RFC-compliant

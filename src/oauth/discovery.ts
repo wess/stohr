@@ -1,4 +1,4 @@
-import { get, json } from "@atlas/server"
+import { get, json } from "@wess/atlas/server"
 import { requestBaseUrl } from "../teams/request.ts"
 import { SUPPORTED_SCOPES } from "./helpers.ts"
 

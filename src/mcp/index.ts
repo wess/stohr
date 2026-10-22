@@ -1,5 +1,5 @@
-import type { Connection } from "@atlas/db"
-import { get, json, pipeline, post } from "@atlas/server"
+import type { Connection } from "@wess/atlas/db/query"
+import { get, json, pipeline, post } from "@wess/atlas/server"
 import type { TeamClaims } from "../auth/guard.ts"
 import { requireAuth } from "../auth/guard.ts"
 import { parseScope, type Scope } from "../oauth/helpers.ts"

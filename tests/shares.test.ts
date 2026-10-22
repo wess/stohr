@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { from, raw } from "@atlas/db"
-import { hash } from "@atlas/auth"
+import { from, raw } from "@wess/atlas/db/query";
+import { hash } from "@wess/atlas/auth/password";
 import { db, truncateAll, TEST_SECRET } from "./setup.ts"
 import { buildApp, callJson } from "./helpers/http.ts"
 

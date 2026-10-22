@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
-import { token } from "@atlas/auth"
-import type { Connection } from "@atlas/db"
-import { from, raw } from "@atlas/db"
+import * as token from "@wess/atlas/auth/token"
+import type { Connection } from "@wess/atlas/db/query"
+import { from, raw } from "@wess/atlas/db/query"
 
 const SESSION_TTL_SECONDS = 86400 * 7
 

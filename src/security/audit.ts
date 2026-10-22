@@ -1,4 +1,4 @@
-import type { Connection } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
 
 export type AuditEvent = {
   userId?: number | null

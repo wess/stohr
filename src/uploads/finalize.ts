@@ -3,8 +3,8 @@
 // POST /files handler runs after put() — see src/files/index.ts. The shared
 // helpers there (archiveCurrent, the version branch) are not exported, so the
 // minimal equivalent is reproduced here.
-import type { Connection } from "@atlas/db"
-import { from } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
+import { from } from "@wess/atlas/db/query"
 import { clamdConfig } from "../scanning/index.ts"
 import type { StorageHandle } from "../storage/index.ts"
 import { drop, put } from "../storage/index.ts"

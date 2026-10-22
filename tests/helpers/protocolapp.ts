@@ -1,5 +1,5 @@
-import type { Connection } from "@atlas/db"
-import { router } from "@atlas/server"
+import type { Connection } from "@wess/atlas/db/query";
+import { router } from "@wess/atlas/server"
 import { actionRoutes } from "../../src/actions/index.ts"
 import { aiRoutes } from "../../src/ai/routes.ts"
 import { appRoutes } from "../../src/apps/index.ts"

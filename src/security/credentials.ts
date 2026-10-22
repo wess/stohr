@@ -1,4 +1,4 @@
-import type { Connection } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
 
 // call under the user's row lock in the credential-change transaction
 export const revokeCredentials = async (db: Connection, userId: number): Promise<void> => {

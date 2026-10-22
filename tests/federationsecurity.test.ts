@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
-import { from } from "@atlas/db"
-import { router } from "@atlas/server"
+import { from } from "@wess/atlas/db/query";
+import { router } from "@wess/atlas/server"
 import { beforeEach, expect, test } from "bun:test"
 import { authRoutes } from "../src/auth/index.ts"
 import { federationFilesRoutes } from "../src/federation/files.ts"

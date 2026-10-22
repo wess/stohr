@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { from, raw } from "@atlas/db"
+import { from, raw } from "@wess/atlas/db/query";
 import { db, truncateAll, TEST_SECRET } from "./setup.ts"
 import { buildApp, callJson } from "./helpers/http.ts"
 import { extractText } from "../src/search/content/extract.ts"

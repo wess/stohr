@@ -1,4 +1,4 @@
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query"
 import { canWrite, fileAccess, folderAccess } from "../../permissions/index.ts"
 import { clamdConfig } from "../../scanning/index.ts"
 import { drop, makeKey, put } from "../../storage/index.ts"

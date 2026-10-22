@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto"
-import type { Connection } from "@atlas/db"
-import { from } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
+import { from } from "@wess/atlas/db/query"
 import { checkUrl, type SafeUrlOpts, safeFetch, type UrlCheck } from "../util/safeurl/index.ts"
 
 // Outbound webhook delivery. Fire-and-forget: we do not block the

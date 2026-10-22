@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query";
 import { computeSignature, sha256OfBytes } from "../src/s3/sigv4.ts"
 import { finalizeUpload } from "../src/uploads/finalize.ts"
 import type { App } from "./helpers/http.ts"

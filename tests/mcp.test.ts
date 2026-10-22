@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query";
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import { db, truncateAll, TEST_SECRET } from "./setup.ts"
 import { buildApp, callJson } from "./helpers/http.ts"

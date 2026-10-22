@@ -1,5 +1,5 @@
-import type { Connection } from "@atlas/db"
-import { from } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
+import { from } from "@wess/atlas/db/query"
 
 // WebDAV requests come in as URL paths like /webdav/photos/2024/IMG_1234.jpg.
 // We resolve this to a tree-walked folder ID + optional file row by

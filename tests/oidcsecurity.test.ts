@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { router, get, json } from "@atlas/server"
+import { router, get, json } from "@wess/atlas/server"
 import { db, truncateAll, TEST_SECRET } from "./setup.ts"
 import { buildApp, callJson } from "./helpers/http.ts"
 import { clearJwksCache, verifyIdToken } from "../src/auth/oidc/jwks.ts"

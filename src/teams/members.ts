@@ -2,8 +2,8 @@
 // user (search, collaborators, messages, admin lists) must stay inside the
 // caller's team, and these are the checks to do it with.
 
-import type { Connection } from "@atlas/db"
-import { from, raw } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
+import { from, raw } from "@wess/atlas/db/query"
 import { ROOT_TEAM_ID } from "./resolve.ts"
 
 export const teamIdOf = async (db: Connection, userId: number): Promise<number | null> => {

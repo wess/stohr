@@ -4,7 +4,7 @@
 // reads it back from inside pipes and handlers.
 
 import { isIP } from "node:net"
-import type { Connection } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
 import type { Cidr } from "../security/proxies.ts"
 import { effectiveHost } from "./host.ts"
 import type { Team } from "./resolve.ts"

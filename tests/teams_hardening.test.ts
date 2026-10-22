@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query";
 import { countActiveTeamAdmins } from "../src/teams/members.ts"
 import { teamBySlug } from "../src/teams/resolve.ts"
 import { parseHost } from "../src/teams/slug.ts"

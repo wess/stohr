@@ -7,9 +7,9 @@
 // finalize concatenates them into the final key and drops the parts.
 
 import { randomBytes } from "node:crypto"
-import type { Connection } from "@atlas/db"
-import { from, raw } from "@atlas/db"
-import { del, get, json, pipeline, post } from "@atlas/server"
+import type { Connection } from "@wess/atlas/db/query"
+import { from, raw } from "@wess/atlas/db/query"
+import { del, get, json, pipeline, post } from "@wess/atlas/server"
 import { requireAuth } from "../auth/guard.ts"
 import type { FolderRow } from "../permissions/index.ts"
 import { canWrite, folderAccess } from "../permissions/index.ts"
