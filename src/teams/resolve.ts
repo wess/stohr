@@ -3,8 +3,8 @@
 // certificate probe from Caddy) must not turn into a query per hit. Team
 // writes clear the cache; the ttl bounds staleness across api replicas.
 
-import type { Connection } from "@atlas/db"
-import { from } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
+import { from } from "@wess/atlas/db/query"
 import { isReservedSlug } from "./slug.ts"
 
 export const ROOT_TEAM_ID = 1

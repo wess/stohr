@@ -1,4 +1,4 @@
-import { column, defineSchema } from "@atlas/db"
+import { column, defineSchema } from "@wess/atlas/db/query"
 
 // A team is a hard tenant boundary reached on its own subdomain. Team 1 is
 // the root team: the owner's own team and the control plane for the rest.

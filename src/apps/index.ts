@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto"
-import type { Connection } from "@atlas/db"
-import { from } from "@atlas/db"
-import { del, get, json, pipeline, post } from "@atlas/server"
+import type { Connection } from "@wess/atlas/db/query"
+import { from } from "@wess/atlas/db/query"
+import { del, get, json, pipeline, post } from "@wess/atlas/server"
 import { APP_TOKEN_PREFIX, hashToken, requireAuth } from "../auth/guard.ts"
 import { parseJson } from "../util/json/index.ts"
 

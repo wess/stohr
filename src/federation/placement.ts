@@ -1,5 +1,5 @@
-import type { Connection } from "@atlas/db"
-import { from } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
+import { from } from "@wess/atlas/db/query"
 import { getInstanceKeys } from "./keys.ts"
 import type { MemberRow } from "./membership.ts"
 

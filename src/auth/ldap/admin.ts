@@ -1,5 +1,5 @@
-import type { Connection } from "@atlas/db"
-import { get, json, pipeline, post, put } from "@atlas/server"
+import type { Connection } from "@wess/atlas/db/query"
+import { get, json, pipeline, post, put } from "@wess/atlas/server"
 import { ownerOnly } from "../../security/owner.ts"
 import { parseJson } from "../../util/json/index.ts"
 import { requireAuth } from "../guard.ts"

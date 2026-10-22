@@ -1,5 +1,5 @@
-import type { Connection } from "@atlas/db"
-import { from } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
+import { from } from "@wess/atlas/db/query"
 import { emit } from "../notifications/emit.ts"
 
 // Send a system message to a user. Used for welcome notes, account

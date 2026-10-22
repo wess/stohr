@@ -2,10 +2,10 @@
 // equivalents with the team pinned by the request host rather than chosen
 // by the caller.
 
-import type { Connection } from "@atlas/db"
-import { from, raw } from "@atlas/db"
-import type { Conn } from "@atlas/server"
-import { del, get, json, patch, pipeline, post } from "@atlas/server"
+import type { Connection } from "@wess/atlas/db/query"
+import { from, raw } from "@wess/atlas/db/query"
+import type { Conn } from "@wess/atlas/server"
+import { del, get, json, patch, pipeline, post } from "@wess/atlas/server"
 import { identityConflict, identityRate, TEAM_SCOPE, userAdminHandlers } from "../admin/users.ts"
 import { purgeUser } from "../auth/deletion.ts"
 import { requireAuth } from "../auth/guard.ts"

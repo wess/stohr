@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { createConn, get, json, pipeline, post, router } from "@atlas/server"
+import { createConn, get, json, pipeline, post, router } from "@wess/atlas/server"
 import { healthRoutes } from "../src/observability/health.ts"
 import { recordRequest, renderMetrics } from "../src/observability/metrics.ts"
 import { withSecurityHeaders } from "../src/security/headers.ts"

@@ -1,5 +1,5 @@
-import type { Connection } from "@atlas/db"
-import { get, json, pipeline, post } from "@atlas/server"
+import type { Connection } from "@wess/atlas/db/query"
+import { get, json, pipeline, post } from "@wess/atlas/server"
 import { logEvent } from "../../security/audit.ts"
 import { checkRate, clientIp, userAgent } from "../../security/ratelimit.ts"
 import { issueSession } from "../../security/sessions.ts"

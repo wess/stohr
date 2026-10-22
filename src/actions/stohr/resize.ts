@@ -1,4 +1,4 @@
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query"
 import sharp from "sharp"
 import { clamdConfig } from "../../scanning/index.ts"
 import { drop, fetchObject, makeKey, put } from "../../storage/index.ts"

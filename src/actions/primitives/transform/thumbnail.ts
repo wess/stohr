@@ -1,4 +1,4 @@
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query"
 import sharp from "sharp"
 import { drop, fetchObject, makeKey, put } from "../../../storage/index.ts"
 import { checkActionQuota, finishActionWrite } from "../../quota.ts"

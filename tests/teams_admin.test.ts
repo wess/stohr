@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { from, raw } from "@atlas/db"
+import { from, raw } from "@wess/atlas/db/query";
 import { sweepDeletedTeams } from "../src/teams/admin.ts"
 import { buildApp, callJson, fakeStore } from "./helpers/http.ts"
 import { callMultipart } from "./helpers/multipart.ts"

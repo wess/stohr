@@ -9,8 +9,8 @@
 //                   needs: Postgres (SELECT 1) and the blob backend (probe).
 //                   200 {status:"ready",checks:{…}} when all pass, else 503.
 
-import type { Connection } from "@atlas/db"
-import { get, json } from "@atlas/server"
+import type { Connection } from "@wess/atlas/db/query"
+import { get, json } from "@wess/atlas/server"
 import type { StorageHandle } from "../storage/index.ts"
 
 const checkDb = async (db: Connection): Promise<boolean> => {

@@ -14,7 +14,7 @@ A high-level walk-through of what's running and how it fits together.
                 └────────┬───────┘
                          │ /api/*
                 ┌────────▼───────┐
-                │   api :3000    │  Bun + @atlas/server (router), all routes
+                │   api :3000    │  Bun + @wess/atlas/server (router), all routes
                 └────┬───────┬───┘
                      │       │
             ┌────────▼───┐  ┌▼────────────┐
@@ -33,7 +33,7 @@ src/
   server.ts             — composition root, Bun.serve + atlas router
   start.ts              — production entry: runs the API + web together (the Docker image's CMD)
   dev.ts                — local dev entry: API + web with --hot
-  schema/index.ts       — TypeScript schema mirror for @atlas/db
+  schema/index.ts       — TypeScript schema mirror for @wess/atlas/db
   auth/
     index.ts            — signup / login / MFA challenge
     guard.ts            — requireAuth pipeline guard (JWT, PAT, OAuth + scope derivation)
@@ -103,7 +103,7 @@ src/
     limitbody/index.ts  — bounded request bodies, preserves peer/team metadata
     …                   — paging, token, username, and other shared helpers
   web/                  — single-file React SPA + serve.ts proxy
-migrations/             — hand-written SQL, applied at API startup via @atlas/migrate
+migrations/             — hand-written SQL, applied at API startup via @wess/atlas/migrate
 scripts/deploy/         — DigitalOcean provisioning automation
 sdks/                   — official client libraries (TS, Dart, Swift, Kotlin)
 apps/                   — native clients (desktop menu-bar, mobile)
@@ -112,7 +112,7 @@ docs/                   — what you're reading
 
 ## Request pipeline
 
-`@atlas/server` uses **pipes** — small composable functions over a `Conn`. A typical handler:
+`@wess/atlas/server` uses **pipes** — small composable functions over a `Conn`. A typical handler:
 
 ```ts
 const guard = pipeline(requireAuth({ secret, db }))
@@ -164,7 +164,7 @@ Audit events (`audit_events` table) are emitted from auth, MFA, sessions, passwo
 
 `src/storage/index.ts` defines a small `StorageDriver` interface (`put / get / drop`) and a `createStorage(config)` dispatcher. Two drivers ship today:
 
-- **`s3`** — wraps `@atlas/storage`; works against AWS S3, DigitalOcean Spaces, Cloudflare R2, MinIO, RustFS, Backblaze B2, or anything else that speaks SigV4.
+- **`s3`** — wraps `@wess/atlas/storage`; works against AWS S3, DigitalOcean Spaces, Cloudflare R2, MinIO, RustFS, Backblaze B2, or anything else that speaks SigV4.
 - **`local`** — writes blobs to disk under `STORAGE_LOCAL_DIR` using `Bun.write` / `Bun.file`. Single-host only; share the directory across replicas (NFS / EFS) if you need to.
 
 `STORAGE_DRIVER` env picks one at startup. Adding a new backend is one new file in `src/storage/<name>/index.ts` and a case in the dispatcher — every consumer keeps calling the same `put` / `fetchObject` / `drop` re-exports.

@@ -8,8 +8,8 @@ import {
   generateKeyPairSync,
   randomBytes,
 } from "node:crypto"
-import type { Connection } from "@atlas/db"
-import { from } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
+import { from } from "@wess/atlas/db/query"
 
 // Two keypairs live per instance: Ed25519 signs peer-to-peer requests and
 // invite tokens; X25519 is used for ECDH so the introducer can encrypt the

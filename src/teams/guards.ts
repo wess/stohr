@@ -1,7 +1,7 @@
-import type { Connection } from "@atlas/db"
-import { from } from "@atlas/db"
-import type { Conn, Route } from "@atlas/server"
-import { halt } from "@atlas/server"
+import type { Connection } from "@wess/atlas/db/query"
+import { from } from "@wess/atlas/db/query"
+import type { Conn, Route } from "@wess/atlas/server"
+import { halt } from "@wess/atlas/server"
 import { teamFor } from "./request.ts"
 import { ROOT_TEAM_ID } from "./resolve.ts"
 

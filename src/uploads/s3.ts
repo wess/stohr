@@ -7,7 +7,7 @@
 // put/get/drop, so it can't drive multipart. We rebuild the S3 store config
 // from the same env vars src/server.ts reads to construct the driver, then
 // sign raw requests against it.
-import { signRequest } from "atlas/packages/storage/signing/index.ts"
+import { signRequest } from "@wess/atlas/storage/signing"
 
 export type S3Store = {
   endpoint: string

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { router } from "@atlas/server"
+import { router } from "@wess/atlas/server"
 import { authRoutes } from "../src/auth/index.ts"
 import { webhookRoutes } from "../src/webhooks/index.ts"
 import { callJson } from "./helpers/http.ts"

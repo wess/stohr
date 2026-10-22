@@ -1,5 +1,5 @@
-import type { Connection } from "@atlas/db"
-import { from } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
+import { from } from "@wess/atlas/db/query"
 import { getPrimitive } from "../primitives/registry.ts"
 import type { StepEnvelope } from "../primitives/types.ts"
 import type { ActionContext, ActionResult } from "../types.ts"

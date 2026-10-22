@@ -3,7 +3,7 @@
 // (mcp_tool_read, mcp_tool_write, mcp_tool_delete, mcp_tool_share) at call
 // time, so flipping a toggle in admin takes effect without restart.
 
-import type { Connection } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
 import type { StorageHandle } from "../../storage/index.ts"
 import { readTools } from "./read.ts"
 import { shareTools } from "./share.ts"

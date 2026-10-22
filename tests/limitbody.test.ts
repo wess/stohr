@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { get, json, parseJson, pipeline, post, router } from "@atlas/server"
+import { get, json, parseJson, pipeline, post, router } from "@wess/atlas/server"
 import { limitBody } from "../src/util/limitbody/index.ts"
 
 const LIMIT = 64

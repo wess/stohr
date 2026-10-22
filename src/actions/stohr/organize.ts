@@ -1,4 +1,4 @@
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query"
 import { findOrCreateFolder } from "../primitives/util/folders.ts"
 import type { Action } from "../types.ts"
 

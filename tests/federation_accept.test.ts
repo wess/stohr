@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { router } from "@atlas/server"
+import { router } from "@wess/atlas/server"
 import { authRoutes } from "../src/auth/index.ts"
 import { sha256Hex } from "../src/federation/crypto.ts"
 import { federationFilesRoutes } from "../src/federation/files.ts"

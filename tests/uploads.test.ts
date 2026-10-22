@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { from } from "@atlas/db"
-import { router } from "@atlas/server"
+import { from } from "@wess/atlas/db/query";
+import { router } from "@wess/atlas/server"
 import { authRoutes } from "../src/auth/index.ts"
 import { folderRoutes } from "../src/folders/index.ts"
 import { inviteRoutes } from "../src/invites/index.ts"

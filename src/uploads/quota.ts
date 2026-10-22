@@ -3,7 +3,7 @@
 // can both pass it. This is the second read, for both caps; the caller undoes
 // its own write when it comes back non-null.
 
-import type { Connection } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
 import type { QuotaDenied } from "../usage/index.ts"
 import { computeUsage, teamOverQuota } from "../usage/index.ts"
 

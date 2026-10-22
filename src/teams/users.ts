@@ -3,9 +3,9 @@
 // random unguessable one and a one-time set-password link (the password
 // reset machinery) on the team's own host.
 
-import { hash } from "@atlas/auth"
-import type { Connection } from "@atlas/db"
-import { from } from "@atlas/db"
+import { hash } from "@wess/atlas/auth/password"
+import type { Connection } from "@wess/atlas/db/query"
+import { from } from "@wess/atlas/db/query"
 import { uniqueUsername } from "../auth/external.ts"
 import { issuePasswordReset, passwordResetUrl } from "../auth/password.ts"
 import type { Emailer } from "../email/index.ts"

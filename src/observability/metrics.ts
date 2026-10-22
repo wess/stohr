@@ -12,7 +12,7 @@
 // withMetrics(handler) wraps the router fetch: it times each request and records
 // the method + final status into the counter and latency histogram.
 
-import { get, putHeader, text } from "@atlas/server"
+import { get, putHeader, text } from "@wess/atlas/server"
 
 // http_requests_total — keyed by "method status" so each label combo is its
 // own counter line.

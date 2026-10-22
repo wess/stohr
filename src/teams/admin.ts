@@ -2,10 +2,10 @@
 // also creates its first admin and hands back the one-time link that sets
 // their password on the team's own subdomain.
 
-import type { Connection } from "@atlas/db"
-import { from, raw } from "@atlas/db"
-import type { Conn } from "@atlas/server"
-import { del, get, json, patch, pipeline, post } from "@atlas/server"
+import type { Connection } from "@wess/atlas/db/query"
+import { from, raw } from "@wess/atlas/db/query"
+import type { Conn } from "@wess/atlas/server"
+import { del, get, json, patch, pipeline, post } from "@wess/atlas/server"
 import { purgeUser } from "../auth/deletion.ts"
 import { requireAuth } from "../auth/guard.ts"
 import type { Emailer } from "../email/index.ts"

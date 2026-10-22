@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query";
 import { db, truncateAll, TEST_SECRET } from "./setup.ts"
 import { buildApp, callJson, fakeStore, fakeEmailer, resetSentEmails, sentEmails, TEST_APP_URL } from "./helpers/http.ts"
 import { sweepDeletedAccounts } from "../src/auth/deletion.ts"

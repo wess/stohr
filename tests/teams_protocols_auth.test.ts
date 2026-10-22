@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto"
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query";
 import { computeSignature, sha256OfBytes } from "../src/s3/sigv4.ts"
 import type { App } from "./helpers/http.ts"
 import { callJson, callRaw, makeRequest } from "./helpers/http.ts"

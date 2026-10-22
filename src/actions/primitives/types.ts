@@ -1,4 +1,4 @@
-import type { Connection } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
 import type { FileRow, FolderRow } from "../../permissions/index.ts"
 import type { StorageHandle } from "../../storage/index.ts"
 

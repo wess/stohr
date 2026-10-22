@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import { createHash, randomBytes } from "node:crypto"
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query";
 import { db, truncateAll, TEST_SECRET } from "./setup.ts"
 import { buildApp, callJson } from "./helpers/http.ts"
 import { sha256 } from "../src/oauth/helpers.ts"

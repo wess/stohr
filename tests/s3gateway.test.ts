@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { from } from "@atlas/db"
-import { router } from "@atlas/server"
+import { from } from "@wess/atlas/db/query";
+import { router } from "@wess/atlas/server"
 import { authRoutes } from "../src/auth/index.ts"
 import { headersFromRequest, s3Routes } from "../src/s3/index.ts"
 import { canonicalPath, canonicalQuery, computeSignature, parseAmzDate, parseAuthHeader, sha256OfBytes } from "../src/s3/sigv4.ts"

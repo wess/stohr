@@ -1,5 +1,5 @@
-import type { Connection } from "@atlas/db"
-import { from } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
+import { from } from "@wess/atlas/db/query"
 import type { FileRow } from "../permissions/index.ts"
 import { drop, type StorageHandle } from "../storage/index.ts"
 import { quotaAfterWrite, quotaMessage } from "../uploads/quota.ts"

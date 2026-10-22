@@ -1,6 +1,6 @@
 {
   "name": "stohr",
-  "version": "0.10.6",
+  "version": "0.10.7",
   "type": "module",
   "private": true,
   "scripts": {
@@ -16,27 +16,39 @@
     "format:fix": "biome format --write src/ scripts/",
     "check:fix": "biome check --write src/ scripts/",
     "tidy": "bun run format:fix && bun run lint:fix",
-    "connect": "bun scripts/connect.ts"
+    "connect": "bun scripts/connect.ts",
+    "check:atlas": "bunx --package https://github.com/wess/atlas/releases/download/v0.4.9/wess-atlas-cli-0.4.9.tgz atlas check"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
-    "@types/bun": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest"
+    "@biomejs/biome": "^2.6.2",
+    "@types/bun": "^1.4.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0"
   },
   "dependencies": {
-    "@simplewebauthn/browser": "^13.3.0",
-    "@simplewebauthn/server": "^13.3.3",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.0.3",
     "@types/qrcode": "^1.5.6",
-    "atlas": "github:wess/atlas#v0.3.2",
     "ldapts": "^9.2.0",
-    "lucide-react": "^1.50.0",
+    "lucide-react": "^1.61.0",
     "qrcode": "^1.5.4",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "sharp": "^0.35.5"
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "sharp": "^0.35.5",
+    "@wess/atlas": "https://github.com/wess/atlas/releases/download/v0.4.9/wess-atlas-0.4.9.tgz",
+    "@wess/atlas-auth": "https://github.com/wess/atlas/releases/download/v0.4.9/wess-atlas-auth-0.4.9.tgz",
+    "@wess/atlas-cli": "https://github.com/wess/atlas/releases/download/v0.4.9/wess-atlas-cli-0.4.9.tgz",
+    "@wess/atlas-config": "https://github.com/wess/atlas/releases/download/v0.4.9/wess-atlas-config-0.4.9.tgz",
+    "@wess/atlas-db": "https://github.com/wess/atlas/releases/download/v0.4.9/wess-atlas-db-0.4.9.tgz",
+    "@wess/atlas-migrate": "https://github.com/wess/atlas/releases/download/v0.4.9/wess-atlas-migrate-0.4.9.tgz",
+    "@wess/atlas-server": "https://github.com/wess/atlas/releases/download/v0.4.9/wess-atlas-server-0.4.9.tgz",
+    "@wess/atlas-sso": "https://github.com/wess/atlas/releases/download/v0.4.9/wess-atlas-sso-0.4.9.tgz",
+    "@wess/atlas-storage": "https://github.com/wess/atlas/releases/download/v0.4.9/wess-atlas-storage-0.4.9.tgz"
   },
   "peerDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "bun": ">=1.4.4"
   }
 }

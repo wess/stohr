@@ -104,7 +104,7 @@ WebDAV has no env var on new deploys — it's an owner toggle (`webdav_enabled`)
 
 | var | default | purpose |
 | --- | --- | --- |
-| `MAX_UPLOAD_BYTES` | `1073741824` (1 GiB) | Hard cap on a single request body. Bun buffers the body in memory; with `STORAGE_DRIVER=s3` the `@atlas/storage` driver re-buffers it to compute the SigV4 payload hash, so this is effectively a per-upload memory ceiling. The `local` driver streams to disk after Bun's initial buffer |
+| `MAX_UPLOAD_BYTES` | `1073741824` (1 GiB) | Hard cap on a single request body. Bun buffers the body in memory; with `STORAGE_DRIVER=s3` the `@wess/atlas/storage` driver re-buffers it to compute the SigV4 payload hash, so this is effectively a per-upload memory ceiling. The `local` driver streams to disk after Bun's initial buffer |
 | `TRUSTED_PROXIES` | (empty; `127.0.0.1` in the Docker image) | Comma-separated IPv4 addresses or CIDRs allowed to set `X-Forwarded-For` / `X-Real-IP` / `X-Forwarded-Host`. The chain is walked from the right past trusted hops to the first untrusted address, so list every proxy between the client and the API (the single-container image's web process is `127.0.0.1`; add your edge too). With Docker Compose set this to `172.16.0.0/12` (covers the bridge). Leave empty for direct-to-API traffic. Untrusted XFF is ignored; the socket peer is used instead. The same rule decides whether `X-Forwarded-Host` (which the web proxy always sets to the browser's `Host`) is believed when picking the team, and whether a peer may call `/internal/tls/allow` |
 | `WEBHOOKS_ALLOW_PRIVATE` | (empty) | Webhook URLs are resolved and refused when they land on loopback, RFC1918, link-local (cloud metadata), CGNAT or ULA addresses, both at registration and at every delivery; redirects are never followed. Set to `true` on a homelab deployment whose hooks legitimately target LAN services. `http://` is always accepted for webhooks |
 
@@ -166,7 +166,7 @@ If `RESEND_API_KEY` is empty, Stohr boots fine — emails are written to the API
 
 ## Database
 
-Stohr migrates on startup via `@atlas/migrate`. The migrations directory is hand-written SQL with `up.sql` / `down.sql` per change set:
+Stohr migrates on startup via `@wess/atlas/migrate`. The migrations directory is hand-written SQL with `up.sql` / `down.sql` per change set:
 
 ```
 migrations/00000001_create_users/up.sql

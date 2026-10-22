@@ -5,8 +5,8 @@
 // front door refuses /api/internal/* outright, so the public hostname never
 // reaches this route at all.
 
-import type { Connection } from "@atlas/db"
-import { get, json } from "@atlas/server"
+import type { Connection } from "@wess/atlas/db/query"
+import { get, json } from "@wess/atlas/server"
 import type { Cidr } from "../security/proxies.ts"
 import { checkRate } from "../security/ratelimit.ts"
 import { isLoopbackPeer, isTrustedPeer, socketPeer } from "./host.ts"

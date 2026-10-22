@@ -1,5 +1,5 @@
-import { hash } from "@atlas/auth"
-import { from, raw } from "@atlas/db"
+import { hash } from "@wess/atlas/auth/password"
+import { from, raw } from "@wess/atlas/db/query"
 import { fileAccess, isOwner } from "../../permissions/index.ts"
 import { asError, asText, type Tool, type ToolContext } from "./index.ts"
 

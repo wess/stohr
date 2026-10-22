@@ -1,4 +1,4 @@
-import { foreman } from "@atlas/cli"
+import { foreman } from "@wess/atlas/cli"
 
 // Production entry point — runs the API and the SPA-serving web proxy as a
 // single process group. `src/dev.ts` is the `--hot` equivalent for local

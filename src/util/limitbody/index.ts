@@ -1,5 +1,5 @@
-import type { Conn, PipeFn } from "@atlas/server"
-import { halt } from "@atlas/server"
+import type { Conn, PipeFn } from "@wess/atlas/server"
+import { halt } from "@wess/atlas/server"
 
 // caps a request body before parseJson/parseForm buffer it. content-length
 // is checked first so an honest oversize request is refused without reading

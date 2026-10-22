@@ -1,5 +1,5 @@
-import type { PipeFn } from "@atlas/server"
-import { halt } from "@atlas/server"
+import type { PipeFn } from "@wess/atlas/server"
+import { halt } from "@wess/atlas/server"
 
 const constantTimeEquals = (a: string, b: string): boolean => {
   if (a.length !== b.length) return false

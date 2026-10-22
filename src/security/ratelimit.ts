@@ -1,4 +1,4 @@
-import type { Connection } from "@atlas/db"
+import type { Connection } from "@wess/atlas/db/query"
 import { forwardedClientIp, isTrustedProxy, normalizeIp } from "./proxies.ts"
 
 export type RateLimitResult = {

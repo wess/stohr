@@ -1,5 +1,5 @@
-import type { Conn } from "@atlas/server"
-import { putHeader } from "@atlas/server"
+import type { Conn } from "@wess/atlas/server"
+import { putHeader } from "@wess/atlas/server"
 import { requestBaseUrl } from "../teams/request.ts"
 import { randomToken } from "../util/token.ts"
 

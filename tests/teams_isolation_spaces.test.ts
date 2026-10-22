@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { from } from "@atlas/db"
+import { from } from "@wess/atlas/db/query";
 import { buildApp, callJson } from "./helpers/http.ts"
 import { threeTeams } from "./helpers/isolation.ts"
 import { callMultipart } from "./helpers/multipart.ts"
