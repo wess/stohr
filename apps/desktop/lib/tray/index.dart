@@ -1,14 +1,21 @@
 import 'dart:io' show exit;
+
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:tray_manager/tray_manager.dart';
+
 import '../capture/index.dart';
 import '../session/index.dart';
 
-class TrayController with TrayListener {
+class TrayController {
   final Session session;
   final void Function() onShowWindow;
   final void Function(String) onError;
   final void Function(String) onInfo;
+
+  TrayIcon? _trayIcon;
+  Menu? _menu;
+  List<MenuItem> _items = [];
+  ListenerId? _trayListener;
 
   TrayController({
     required this.session,
@@ -18,67 +25,86 @@ class TrayController with TrayListener {
   });
 
   Future<void> init() async {
-    await trayManager.setIcon('assets/icon.png', isTemplate: true);
-    await trayManager.setToolTip('Stohr');
-    trayManager.addListener(this);
+    final tray = TrayIcon.create();
+    if (tray == null) throw StateError('Could not create the tray icon');
+    tray.icon = ImageAsset.fromAsset('assets/icon.png');
+    tray.isIconTemplate = true;
+    tray.setTooltip('Stohr');
+    tray.setContextMenuTrigger(ContextMenuTrigger.none);
+    _trayListener = tray.addListener((event) {
+      if (event is TrayIconClickedEvent || event is TrayIconRightClickedEvent) {
+        tray.openContextMenu();
+      }
+    });
+    tray.setVisible(true);
+    _trayIcon = tray;
     session.addListener(_rebuildMenu);
     await _rebuildMenu();
   }
 
   Future<void> dispose() async {
-    trayManager.removeListener(this);
     session.removeListener(_rebuildMenu);
-    await trayManager.destroy();
+    final tray = _trayIcon;
+    final listener = _trayListener;
+    if (tray != null && listener != null) tray.removeListener(listener);
+    tray?.dispose();
+    _menu?.dispose();
+    for (final item in _items) {
+      item.dispose();
+    }
+    _trayIcon = null;
+    _menu = null;
+    _items = [];
+    _trayListener = null;
   }
 
   Future<void> _rebuildMenu() async {
     final signedIn = session.isSignedIn;
-    final items = <MenuItem>[
-      if (signedIn) ...[
-        MenuItem(key: 'capture-region', label: 'Capture region'),
-        MenuItem(key: 'capture-window', label: 'Capture window'),
-        MenuItem(key: 'capture-screen', label: 'Capture full screen'),
-        MenuItem.separator(),
-        MenuItem(key: 'show', label: 'Recent captures…'),
-        MenuItem.separator(),
-        MenuItem(key: 'signout', label: 'Sign out'),
-      ] else ...[
-        MenuItem(key: 'show', label: 'Sign in…'),
-      ],
-      MenuItem.separator(),
-      MenuItem(key: 'quit', label: 'Quit'),
-    ];
-    await trayManager.setContextMenu(Menu(items: items));
-  }
+    final menu = Menu.create();
+    if (menu == null) throw StateError('Could not create the tray menu');
+    final items = <MenuItem>[];
 
-  @override
-  void onTrayIconRightMouseDown() => trayManager.popUpContextMenu();
+    MenuItem add(String label, Future<void> Function() action) {
+      final item = MenuItem.createWithLabelAndType(label, MenuItemType.normal);
+      if (item == null) {
+        throw StateError('Could not create the $label menu item');
+      }
+      item.addListener((event) async {
+        if (event is MenuItemClickedEvent) await action();
+      });
+      menu.addItem(item);
+      items.add(item);
+      return item;
+    }
 
-  @override
-  void onTrayIconMouseDown() => trayManager.popUpContextMenu();
-
-  @override
-  Future<void> onTrayMenuItemClick(MenuItem menuItem) async {
-    switch (menuItem.key) {
-      case 'capture-region':
-        await _runCapture(CaptureMode.region);
-        break;
-      case 'capture-window':
-        await _runCapture(CaptureMode.window);
-        break;
-      case 'capture-screen':
-        await _runCapture(CaptureMode.screen);
-        break;
-      case 'show':
-        onShowWindow();
-        break;
-      case 'signout':
+    if (signedIn) {
+      add('Capture region', () => _runCapture(CaptureMode.region));
+      add('Capture window', () => _runCapture(CaptureMode.window));
+      add('Capture full screen', () => _runCapture(CaptureMode.screen));
+      menu.addSeparator();
+      add('Recent captures…', () async => onShowWindow());
+      menu.addSeparator();
+      add('Sign out', () async {
         await session.signOut();
         onInfo('Signed out');
-        break;
-      case 'quit':
-        await trayManager.destroy();
-        exit(0);
+      });
+    } else {
+      add('Sign in…', () async => onShowWindow());
+    }
+    menu.addSeparator();
+    add('Quit', () async {
+      await dispose();
+      exit(0);
+    });
+
+    _trayIcon?.setContextMenu(menu);
+    final oldMenu = _menu;
+    final oldItems = _items;
+    _menu = menu;
+    _items = items;
+    oldMenu?.dispose();
+    for (final item in oldItems) {
+      item.dispose();
     }
   }
 

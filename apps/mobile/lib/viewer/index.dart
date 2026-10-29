@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart' as sp;
 import 'package:stohr/stohr.dart';
+
 import '../api/index.dart';
 import '../share/index.dart';
 
@@ -15,7 +16,9 @@ class ViewerScreen extends StatefulWidget {
 }
 
 class _ViewerScreenState extends State<ViewerScreen> {
-  late final PageController _page = PageController(initialPage: widget.index ?? 0);
+  late final PageController _page = PageController(
+    initialPage: widget.index ?? 0,
+  );
   late int _current = widget.index ?? 0;
 
   List<FileItem> get _items => widget.gallery ?? [widget.file];
@@ -30,7 +33,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
     final s = await showCreateShareSheet(context, f);
     if (s == null) return;
     final url = '${api.baseUrl.replaceAll('/api', '')}/s/${s.token}';
-    await sp.Share.share(url, subject: f.name);
+    await sp.SharePlus.instance.share(
+      sp.ShareParams(text: url, subject: f.name),
+    );
   }
 
   Widget _content(FileItem f) {
@@ -41,9 +46,14 @@ class _ViewerScreenState extends State<ViewerScreen> {
           imageUrl: _url(f),
           httpHeaders: _authHeader,
           fit: BoxFit.contain,
-          placeholder: (_, _) => const Center(child: CircularProgressIndicator()),
+          placeholder: (_, _) =>
+              const Center(child: CircularProgressIndicator()),
           errorWidget: (_, _, _) => const Center(
-            child: Icon(Icons.broken_image_outlined, size: 48, color: Colors.white),
+            child: Icon(
+              Icons.broken_image_outlined,
+              size: 48,
+              color: Colors.white,
+            ),
           ),
         ),
       );
@@ -56,11 +66,20 @@ class _ViewerScreenState extends State<ViewerScreen> {
           children: [
             Icon(_iconFor(mime), size: 56, color: Colors.white70),
             const SizedBox(height: 12),
-            Text(f.name,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+            Text(
+              f.name,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             const SizedBox(height: 8),
-            Text(mime, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+            Text(
+              mime,
+              style: const TextStyle(color: Colors.white54, fontSize: 12),
+            ),
             const SizedBox(height: 20),
             FilledButton.icon(
               icon: const Icon(Icons.share_outlined),

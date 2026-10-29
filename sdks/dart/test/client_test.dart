@@ -13,7 +13,8 @@ void main() {
     return testing.MockClient((req) async {
       final r = responses[i++];
       final body = r is String ? r : jsonEncode(r);
-      return http.Response(body, r is Map && r['__status'] is int ? r['__status'] as int : 200);
+      return http.Response(
+          body, r is Map && r['__status'] is int ? r['__status'] as int : 200);
     });
   }
 
@@ -79,7 +80,8 @@ void main() {
           }
         ]),
       );
-      final folder = await client.createFolder('Italy', kind: 'photos', isPublic: true);
+      final folder =
+          await client.createFolder('Italy', kind: 'photos', isPublic: true);
       expect(folder.id, 7);
       expect(folder.kind, 'photos');
     });

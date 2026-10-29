@@ -1,5 +1,5 @@
 import React, { useEffect } from "react"
-import { ChevronRight, Github } from "lucide-react"
+import { ChevronRight, GitFork } from "lucide-react"
 import { Nav } from "../components/nav"
 import { Footer } from "../components/footer"
 import { CodeBlock } from "../components/highlight"
@@ -27,7 +27,7 @@ export const Setup: React.FC = () => {
           </p>
           <div className="lp-cta-row">
             <a href={REPO} target="_blank" rel="noreferrer" className="lp-btn lp-btn-primary lp-btn-lg">
-              <Github size={16} strokeWidth={2} /> Clone the repo
+              <GitFork size={16} strokeWidth={2} /> Clone the repo
             </a>
             <a href="/docs/deploy" className="lp-btn lp-btn-ghost lp-btn-lg">Production deploy <ChevronRight size={16} strokeWidth={2} /></a>
           </div>

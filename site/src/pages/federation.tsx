@@ -1,7 +1,7 @@
 import React, { useEffect } from "react"
 import {
   ChevronRight,
-  Github,
+  GitFork,
   Lock,
   Network,
   Server,
@@ -327,7 +327,7 @@ export const Federation: React.FC = () => {
         <div className="lp-cta-row" style={{ justifyContent: "center" }}>
           <a href="/setup" className="lp-btn lp-btn-primary lp-btn-lg">Get started</a>
           <a href="/docs/federation" className="lp-btn lp-btn-ghost lp-btn-lg">Federation docs <ChevronRight size={16} strokeWidth={2} /></a>
-          <a href={REPO} target="_blank" rel="noreferrer" className="lp-btn lp-btn-ghost lp-btn-lg"><Github size={16} strokeWidth={2} /> Source</a>
+          <a href={REPO} target="_blank" rel="noreferrer" className="lp-btn lp-btn-ghost lp-btn-lg"><GitFork size={16} strokeWidth={2} /> Source</a>
         </div>
       </section>
 

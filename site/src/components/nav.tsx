@@ -1,5 +1,5 @@
 import React from "react"
-import { Github, Menu, X } from "lucide-react"
+import { GitFork, Menu, X } from "lucide-react"
 import { Logo } from "./logo"
 
 const REPO = "https://github.com/wess/stohr"
@@ -39,7 +39,7 @@ export const Nav: React.FC<Props> = ({ links = DEFAULT_LINKS }) => (
         rel="noreferrer"
         className="lp-btn lp-btn-primary lp-nav-star"
       >
-        <Github size={15} strokeWidth={2} /> Star on GitHub
+        <GitFork size={15} strokeWidth={2} /> Star on GitHub
       </a>
       {/* CSS-only mobile menu — <details> works on the statically
           SSR'd docs pages, which ship no client JS. */}

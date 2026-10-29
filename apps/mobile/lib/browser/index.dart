@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:stohr/stohr.dart';
+
 import '../api/index.dart';
 import '../widgets/items.dart';
 import '../viewer/index.dart';
@@ -80,7 +81,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
       if (kind == null) return;
     }
     try {
-      await api.createFolder(name.trim(), parentId: widget.folderId, kind: kind);
+      await api.createFolder(
+        name.trim(),
+        parentId: widget.folderId,
+        kind: kind,
+      );
       await _load();
     } on StohrError catch (e) {
       if (mounted) _showSnack(e.message);
@@ -93,21 +98,28 @@ class _BrowserScreenState extends State<BrowserScreen> {
       final picked = await picker.pickMultiImage();
       if (picked.isEmpty) return;
       if (!mounted) return;
-      await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => UploadScreen(
-          paths: picked.map((x) => x.path).toList(),
-          folderId: widget.folderId,
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => UploadScreen(
+            paths: picked.map((x) => x.path).toList(),
+            folderId: widget.folderId,
+          ),
         ),
-      ));
+      );
     } else {
-      final res = await FilePicker.platform.pickFiles(allowMultiple: true);
-      if (res == null || res.files.isEmpty) return;
-      final paths = res.files.where((f) => f.path != null).map((f) => f.path!).toList();
+      final files = await FilePicker.pickFiles();
+      if (files.isEmpty) return;
+      final paths = files
+          .where((f) => f.path != null)
+          .map((f) => f.path!)
+          .toList();
       if (paths.isEmpty) return;
       if (!mounted) return;
-      await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => UploadScreen(paths: paths, folderId: widget.folderId),
-      ));
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => UploadScreen(paths: paths, folderId: widget.folderId),
+        ),
+      );
     }
     if (mounted) _load();
   }
@@ -130,8 +142,14 @@ class _BrowserScreenState extends State<BrowserScreen> {
               onTap: () => Navigator.pop(ctx, 'share'),
             ),
             ListTile(
-              leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
-              title: const Text('Delete', style: TextStyle(color: Colors.redAccent)),
+              leading: const Icon(
+                Icons.delete_outline,
+                color: Colors.redAccent,
+              ),
+              title: const Text(
+                'Delete',
+                style: TextStyle(color: Colors.redAccent),
+              ),
               onTap: () => Navigator.pop(ctx, 'delete'),
             ),
           ],
@@ -140,7 +158,12 @@ class _BrowserScreenState extends State<BrowserScreen> {
     );
     if (!mounted) return;
     if (action == 'rename') {
-      final name = await _promptText(context, 'Rename file', 'New name', initial: f.name);
+      final name = await _promptText(
+        context,
+        'Rename file',
+        'New name',
+        initial: f.name,
+      );
       if (name == null || name.trim().isEmpty || name == f.name) return;
       try {
         await api.renameFile(f.id, name.trim());
@@ -163,15 +186,22 @@ class _BrowserScreenState extends State<BrowserScreen> {
               SelectableText(url),
               const SizedBox(height: 12),
               if (share.passwordRequired)
-                const Text('· Recipient needs the password you set',
-                    style: TextStyle(fontSize: 12)),
+                const Text(
+                  '· Recipient needs the password you set',
+                  style: TextStyle(fontSize: 12),
+                ),
               if (share.burnOnView)
-                const Text('· Self-destructs after the first non-owner view',
-                    style: TextStyle(fontSize: 12)),
+                const Text(
+                  '· Self-destructs after the first non-owner view',
+                  style: TextStyle(fontSize: 12),
+                ),
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Done')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Done'),
+            ),
           ],
         ),
       );
@@ -216,23 +246,23 @@ class _BrowserScreenState extends State<BrowserScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(_error!, textAlign: TextAlign.center),
-                        const SizedBox(height: 12),
-                        FilledButton(onPressed: _load, child: const Text('Retry')),
-                      ],
-                    ),
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: _isPhotos ? _photoGrid() : _list(),
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_error!, textAlign: TextAlign.center),
+                    const SizedBox(height: 12),
+                    FilledButton(onPressed: _load, child: const Text('Retry')),
+                  ],
                 ),
+              ),
+            )
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: _isPhotos ? _photoGrid() : _list(),
+            ),
     );
   }
 
@@ -246,7 +276,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => BrowserScreen(folderId: f.id, title: f.name, folderKind: f.kind),
+                builder: (_) => BrowserScreen(
+                  folderId: f.id,
+                  title: f.name,
+                  folderKind: f.kind,
+                ),
               ),
             ).then((_) => _load()),
           ),
@@ -265,7 +299,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
   }
 
   Widget _photoGrid() {
-    final media = _files.where((f) => f.mime.startsWith('image/') || f.mime.startsWith('video/')).toList();
+    final media = _files
+        .where(
+          (f) => f.mime.startsWith('image/') || f.mime.startsWith('video/'),
+        )
+        .toList();
     if (_folders.isEmpty && media.isEmpty) return _empty();
     return CustomScrollView(
       slivers: [
@@ -296,21 +334,19 @@ class _BrowserScreenState extends State<BrowserScreen> {
               crossAxisSpacing: 6,
               mainAxisSpacing: 6,
             ),
-            delegate: SliverChildBuilderDelegate(
-              (_, i) {
-                final f = media[i];
-                return PhotoThumb(
-                  file: f,
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ViewerScreen(file: f, gallery: media, index: i),
-                    ),
+            delegate: SliverChildBuilderDelegate((_, i) {
+              final f = media[i];
+              return PhotoThumb(
+                file: f,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        ViewerScreen(file: f, gallery: media, index: i),
                   ),
-                );
-              },
-              childCount: media.length,
-            ),
+                ),
+              );
+            }, childCount: media.length),
           ),
         ),
       ],
@@ -322,7 +358,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
         const SizedBox(height: 100),
-        Icon(Icons.cloud_outlined, size: 56, color: Theme.of(context).hintColor),
+        Icon(
+          Icons.cloud_outlined,
+          size: 56,
+          color: Theme.of(context).hintColor,
+        ),
         const SizedBox(height: 12),
         Center(
           child: Text(
@@ -345,7 +385,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
 class SpeedDialFab extends StatefulWidget {
   final VoidCallback onUpload;
   final VoidCallback onNewFolder;
-  const SpeedDialFab({super.key, required this.onUpload, required this.onNewFolder});
+  const SpeedDialFab({
+    super.key,
+    required this.onUpload,
+    required this.onNewFolder,
+  });
   @override
   State<SpeedDialFab> createState() => _SpeedDialFabState();
 }
@@ -393,7 +437,12 @@ class _SpeedDialFabState extends State<SpeedDialFab> {
   }
 }
 
-Future<String?> _promptText(BuildContext context, String title, String label, {String? initial}) {
+Future<String?> _promptText(
+  BuildContext context,
+  String title,
+  String label, {
+  String? initial,
+}) {
   final ctrl = TextEditingController(text: initial ?? '');
   return showDialog<String>(
     context: context,
@@ -406,8 +455,14 @@ Future<String?> _promptText(BuildContext context, String title, String label, {S
         onSubmitted: (v) => Navigator.pop(ctx, v),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-        FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('OK')),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, ctrl.text),
+          child: const Text('OK'),
+        ),
       ],
     ),
   );
@@ -419,7 +474,10 @@ Future<bool?> _confirm(BuildContext context, String message) {
     builder: (ctx) => AlertDialog(
       content: Text(message),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
         FilledButton(
           style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
           onPressed: () => Navigator.pop(ctx, true),

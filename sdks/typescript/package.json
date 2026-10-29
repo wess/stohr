@@ -16,7 +16,7 @@
   "license": "MIT",
   "devDependencies": {
     "@types/bun": "latest",
-    "typescript": "^5"
+    "typescript": "^7.0.2"
   },
   "engines": {
     "node": ">=20"

@@ -6,6 +6,7 @@ import { isTrustedProxy, normalizeIp } from "../security/proxies.ts"
 
 const API = process.env.API_URL ?? "http://localhost:3000"
 const PORT = Number(process.env.WEB_PORT ?? 3001)
+const MAX_REQUEST_BODY_SIZE = Number(process.env.MAX_UPLOAD_BYTES ?? 1024 * 1024 * 1024)
 
 // Dev-only: HMR + verbose console in the browser. In production this MUST
 // be false, otherwise Bun bundles the SPA with the dev JSX runtime
@@ -183,7 +184,7 @@ const proxy = async (req: Request, target: string, peer: string | null): Promise
 const server = Bun.serve({
   port: PORT,
   hostname: "0.0.0.0",
-  maxRequestBodySize: Number.MAX_SAFE_INTEGER,
+  maxRequestBodySize: MAX_REQUEST_BODY_SIZE,
   // Seconds of socket inactivity, not total request duration — a steady
   // upload or download is never cut off. 0 meant a stalled peer could hold a
   // connection open indefinitely.

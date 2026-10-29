@@ -20,7 +20,8 @@ class StohrClient {
   String? _token;
 
   StohrClient({String? baseUrl, http.Client? client, String? token})
-      : baseUrl = (baseUrl ?? 'https://stohr.io/api').replaceAll(RegExp(r'/$'), ''),
+      : baseUrl =
+            (baseUrl ?? 'https://stohr.io/api').replaceAll(RegExp(r'/$'), ''),
         _http = client ?? http.Client(),
         _token = token;
 
@@ -35,7 +36,8 @@ class StohrClient {
 
   Future<dynamic> _json(String method, String path, {Object? body}) async {
     final uri = Uri.parse('$baseUrl$path');
-    final headers = _headers(body != null ? const {'content-type': 'application/json'} : const {});
+    final headers = _headers(
+        body != null ? const {'content-type': 'application/json'} : const {});
     final resp = await _http.send(
       http.Request(method, uri)
         ..headers.addAll(headers)
@@ -43,12 +45,14 @@ class StohrClient {
     );
     final text = await resp.stream.bytesToString();
     final parsed = text.isEmpty ? null : jsonDecode(text);
-    if (resp.statusCode < 200 || resp.statusCode >= 300 ||
+    if (resp.statusCode < 200 ||
+        resp.statusCode >= 300 ||
         (parsed is Map<String, dynamic> && parsed.containsKey('error'))) {
       final msg = (parsed is Map<String, dynamic> && parsed['error'] != null)
           ? parsed['error'].toString()
           : 'HTTP ${resp.statusCode}';
-      throw StohrError(msg, resp.statusCode, parsed is Map<String, dynamic> ? parsed : null);
+      throw StohrError(
+          msg, resp.statusCode, parsed is Map<String, dynamic> ? parsed : null);
     }
     return parsed;
   }
@@ -57,7 +61,9 @@ class StohrClient {
 
   /// Returns either an [AuthResult] (success) or [MfaChallenge] (TOTP needed).
   Future<Object> login(String identity, String password) async {
-    final j = await _json('POST', '/login', body: {'identity': identity, 'password': password}) as Map<String, dynamic>;
+    final j = await _json('POST', '/login',
+            body: {'identity': identity, 'password': password})
+        as Map<String, dynamic>;
     if (j['mfa_required'] == true) {
       return MfaChallenge(j['mfa_token'] as String);
     }
@@ -102,7 +108,8 @@ class StohrClient {
 
   // ── me ──────────────────────────────────────────────
 
-  Future<User> me() async => User.fromJson(await _json('GET', '/me') as Map<String, dynamic>);
+  Future<User> me() async =>
+      User.fromJson(await _json('GET', '/me') as Map<String, dynamic>);
   Future<Usage> usage() async =>
       Usage.fromJson(await _json('GET', '/me/usage') as Map<String, dynamic>);
 
@@ -110,10 +117,13 @@ class StohrClient {
 
   Future<List<Folder>> listFolders({int? parentId}) async {
     final r = await _json('GET', '/folders?parent_id=${parentId ?? 'null'}');
-    return (r as List).map((j) => Folder.fromJson(j as Map<String, dynamic>)).toList();
+    return (r as List)
+        .map((j) => Folder.fromJson(j as Map<String, dynamic>))
+        .toList();
   }
 
-  Future<Folder> createFolder(String name, {int? parentId, String? kind, bool? isPublic}) async {
+  Future<Folder> createFolder(String name,
+      {int? parentId, String? kind, bool? isPublic}) async {
     final j = await _json('POST', '/folders', body: {
       'name': name,
       'parent_id': parentId,
@@ -126,18 +136,23 @@ class StohrClient {
   Future<void> deleteFolder(int id) async => _json('DELETE', '/folders/$id');
 
   Future<Folder> renameFolder(int id, String name) async =>
-      Folder.fromJson(await _json('PATCH', '/folders/$id', body: {'name': name}) as Map<String, dynamic>);
+      Folder.fromJson(await _json('PATCH', '/folders/$id', body: {'name': name})
+          as Map<String, dynamic>);
 
   // ── files ──────────────────────────────────────────
 
   Future<List<FileItem>> listFiles({int? folderId, String? query}) async {
-    final qs = query != null ? 'q=${Uri.encodeComponent(query)}' : 'folder_id=${folderId ?? 'null'}';
+    final qs = query != null
+        ? 'q=${Uri.encodeComponent(query)}'
+        : 'folder_id=${folderId ?? 'null'}';
     final r = await _json('GET', '/files?$qs');
-    return (r as List).map((j) => FileItem.fromJson(j as Map<String, dynamic>)).toList();
+    return (r as List)
+        .map((j) => FileItem.fromJson(j as Map<String, dynamic>))
+        .toList();
   }
 
-  Future<FileItem> getFile(int id) async =>
-      FileItem.fromJson(await _json('GET', '/files/$id') as Map<String, dynamic>);
+  Future<FileItem> getFile(int id) async => FileItem.fromJson(
+      await _json('GET', '/files/$id') as Map<String, dynamic>);
 
   Future<List<FileItem>> uploadFile({
     required Uint8List bytes,
@@ -153,18 +168,23 @@ class StohrClient {
     final streamed = await _http.send(req);
     final text = await streamed.stream.bytesToString();
     final parsed = text.isEmpty ? null : jsonDecode(text);
-    if (streamed.statusCode < 200 || streamed.statusCode >= 300 ||
+    if (streamed.statusCode < 200 ||
+        streamed.statusCode >= 300 ||
         (parsed is Map<String, dynamic> && parsed.containsKey('error'))) {
       final msg = (parsed is Map<String, dynamic> && parsed['error'] != null)
           ? parsed['error'].toString()
           : 'HTTP ${streamed.statusCode}';
-      throw StohrError(msg, streamed.statusCode, parsed is Map<String, dynamic> ? parsed : null);
+      throw StohrError(msg, streamed.statusCode,
+          parsed is Map<String, dynamic> ? parsed : null);
     }
-    return (parsed as List).map((j) => FileItem.fromJson(j as Map<String, dynamic>)).toList();
+    return (parsed as List)
+        .map((j) => FileItem.fromJson(j as Map<String, dynamic>))
+        .toList();
   }
 
   Future<Uint8List> downloadFile(int id) async {
-    final resp = await _http.get(Uri.parse('$baseUrl/files/$id/download'), headers: _headers());
+    final resp = await _http.get(Uri.parse('$baseUrl/files/$id/download'),
+        headers: _headers());
     if (resp.statusCode != 200) {
       throw StohrError('HTTP ${resp.statusCode}', resp.statusCode, null);
     }
@@ -174,10 +194,12 @@ class StohrClient {
   Future<void> deleteFile(int id) async => _json('DELETE', '/files/$id');
 
   Future<FileItem> renameFile(int id, String name) async =>
-      FileItem.fromJson(await _json('PATCH', '/files/$id', body: {'name': name}) as Map<String, dynamic>);
+      FileItem.fromJson(await _json('PATCH', '/files/$id', body: {'name': name})
+          as Map<String, dynamic>);
 
-  Future<FileItem> moveFile(int id, int? folderId) async =>
-      FileItem.fromJson(await _json('PATCH', '/files/$id', body: {'folder_id': folderId}) as Map<String, dynamic>);
+  Future<FileItem> moveFile(int id, int? folderId) async => FileItem.fromJson(
+      await _json('PATCH', '/files/$id', body: {'folder_id': folderId})
+          as Map<String, dynamic>);
 
   // ── photo backup ───────────────────────────────────
   //
@@ -192,10 +214,13 @@ class StohrClient {
   //      duplicate hit returns `deduped: true` without re-storing bytes.
 
   Future<Map<String, dynamic>> initPhotoBackup() async =>
-      await _json('POST', '/photos/init', body: const <String, dynamic>{}) as Map<String, dynamic>;
+      await _json('POST', '/photos/init', body: const <String, dynamic>{})
+          as Map<String, dynamic>;
 
   Future<List<String>> photoBackupManifest(List<String> assetIds) async {
-    final j = await _json('POST', '/photos/manifest', body: {'asset_ids': assetIds}) as Map<String, dynamic>;
+    final j =
+        await _json('POST', '/photos/manifest', body: {'asset_ids': assetIds})
+            as Map<String, dynamic>;
     final known = j['known'];
     return known is List ? known.map((e) => e.toString()).toList() : <String>[];
   }
@@ -212,24 +237,30 @@ class StohrClient {
       ..headers.addAll(_headers())
       ..fields['asset_id'] = assetId
       ..fields['mime'] = mime;
-    if (capturedAt != null) req.fields['captured_at'] = capturedAt.toUtc().toIso8601String();
+    if (capturedAt != null)
+      req.fields['captured_at'] = capturedAt.toUtc().toIso8601String();
     req.files.add(http.MultipartFile.fromBytes('file', bytes, filename: name));
     final streamed = await _http.send(req);
     final text = await streamed.stream.bytesToString();
     final parsed = text.isEmpty ? null : jsonDecode(text);
-    if (streamed.statusCode < 200 || streamed.statusCode >= 300 ||
+    if (streamed.statusCode < 200 ||
+        streamed.statusCode >= 300 ||
         (parsed is Map<String, dynamic> && parsed.containsKey('error'))) {
       final msg = (parsed is Map<String, dynamic> && parsed['error'] != null)
           ? parsed['error'].toString()
           : 'HTTP ${streamed.statusCode}';
-      throw StohrError(msg, streamed.statusCode, parsed is Map<String, dynamic> ? parsed : null);
+      throw StohrError(msg, streamed.statusCode,
+          parsed is Map<String, dynamic> ? parsed : null);
     }
     return parsed as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> photoTimeline({int limit = 100, DateTime? before}) async {
+  Future<Map<String, dynamic>> photoTimeline(
+      {int limit = 100, DateTime? before}) async {
     final qs = StringBuffer('limit=$limit');
-    if (before != null) qs.write('&before=${Uri.encodeComponent(before.toUtc().toIso8601String())}');
+    if (before != null)
+      qs.write(
+          '&before=${Uri.encodeComponent(before.toUtc().toIso8601String())}');
     return await _json('GET', '/photos/timeline?$qs') as Map<String, dynamic>;
   }
 
@@ -270,11 +301,14 @@ class StohrClient {
 
   Future<List<S3AccessKey>> listS3Keys() async {
     final r = await _json('GET', '/me/s3-keys');
-    return (r as List).map((j) => S3AccessKey.fromJson(j as Map<String, dynamic>)).toList();
+    return (r as List)
+        .map((j) => S3AccessKey.fromJson(j as Map<String, dynamic>))
+        .toList();
   }
 
   Future<S3AccessKey> createS3Key({String? name}) async {
-    final j = await _json('POST', '/me/s3-keys', body: {if (name != null) 'name': name});
+    final j = await _json('POST', '/me/s3-keys',
+        body: {if (name != null) 'name': name});
     return S3AccessKey.fromJson(j as Map<String, dynamic>);
   }
 
@@ -284,7 +318,9 @@ class StohrClient {
 
   Future<List<App>> listApps() async {
     final r = await _json('GET', '/me/apps');
-    return (r as List).map((j) => App.fromJson(j as Map<String, dynamic>)).toList();
+    return (r as List)
+        .map((j) => App.fromJson(j as Map<String, dynamic>))
+        .toList();
   }
 
   Future<App> createApp(String name, {String? description}) async {

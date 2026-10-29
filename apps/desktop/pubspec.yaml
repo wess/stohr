@@ -4,19 +4,19 @@ publish_to: none
 version: 0.1.0+1
 
 environment:
-  sdk: ^3.11.5
+  sdk: ^3.13.7
 
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^1.0.8
-  tray_manager: ^0.5.1
+  cupertino_icons: ^2.0.0
+  tray_manager: ^0.8.0
   hotkey_manager: ^0.2.3
-  window_manager: ^0.5.1
-  url_launcher: ^6.3.1
-  path_provider: ^2.1.5
-  http: ^1.1.0
-  crypto: ^3.0.6
+  window_manager: ^0.5.2
+  url_launcher: ^6.3.3
+  path_provider: ^2.1.6
+  http: ^1.6.0
+  crypto: ^3.0.8
   stohr:
     path: ../../sdks/dart
 

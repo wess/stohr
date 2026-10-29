@@ -1,5 +1,5 @@
 import React, { useEffect } from "react"
-import { Github, ChevronRight } from "lucide-react"
+import { ChevronRight, GitFork } from "lucide-react"
 import { Nav } from "../components/nav"
 import { Footer } from "../components/footer"
 import { HeroMock } from "../components/hero"
@@ -46,7 +46,7 @@ export const Landing: React.FC = () => {
             on a $6 droplet.
           </p>
           <div className="lp-cta-row">
-            <a href={REPO} target="_blank" rel="noreferrer" className="lp-btn lp-btn-primary lp-btn-lg"><Github size={16} strokeWidth={2} /> View on GitHub</a>
+            <a href={REPO} target="_blank" rel="noreferrer" className="lp-btn lp-btn-primary lp-btn-lg"><GitFork size={16} strokeWidth={2} /> View on GitHub</a>
             <a href="/setup" className="lp-btn lp-btn-ghost lp-btn-lg">Get started <ChevronRight size={16} strokeWidth={2} /></a>
           </div>
         </div>
@@ -57,7 +57,7 @@ export const Landing: React.FC = () => {
 
       <section className="lp-trust" aria-label="Open source and stack">
         <a href={REPO} target="_blank" rel="noreferrer" className="lp-trust-item lp-trust-link">
-          <Github size={16} strokeWidth={1.75} /> github.com/wess/stohr
+          <GitFork size={16} strokeWidth={1.75} /> github.com/wess/stohr
         </a>
         <span className="lp-trust-item">Apache 2.0</span>
         <span className="lp-trust-item">Self-hosted</span>
@@ -122,7 +122,7 @@ export const Landing: React.FC = () => {
                 with the included <code>compose.yaml</code> and Caddy config.
               </p>
               <div className="lp-cta-row">
-                <a href={REPO} target="_blank" rel="noreferrer" className="lp-btn lp-btn-primary lp-btn-lg"><Github size={16} strokeWidth={2} /> Get the source</a>
+                <a href={REPO} target="_blank" rel="noreferrer" className="lp-btn lp-btn-primary lp-btn-lg"><GitFork size={16} strokeWidth={2} /> Get the source</a>
                 <a href="/docs/" className="lp-btn lp-btn-ghost lp-btn-lg">Read the docs <ChevronRight size={16} strokeWidth={2} /></a>
               </div>
             </div>
