@@ -1,6 +1,7 @@
 {
   "name": "stohr-site",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "packageManager": "bun@1.4.4",
   "type": "module",
   "private": true,
   "scripts": {
@@ -8,8 +9,8 @@
     "build": "bun src/build.ts"
   },
   "dependencies": {
-    "lucide-react": "^1.64.0",
-    "marked": "^18.1.2",
+    "lucide-react": "^1.67.0",
+    "marked": "^18.1.3",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
